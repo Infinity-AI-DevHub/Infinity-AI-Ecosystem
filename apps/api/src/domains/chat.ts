@@ -212,9 +212,12 @@ export async function send(
       `INSERT INTO chat_members (room_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
       [roomId, actor.userId],
     );
-    // Sequence is allocated under the room's row lock so ordering is strictly monotonic.
+    // Serialise sequence allocation by locking the room row itself. Postgres does not
+    // allow FOR UPDATE alongside an aggregate, and locking the parent is what actually
+    // orders concurrent senders: two posts to the same room cannot claim the same seq.
+    await tx.query('SELECT 1 FROM chat_rooms WHERE id = $1 FOR UPDATE', [roomId]);
     const seqRes = await tx.query<{ seq: number }>(
-      `SELECT COALESCE(max(seq), 0) + 1 AS seq FROM chat_messages WHERE room_id = $1 FOR UPDATE`,
+      `SELECT COALESCE(max(seq), 0) + 1 AS seq FROM chat_messages WHERE room_id = $1`,
       [roomId],
     );
     const seq = seqRes.rows[0]?.seq ?? 1;

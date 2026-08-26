@@ -1,32 +1,94 @@
-# React + TypeScript + Vite
+# Infinity Workspace
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+An internal company workspace: mail, calendar and meetings, chat, tasks, files,
+approvals, announcements, directory, search and administration — built to the
+*Infinity Workspace Complete System Blueprint*.
 
-Currently, two official plugins are available:
+This is a working full-stack application, not a prototype. Identity, authorization,
+audit and retention are enforced on the server; the browser is never trusted.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## What is here
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```
+apps/
+  api/         Node + TypeScript + Fastify + PostgreSQL
+    migrations/  Versioned, checksum-guarded SQL migrations
+    src/core/    Config, database, authorization, audit, outbox, crypto, realtime
+    src/domains/ Identity, mail, calendar, chat, tasks, files, approvals, search…
+    src/http/    Server, routes, WebSocket gateway
+    src/workers/ Outbox dispatcher and scheduled jobs
+    test/        Unit + end-to-end / authorization-matrix tests
+  web/         React + TypeScript + Vite single-page application
+docs/          Architecture, security, operations and API reference
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Running it locally
+
+You need Node 20+ and PostgreSQL 14+.
+
+```bash
+# 1. Database
+createdb infinity
+
+# 2. API
+cd apps/api
+cp .env.example .env          # then set DATABASE_URL and DATA_ENCRYPTION_KEY
+npm install
+npm run migrate
+npm run seed                  # prints an activation link for the first administrator
+npm run build && npm start
+
+# 3. Web (second terminal)
+cd apps/web
+npm install
+npm run dev
+```
+
+Open the activation link the seed printed, set a password, enrol an authenticator,
+then sign in at <http://localhost:5173>.
+
+Generate the encryption key with:
+
+```bash
+openssl rand -hex 32
+```
+
+### With Docker
+
+```bash
+docker compose up -d          # postgres, minio, clamav, mailpit
+```
+
+## Testing
+
+```bash
+cd apps/api
+npm test                      # unit + end-to-end, needs TEST_DATABASE_URL
+```
+
+The end-to-end suite runs against a real database and a real HTTP server, and asserts
+the blueprint's acceptance criteria directly: invite → activate → sign in → MFA →
+authorized dashboard, suspension closing every session immediately, cross-tenant
+isolation, separation of duties, optimistic concurrency and idempotent retries.
+
+## Before production
+
+The application is complete, but three things are deployment decisions only you can
+make. Each has a working adapter and a visible degraded mode until configured:
+
+| Area | What is needed |
+|---|---|
+| **Mail delivery** | A verified domain and a managed mail provider or SMTP relay, with SPF, DKIM and DMARC aligned. `MAIL_DRIVER=log` is refused in production. |
+| **Meetings** | LiveKit (or equivalent) credentials. Without them, meetings still schedule and join reports a clear reduced-mode state. |
+| **Malware scanning** | A ClamAV endpoint. Without it, uploads are recorded as `skipped` rather than silently assumed clean. |
+
+See `docs/operations.md` for the full launch checklist.
+
+## Documentation
+
+- [`docs/architecture.md`](docs/architecture.md) — domains, data flow, key decisions
+- [`docs/security.md`](docs/security.md) — the security model and how each control is enforced
+- [`docs/operations.md`](docs/operations.md) — deployment, backup, incident response, launch checklist
+- [`docs/api.md`](docs/api.md) — endpoint reference and conventions

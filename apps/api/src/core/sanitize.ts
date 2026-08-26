@@ -68,6 +68,36 @@ function sanitizeAttributes(tag: string, raw: string, blockRemoteImages: boolean
   return pieces.join('');
 }
 
+/**
+ * Finds the index just past the `>` that closes the tag starting at `start`.
+ *
+ * Quote-aware on purpose: a `<` or `>` inside a quoted attribute value must not end the
+ * tag. A regex that stops at the first `>` desynchronizes from the browser's parser,
+ * which is the classic mutation-XSS sanitizer bypass - markup smuggled inside an
+ * attribute would otherwise spill out and be re-parsed as live tags.
+ *
+ * Returns -1 when the tag is never closed.
+ */
+function findTagEnd(input: string, start: number): number {
+  let quote: '"' | "'" | null = null;
+  for (let i = start + 1; i < input.length; i += 1) {
+    const ch = input[i]!;
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === '>') return i + 1;
+  }
+  return -1;
+}
+
+const TAG_START = /^<\/?[a-zA-Z]/;
+const TAG_PARTS = /^<(\/?)([a-zA-Z][a-zA-Z0-9]*)([\s\S]*?)\/?>$/;
+
 export function sanitizeEmailHtml(html: string, blockRemoteImages = true): string {
   if (!html) return '';
   const working = html
@@ -77,20 +107,46 @@ export function sanitizeEmailHtml(html: string, blockRemoteImages = true): strin
 
   const out: string[] = [];
   const openStack: string[] = [];
-  const tagPattern = /<\/?([a-zA-Z][a-zA-Z0-9]*)((?:\s+[^<>]*?)?)\/?>|([^<]+)/g;
+  let i = 0;
 
-  let match: RegExpExecArray | null;
-  while ((match = tagPattern.exec(working)) !== null) {
-    const full = match[0];
-    const text = match[3];
-    if (text !== undefined) {
-      out.push(text.replaceAll('<', '&lt;'));
+  while (i < working.length) {
+    const next = working.indexOf('<', i);
+
+    // Plain text up to the next candidate tag.
+    if (next === -1) {
+      out.push(escapeText(working.slice(i)));
+      break;
+    }
+    if (next > i) out.push(escapeText(working.slice(i, next)));
+
+    // A `<` that does not begin a tag is literal text and must be escaped, never dropped.
+    // Three characters are needed so a closing tag (`</p`) is still recognised.
+    if (!TAG_START.test(working.slice(next, next + 3))) {
+      out.push('&lt;');
+      i = next + 1;
       continue;
     }
-    const name = (match[1] ?? '').toLowerCase();
+
+    const end = findTagEnd(working, next);
+    if (end === -1) {
+      // Unterminated tag: treat the rest as text rather than trusting a partial tag.
+      out.push(escapeText(working.slice(next)));
+      break;
+    }
+
+    const rawTag = working.slice(next, end);
+    i = end;
+
+    const parts = TAG_PARTS.exec(rawTag);
+    if (!parts) continue;
+
+    const closing = parts[1] === '/';
+    const name = (parts[2] ?? '').toLowerCase();
+    // A disallowed tag is dropped along with its markup; its text content still flows
+    // through the loop as ordinary escaped text.
     if (!ALLOWED_TAGS.has(name)) continue;
 
-    if (full.startsWith('</')) {
+    if (closing) {
       const idx = openStack.lastIndexOf(name);
       if (idx === -1) continue;
       openStack.splice(idx, 1);
@@ -98,13 +154,18 @@ export function sanitizeEmailHtml(html: string, blockRemoteImages = true): strin
       continue;
     }
 
-    const attrs = sanitizeAttributes(name, match[2] ?? '', blockRemoteImages);
-    out.push(`<${name}${attrs}>`);
+    out.push(`<${name}${sanitizeAttributes(name, parts[3] ?? '', blockRemoteImages)}>`);
     if (!VOID_TAGS.has(name)) openStack.push(name);
   }
+
   // Close anything the source left open so the fragment cannot escape its container.
   while (openStack.length > 0) out.push(`</${openStack.pop()}>`);
   return out.join('');
+}
+
+/** Text nodes keep their characters but can never introduce markup. */
+function escapeText(value: string): string {
+  return value.replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 /** Plain-text projection used for snippets and search indexing. */

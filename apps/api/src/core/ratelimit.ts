@@ -13,16 +13,19 @@ export async function consume(
   limit: number,
   windowSeconds: number,
 ): Promise<LimitResult> {
+  // The window is a fixed counter reset: the first request in a new window sets the
+  // expiry, and subsequent ones increment until it lapses. `limit` is applied in JS,
+  // so it is deliberately not a query parameter.
   const res = await pool.query<{ count: number; expires_at: Date }>(
     `INSERT INTO rate_counters (bucket, count, expires_at)
-          VALUES ($1, 1, now() + ($3 || ' seconds')::interval)
+          VALUES ($1, 1, now() + ($2 || ' seconds')::interval)
      ON CONFLICT (bucket) DO UPDATE
         SET count = CASE WHEN rate_counters.expires_at < now() THEN 1 ELSE rate_counters.count + 1 END,
             expires_at = CASE WHEN rate_counters.expires_at < now()
-                              THEN now() + ($3 || ' seconds')::interval
+                              THEN now() + ($2 || ' seconds')::interval
                               ELSE rate_counters.expires_at END
       RETURNING count, expires_at`,
-    [bucket, limit, windowSeconds],
+    [bucket, windowSeconds],
   );
   const row = res.rows[0]!;
   const retryAfterSeconds = Math.max(

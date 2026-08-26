@@ -140,8 +140,10 @@ export async function createTask(
   if (input.assigneeId) await assertCompanyMember(actor.companyId, input.assigneeId);
 
   const task = await transaction(async (tx) => {
+    // Lock the project row so two concurrent creations cannot claim the same number.
+    await tx.query('SELECT 1 FROM projects WHERE id = $1 FOR UPDATE', [projectId]);
     const numberRes = await tx.query<{ number: number }>(
-      'SELECT COALESCE(max(number), 0) + 1 AS number FROM tasks WHERE project_id = $1 FOR UPDATE',
+      'SELECT COALESCE(max(number), 0) + 1 AS number FROM tasks WHERE project_id = $1',
       [projectId],
     );
     const res = await tx.query<TaskRow>(

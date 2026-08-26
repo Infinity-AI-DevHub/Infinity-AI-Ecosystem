@@ -234,9 +234,10 @@ class S3Storage implements StorageDriver {
   }
 
   async signedDownloadUrl(key: string, expiresInSeconds = config.storage.signedUrlTtlSeconds, filename?: string): Promise<string> {
-    const extra = filename
-      ? { 'response-content-disposition': `attachment; filename="${filename.replace(/"/g, '')}"` }
-      : {};
+    const extra: Record<string, string> = {};
+    if (filename) {
+      extra['response-content-disposition'] = `attachment; filename="${filename.replace(/"/g, '')}"`;
+    }
     return this.presign('GET', key, expiresInSeconds, extra);
   }
 

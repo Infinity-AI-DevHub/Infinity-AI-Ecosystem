@@ -83,6 +83,22 @@ export async function closePool(): Promise<void> {
   await pool.end();
 }
 
+/**
+ * Runs `fn` in a transaction permitted to delete append-only rows (audit events and
+ * approval decisions).
+ *
+ * Reserved for governed lifecycle work - removing a tenant, or enforcing an approved
+ * retention schedule. The flag is transaction-local, so ordinary application code can
+ * never delete history even by accident. Deletions performed here are still a policy
+ * decision that must be recorded outside the rows being removed.
+ */
+export async function purgeTransaction<T>(fn: (tx: Queryable) => Promise<T>): Promise<T> {
+  return transaction(async (tx) => {
+    await tx.query(`SET LOCAL infinity.purge = 'on'`);
+    return fn(tx);
+  });
+}
+
 /** Postgres error codes we translate into user-facing responses. */
 export const PG = {
   UNIQUE_VIOLATION: '23505',

@@ -149,6 +149,8 @@ export async function createRequest(
 
   const firstRule = resolved[0]!.rule;
   const request = await transaction(async (tx) => {
+    // Lock the company row so two simultaneous requests cannot mint the same reference.
+    await tx.query('SELECT 1 FROM companies WHERE id = $1 FOR UPDATE', [actor.companyId]);
     const seqRes = await tx.query<{ next: number }>(
       `SELECT count(*) + 1 AS next FROM approval_requests WHERE company_id = $1`,
       [actor.companyId],

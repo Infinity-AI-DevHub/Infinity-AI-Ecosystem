@@ -235,6 +235,21 @@ export async function compose(
       { field: 'to', message: 'Maximum 200 recipients' },
     ]);
   }
+  // Header injection is malformed input from the client, not a server fault: it must
+  // surface as a field-level validation error rather than a 500.
+  for (const address of recipients) {
+    if (/[\r\n]/.test(address)) {
+      throw unprocessable('Recipient address is not valid', [
+        { field: 'to', message: 'An address must not contain line breaks' },
+      ]);
+    }
+  }
+  if (/[\r\n]/.test(input.subject)) {
+    throw unprocessable('Subject is not valid', [
+      { field: 'subject', message: 'The subject must not contain line breaks' },
+    ]);
+  }
+  // Defence in depth: the adapter re-checks before anything reaches the wire.
   for (const address of recipients) assertNoHeaderInjection(address, 'recipient');
   assertNoHeaderInjection(input.subject, 'subject');
 
@@ -344,14 +359,42 @@ export async function compose(
   });
 }
 
+/**
+ * Resolves a system folder, creating it if it is absent.
+ *
+ * The system folder set is an invariant of every mailbox, but provisioning can fail
+ * part-way through and mailboxes may also arrive from migration or direct provider
+ * sync. Self-healing here keeps a partially provisioned mailbox usable instead of
+ * failing the user's send with a confusing error.
+ */
 async function folderByKind(db: Queryable, mailboxId: string, kind: string) {
   const res = await db.query<{ id: string }>(
     'SELECT id FROM mail_folders WHERE mailbox_id = $1 AND kind = $2 LIMIT 1',
     [mailboxId, kind],
   );
   const folder = res.rows[0];
-  if (!folder) throw notFound(`Mailbox is missing its ${kind} folder`);
-  return folder;
+  if (folder) return folder;
+
+  const definition = SYSTEM_FOLDERS.find((f) => f.kind === kind);
+  if (!definition) throw notFound(`Unknown mail folder: ${kind}`);
+
+  const mailbox = await db.query<{ company_id: string }>(
+    'SELECT company_id FROM mailboxes WHERE id = $1',
+    [mailboxId],
+  );
+  const companyId = mailbox.rows[0]?.company_id;
+  if (!companyId) throw notFound('Mailbox not found');
+
+  const created = await db.query<{ id: string }>(
+    `INSERT INTO mail_folders (company_id, mailbox_id, name, kind, position)
+     VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (mailbox_id, name) DO UPDATE SET kind = EXCLUDED.kind
+     RETURNING id`,
+    [companyId, mailboxId, definition.name, definition.kind, definition.position],
+  );
+  const row = created.rows[0];
+  if (!row) throw notFound(`Mailbox is missing its ${kind} folder`);
+  return row;
 }
 
 export async function updateFlags(

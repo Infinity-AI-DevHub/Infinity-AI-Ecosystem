@@ -192,6 +192,8 @@ export async function receiveUpload(
 
   const file = await transaction(async (tx) => {
     await tx.query(`UPDATE upload_sessions SET state = 'complete' WHERE id = $1`, [uploadId]);
+    // Lock the file row so two concurrent uploads cannot claim the same version.
+    await tx.query('SELECT 1 FROM files WHERE id = $1 FOR UPDATE', [session.file_id]);
     const versionRes = await tx.query<{ version: number }>(
       `SELECT COALESCE(max(version), 0) + 1 AS version FROM file_versions WHERE file_id = $1`,
       [session.file_id],

@@ -39,7 +39,7 @@ export type EventRow = {
 export type CreateEventInput = {
   title: string;
   description?: string;
-  location?: string;
+  location?: string | null;
   roomId?: string | null;
   startsAt: string;
   endsAt: string;

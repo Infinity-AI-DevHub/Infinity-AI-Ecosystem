@@ -2,7 +2,7 @@
  * HTTP server assembly: security headers, CORS, cookies, rate limits, correlation IDs,
  * the standard error envelope, and route registration.
  */
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -18,11 +18,13 @@ import { registerRoutes } from './routes/index.js';
 import { registerWebsocket } from './websocket.js';
 
 export async function buildServer(): Promise<FastifyInstance> {
-  const app = Fastify({
-    logger,
+  const app: FastifyInstance = Fastify({
+    // Fastify 5 takes a pre-built logger via loggerInstance; `logger` is config-only.
+    // pino's concrete Logger and FastifyBaseLogger are structurally compatible at
+    // runtime; the assertion keeps the app on Fastify's default generics.
+    loggerInstance: logger as FastifyBaseLogger,
     trustProxy: config.trustProxy,
     bodyLimit: 2 * 1024 * 1024,
-    disableRequestLogging: false,
     genReqId: () => crypto.randomUUID(),
   });
 
