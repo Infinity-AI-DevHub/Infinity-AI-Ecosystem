@@ -21,20 +21,19 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
-      postgres:
-        image: postgres:16-alpine
+      mysql:
+        image: mysql:8.0
         env:
-          POSTGRES_USER: infinity
-          POSTGRES_PASSWORD: infinity_ci
-          POSTGRES_DB: infinity_test
-        ports: ['5432:5432']
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: infinity_test
+        ports: ['3306:3306']
         options: >-
-          --health-cmd "pg_isready -U infinity -d infinity_test"
+          --health-cmd "mysqladmin ping -h localhost -proot"
           --health-interval 5s --health-timeout 5s --health-retries 20
 
     env:
-      DATABASE_URL: postgres://infinity:infinity_ci@localhost:5432/infinity_test
-      TEST_DATABASE_URL: postgres://infinity:infinity_ci@localhost:5432/infinity_test
+      DATABASE_URL: mysql://root:root@127.0.0.1:3306/infinity_test
+      TEST_DATABASE_URL: mysql://root:root@127.0.0.1:3306/infinity_test
       DATA_ENCRYPTION_KEY: ci_only_key_0123456789abcdef0123456789abcdef
       MAIL_DRIVER: log
       MAIL_DEFAULT_DOMAIN: ci.test

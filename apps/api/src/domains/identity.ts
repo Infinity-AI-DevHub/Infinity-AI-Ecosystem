@@ -6,7 +6,18 @@
  * subscribe to identity events instead.
  */
 import { randomUUID } from 'node:crypto';
-import { many, one, pool, transaction, isPgError, PG, type Queryable } from '../core/db.js';
+import {
+  isPgError,
+  jsonArray,
+  many,
+  newId,
+  one,
+  PG,
+  pool,
+  reload,
+  transaction,
+  type Queryable,
+} from '../core/db.js';
 import {
   badRequest,
   conflict,
@@ -128,7 +139,7 @@ export async function companyForEmail(email: string): Promise<{ id: string; stat
   const domain = email.split('@')[1];
   if (!domain) return undefined;
   return one<{ id: string; status: string }>(
-    'SELECT id, status FROM companies WHERE $1 = ANY(verified_domains) LIMIT 1',
+    'SELECT id, status FROM companies WHERE JSON_CONTAINS(verified_domains, JSON_QUOTE($1)) LIMIT 1',
     [domain.toLowerCase()],
   );
 }
@@ -160,14 +171,15 @@ export async function createUser(
 ): Promise<CreatedUser> {
   const email = input.email.toLowerCase().trim();
   const domain = email.split('@')[1];
-  const company = await one<{ verified_domains: string[] }>(
+  const company = await one<{ verified_domains: unknown }>(
     'SELECT verified_domains FROM companies WHERE id = $1',
     [actor.companyId],
   );
   if (!company) throw notFound('Company not found');
-  if (!domain || !company.verified_domains.includes(domain)) {
+  const verifiedDomains = jsonArray(company.verified_domains);
+  if (!domain || !verifiedDomains.includes(domain)) {
     throw unprocessable('Address must use a verified company domain', [
-      { field: 'email', message: `Allowed domains: ${company.verified_domains.join(', ') || 'none configured'}` },
+      { field: 'email', message: `Allowed domains: ${verifiedDomains.join(', ') || 'none configured'}` },
     ]);
   }
   // Only a super administrator may mint another administrator-class account.
@@ -180,14 +192,15 @@ export async function createUser(
 
   return transaction(async (tx) => {
     let user: UserRow;
+    const userId = newId();
     try {
-      const res = await tx.query<UserRow>(
+      await tx.query(
         `INSERT INTO users
-           (company_id, email, email_display, display_name, legal_name, title,
+           (id, company_id, email, email_display, display_name, legal_name, title,
             department_id, manager_id, access_level, modules, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'invited')
-         RETURNING *`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'invited')`,
         [
+          userId,
           actor.companyId,
           email,
           input.email.trim(),
@@ -197,10 +210,10 @@ export async function createUser(
           input.departmentId ?? null,
           input.managerId ?? null,
           input.accessLevel,
-          input.modules ?? [],
+          JSON.stringify(input.modules ?? []),
         ],
       );
-      user = res.rows[0]!;
+      user = (await reload<UserRow>(tx, 'users', userId))!;
     } catch (err) {
       if (isPgError(err, PG.UNIQUE_VIOLATION)) {
         throw conflict('An account with this address already exists');
@@ -212,16 +225,23 @@ export async function createUser(
 
     for (const groupId of input.groupIds ?? []) {
       await tx.query(
-        'INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+        'INSERT IGNORE INTO group_members (group_id, user_id) VALUES ($1,$2)',
         [groupId, user.id],
       );
     }
 
     const token = generateToken();
     await tx.query(
-      `INSERT INTO invitations (company_id, user_id, token_hash, expires_at, created_by)
-       VALUES ($1,$2,$3, now() + ($4 || ' hours')::interval, $5)`,
-      [actor.companyId, user.id, hashToken(token), config.security.invitationTtlHours, actor.userId],
+      `INSERT INTO invitations (id, company_id, user_id, token_hash, expires_at, created_by)
+       VALUES ($1,$2,$3,$4, DATE_ADD(NOW(3), INTERVAL $5 HOUR), $6)`,
+      [
+        newId(),
+        actor.companyId,
+        user.id,
+        hashToken(token),
+        config.security.invitationTtlHours,
+        actor.userId,
+      ],
     );
 
     await recordAudit(
@@ -283,7 +303,7 @@ export async function activateAccount(
 ): Promise<ActivationResult> {
   const invitation = await one<{ id: string; user_id: string; company_id: string }>(
     `SELECT id, user_id, company_id FROM invitations
-      WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()`,
+      WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW(3)`,
     [hashToken(token)],
   );
   if (!invitation) throw badRequest('This invitation is invalid or has expired');
@@ -304,21 +324,21 @@ export async function activateAccount(
     // Single-use: the UPDATE only matches while the invitation is still unused, so two
     // concurrent activations cannot both succeed.
     const claimed = await tx.query(
-      'UPDATE invitations SET used_at = now() WHERE id = $1 AND used_at IS NULL',
+      'UPDATE invitations SET used_at = NOW(3) WHERE id = $1 AND used_at IS NULL',
       [invitation.id],
     );
     if (claimed.rowCount === 0) throw badRequest('This invitation has already been used');
 
     await tx.query(
       `UPDATE identities
-          SET password_hash = $2, password_set_at = now(), mfa_secret_enc = $3,
-              recovery_codes = $4, failed_attempts = 0, locked_until = NULL, updated_at = now()
+          SET password_hash = $2, password_set_at = NOW(3), mfa_secret_enc = $3,
+              recovery_codes = $4, failed_attempts = 0, locked_until = NULL, updated_at = NOW(3)
         WHERE user_id = $1`,
-      [user.id, passwordHash, encryptField(mfaSecret), hashedRecovery],
+      [user.id, passwordHash, encryptField(mfaSecret), JSON.stringify(hashedRecovery)],
     );
-    const res = await tx.query<UserRow>(
-      `UPDATE users SET status = 'active', activated_at = now(), updated_at = now(), version = version + 1
-        WHERE id = $1 RETURNING *`,
+    await tx.query(
+      `UPDATE users SET status = 'active', activated_at = NOW(3), updated_at = NOW(3), version = version + 1
+        WHERE id = $1`,
       [user.id],
     );
     await recordAudit(
@@ -345,7 +365,7 @@ export async function activateAccount(
       },
       tx,
     );
-    return res.rows[0]!;
+    return (await reload<UserRow>(tx, 'users', user.id))!;
   });
 
   return {
@@ -366,7 +386,7 @@ export async function confirmMfa(userId: string, activationToken: string, code: 
     `SELECT id FROM invitations
       WHERE user_id = $1
         AND token_hash = $2
-        AND used_at > now() - interval '30 minutes'`,
+        AND used_at > DATE_SUB(NOW(3), INTERVAL 30 MINUTE)`,
     [userId, hashToken(activationToken)],
   );
   if (!activation) throw badRequest('This MFA confirmation session is invalid or has expired');
@@ -380,7 +400,7 @@ export async function confirmMfa(userId: string, activationToken: string, code: 
     throw badRequest('That verification code is not valid');
   }
   await pool.query(
-    `UPDATE identities SET mfa_enabled = true, mfa_confirmed_at = now(), updated_at = now()
+    `UPDATE identities SET mfa_enabled = true, mfa_confirmed_at = NOW(3), updated_at = NOW(3)
       WHERE user_id = $1`,
     [userId],
   );
@@ -447,7 +467,7 @@ export async function authenticate(
   }
 
   await pool.query(
-    `UPDATE identities SET failed_attempts = 0, locked_until = NULL, last_auth_at = now() WHERE user_id = $1`,
+    `UPDATE identities SET failed_attempts = 0, locked_until = NULL, last_auth_at = NOW(3) WHERE user_id = $1`,
     [user.id],
   );
   if (passwordNeedsRehash(identity?.password_hash ?? null)) {
@@ -467,8 +487,8 @@ export async function authenticate(
     const challengeToken = generateToken();
     await pool.query(
       `INSERT INTO rate_counters (bucket, count, expires_at)
-       VALUES ($1, 0, now() + interval '5 minutes')
-       ON CONFLICT (bucket) DO UPDATE SET expires_at = EXCLUDED.expires_at, count = 0`,
+       VALUES ($1, 0, DATE_ADD(NOW(3), INTERVAL 5 MINUTE))
+       ON DUPLICATE KEY UPDATE expires_at = DATE_ADD(NOW(3), INTERVAL 5 MINUTE), count = 0`,
       [`mfa_challenge:${hashToken(challengeToken)}:${user.id}`],
     );
     return { status: 'mfa_required', challengeToken: `${user.id}.${challengeToken}` };
@@ -490,7 +510,7 @@ export async function verifyMfaChallenge(
 
   const bucket = `mfa_challenge:${hashToken(secretPart)}:${userId}`;
   const challenge = await one<{ bucket: string }>(
-    'SELECT bucket FROM rate_counters WHERE bucket = $1 AND expires_at > now()',
+    'SELECT bucket FROM rate_counters WHERE bucket = $1 AND expires_at > NOW(3)',
     [bucket],
   );
   if (!challenge) throw unauthenticated('This verification challenge has expired');
@@ -498,20 +518,27 @@ export async function verifyMfaChallenge(
   const user = await findUserById(userId);
   if (!user || user.status !== 'active') throw unauthenticated('Invalid verification challenge');
 
-  const identity = await one<{ mfa_secret_enc: string | null; recovery_codes: string[] }>(
+  const identityRow = await one<{ mfa_secret_enc: string | null; recovery_codes: unknown }>(
     'SELECT mfa_secret_enc, recovery_codes FROM identities WHERE user_id = $1',
     [userId],
   );
+  const identity = identityRow
+    ? { mfa_secret_enc: identityRow.mfa_secret_enc, recovery_codes: jsonArray(identityRow.recovery_codes) }
+    : undefined;
 
   let method: 'totp' | 'recovery' | null = null;
   if (identity?.mfa_secret_enc && verifyTotp(decryptField(identity.mfa_secret_enc), code)) {
     method = 'totp';
   } else if (identity?.recovery_codes?.includes(hashToken(code.trim().toUpperCase()))) {
     method = 'recovery';
-    await pool.query(
-      'UPDATE identities SET recovery_codes = array_remove(recovery_codes, $2) WHERE user_id = $1',
-      [userId, hashToken(code.trim().toUpperCase())],
+    // Single use: the consumed code is removed from the stored JSON array.
+    const remaining = identity.recovery_codes.filter(
+      (stored) => stored !== hashToken(code.trim().toUpperCase()),
     );
+    await pool.query('UPDATE identities SET recovery_codes = $2 WHERE user_id = $1', [
+      userId,
+      JSON.stringify(remaining),
+    ]);
   }
 
   if (!method) {
@@ -531,9 +558,9 @@ async function registerFailedAttempt(userId: string): Promise<void> {
     `UPDATE identities
         SET failed_attempts = failed_attempts + 1,
             locked_until = CASE WHEN failed_attempts + 1 >= $2
-                                THEN now() + ($3 || ' minutes')::interval
+                                THEN DATE_ADD(NOW(3), INTERVAL $3 MINUTE)
                                 ELSE locked_until END,
-            updated_at = now()
+            updated_at = NOW(3)
       WHERE user_id = $1`,
     [userId, config.security.maxFailedLogins, config.security.lockoutMinutes],
   );
@@ -570,9 +597,11 @@ export async function createSession(
   const sessionToken = generateToken();
   const csrfToken = generateToken(24);
   await pool.query(
-    `INSERT INTO sessions (company_id, user_id, token_hash, csrf_secret, mfa_satisfied, ip, user_agent, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7, now() + ($8 || ' minutes')::interval)`,
+    `INSERT INTO sessions
+       (id, company_id, user_id, token_hash, csrf_secret, mfa_satisfied, ip, user_agent, expires_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8, DATE_ADD(NOW(3), INTERVAL $9 MINUTE))`,
     [
+      newId(),
       user.company_id,
       user.id,
       hashToken(sessionToken),
@@ -601,25 +630,25 @@ export async function resolveSession(sessionToken: string): Promise<{ session: S
   const session = await one<SessionRecord>(
     `SELECT id, user_id, company_id, csrf_secret, mfa_satisfied, expires_at, last_seen_at
        FROM sessions
-      WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()`,
+      WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > NOW(3)`,
     [hashToken(sessionToken)],
   );
   if (!session) return null;
 
   const idleLimitMs = config.security.sessionIdleMinutes * 60_000;
   if (Date.now() - new Date(session.last_seen_at).getTime() > idleLimitMs) {
-    await pool.query('UPDATE sessions SET revoked_at = now() WHERE id = $1', [session.id]);
+    await pool.query('UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1', [session.id]);
     return null;
   }
 
   const user = await findUserById(session.user_id);
   if (!user || user.status !== 'active') {
-    await pool.query('UPDATE sessions SET revoked_at = now() WHERE id = $1', [session.id]);
+    await pool.query('UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1', [session.id]);
     return null;
   }
   // Touch last_seen without blocking the request path.
   pool
-    .query('UPDATE sessions SET last_seen_at = now() WHERE id = $1', [session.id])
+    .query('UPDATE sessions SET last_seen_at = NOW(3) WHERE id = $1', [session.id])
     .catch((err) => logger.warn({ err }, 'failed to touch session'));
 
   return { session, user };
@@ -656,7 +685,7 @@ export async function buildActor(
 }
 
 export async function revokeSession(sessionId: string): Promise<void> {
-  await pool.query('UPDATE sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL', [
+  await pool.query('UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1 AND revoked_at IS NULL', [
     sessionId,
   ]);
   const { disconnectSession } = await import('../core/realtime.js');
@@ -667,7 +696,7 @@ export async function listSessions(userId: string) {
   return many(
     `SELECT id, device, ip, user_agent, mfa_satisfied, last_seen_at, created_at, expires_at
        FROM sessions
-      WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
+      WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > NOW(3)
       ORDER BY last_seen_at DESC`,
     [userId],
   );
@@ -675,10 +704,10 @@ export async function listSessions(userId: string) {
 
 /** Revokes every session and API token for a user and closes their live sockets. */
 export async function revokeAllAccess(userId: string, reason: string, db: Queryable = pool): Promise<void> {
-  await db.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [
+  await db.query('UPDATE sessions SET revoked_at = NOW(3) WHERE user_id = $1 AND revoked_at IS NULL', [
     userId,
   ]);
-  await db.query('UPDATE api_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [
+  await db.query('UPDATE api_tokens SET revoked_at = NOW(3) WHERE user_id = $1 AND revoked_at IS NULL', [
     userId,
   ]);
   disconnectUser(userId, reason);
@@ -731,21 +760,20 @@ export async function updateUser(
   }
 
   return transaction(async (tx) => {
-    const res = await tx.query<UserRow>(
+    await tx.query(
       `UPDATE users SET
          display_name  = COALESCE($3, display_name),
-         title         = CASE WHEN $4::boolean THEN $5 ELSE title END,
-         department_id = CASE WHEN $6::boolean THEN $7 ELSE department_id END,
-         manager_id    = CASE WHEN $8::boolean THEN $9 ELSE manager_id END,
+         title         = CASE WHEN $4 THEN $5 ELSE title END,
+         department_id = CASE WHEN $6 THEN $7 ELSE department_id END,
+         manager_id    = CASE WHEN $8 THEN $9 ELSE manager_id END,
          access_level  = COALESCE($10, access_level),
          modules       = COALESCE($11, modules),
          timezone      = COALESCE($12, timezone),
          locale        = COALESCE($13, locale),
-         phone         = CASE WHEN $14::boolean THEN $15 ELSE phone END,
+         phone         = CASE WHEN $14 THEN $15 ELSE phone END,
          version       = version + 1,
-         updated_at    = now()
-       WHERE id = $1 AND company_id = $2
-       RETURNING *`,
+         updated_at    = NOW(3)
+       WHERE id = $1 AND company_id = $2`,
       [
         userId,
         actor.companyId,
@@ -764,7 +792,7 @@ export async function updateUser(
         input.phone ?? null,
       ],
     );
-    const updated = res.rows[0]!;
+    const updated = (await reload<UserRow>(tx, 'users', userId))!;
     await recordAudit(
       {
         companyId: actor.companyId,
@@ -833,9 +861,9 @@ export async function suspendUser(
   }
 
   const updated = await transaction(async (tx) => {
-    const res = await tx.query<UserRow>(
-      `UPDATE users SET status = 'suspended', suspended_at = now(), version = version + 1, updated_at = now()
-        WHERE id = $1 AND company_id = $2 RETURNING *`,
+    await tx.query(
+      `UPDATE users SET status = 'suspended', suspended_at = NOW(3), version = version + 1, updated_at = NOW(3)
+        WHERE id = $1 AND company_id = $2`,
       [userId, actor.companyId],
     );
     await revokeAllAccess(userId, 'account_suspended', tx);
@@ -868,7 +896,7 @@ export async function suspendUser(
       },
       tx,
     );
-    return res.rows[0]!;
+    return (await reload<UserRow>(tx, 'users', userId))!;
   });
 
   disconnectUser(userId, 'account_suspended');
@@ -881,9 +909,9 @@ export async function reactivateUser(actor: Actor, userId: string, ctx: RequestC
   if (existing.status !== 'suspended') throw conflict('Only a suspended account can be reactivated');
 
   return transaction(async (tx) => {
-    const res = await tx.query<UserRow>(
-      `UPDATE users SET status = 'active', suspended_at = NULL, version = version + 1, updated_at = now()
-        WHERE id = $1 RETURNING *`,
+    await tx.query(
+      `UPDATE users SET status = 'active', suspended_at = NULL, version = version + 1, updated_at = NOW(3)
+        WHERE id = $1`,
       [userId],
     );
     await recordAudit(
@@ -909,7 +937,7 @@ export async function reactivateUser(actor: Actor, userId: string, ctx: RequestC
       },
       tx,
     );
-    return res.rows[0]!;
+    return (await reload<UserRow>(tx, 'users', userId))!;
   });
 }
 
@@ -925,13 +953,20 @@ export async function reissueInvitation(
 
   const token = generateToken();
   await transaction(async (tx) => {
-    await tx.query('UPDATE invitations SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [
+    await tx.query('UPDATE invitations SET used_at = NOW(3) WHERE user_id = $1 AND used_at IS NULL', [
       userId,
     ]);
     await tx.query(
-      `INSERT INTO invitations (company_id, user_id, token_hash, expires_at, created_by)
-       VALUES ($1,$2,$3, now() + ($4 || ' hours')::interval, $5)`,
-      [actor.companyId, userId, hashToken(token), config.security.invitationTtlHours, actor.userId],
+      `INSERT INTO invitations (id, company_id, user_id, token_hash, expires_at, created_by)
+       VALUES ($1,$2,$3,$4, DATE_ADD(NOW(3), INTERVAL $5 HOUR), $6)`,
+      [
+        newId(),
+        actor.companyId,
+        userId,
+        hashToken(token),
+        config.security.invitationTtlHours,
+        actor.userId,
+      ],
     );
     await recordAudit(
       {
@@ -978,7 +1013,7 @@ export async function changeOwnPassword(
   const hash = await hashPassword(newPassword);
   await transaction(async (tx) => {
     await tx.query(
-      'UPDATE identities SET password_hash = $2, password_set_at = now(), updated_at = now() WHERE user_id = $1',
+      'UPDATE identities SET password_hash = $2, password_set_at = NOW(3), updated_at = NOW(3) WHERE user_id = $1',
       [userId, hash],
     );
     await recordAudit(
@@ -1009,10 +1044,12 @@ export async function listUsers(
   const rows = await many<UserRow>(
     `SELECT * FROM users
       WHERE company_id = $1
-        AND ($2::text IS NULL OR status = $2)
-        AND ($3::uuid IS NULL OR department_id = $3)
-        AND ($4::text IS NULL OR display_name ILIKE '%' || $4 || '%' OR email ILIKE '%' || $4 || '%')
-        AND ($5::timestamptz IS NULL OR (created_at, id) < ($5, $6::uuid))
+        AND ($2 IS NULL OR status = $2)
+        AND ($3 IS NULL OR department_id = $3)
+        -- The utf8mb4_0900_ai_ci collation is already case-insensitive, so LIKE gives
+        -- the behaviour PostgreSQL needed ILIKE for.
+        AND ($4 IS NULL OR display_name LIKE CONCAT('%', $4, '%') OR email LIKE CONCAT('%', $4, '%'))
+        AND ($5 IS NULL OR (created_at, id) < ($5, $6))
       ORDER BY created_at DESC, id DESC
       LIMIT $7`,
     [

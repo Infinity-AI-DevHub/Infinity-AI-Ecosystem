@@ -5,7 +5,7 @@
  * and parallel approvers, delegation, expiry/escalation, and an immutable decision
  * history. A requester can never be the final approver of their own request.
  */
-import { many, one, pool, transaction } from '../core/db.js';
+import { many, newId, one, pool, reload, transaction } from '../core/db.js';
 import { conflict, forbidden, notFound, unprocessable } from '../core/errors.js';
 import { assertSeparationOfDuties, authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
@@ -107,7 +107,7 @@ export async function createRequest(
 ): Promise<RequestRow> {
   await authorize({ actor, capability: 'request.create', resourceless: true });
   const definition = await one<DefinitionRow>(
-    'SELECT * FROM approval_definitions WHERE company_id = $1 AND key = $2 AND active',
+    'SELECT * FROM approval_definitions WHERE company_id = $1 AND `key` = $2 AND active',
     [actor.companyId, input.definitionKey],
   );
   if (!definition) throw notFound('That request type is not available');
@@ -157,12 +157,14 @@ export async function createRequest(
     );
     const reference = `${definition.key.toUpperCase()}-${String(seqRes.rows[0]?.next ?? 1).padStart(5, '0')}`;
 
-    const res = await tx.query<RequestRow>(
+    const requestId = newId();
+    await tx.query(
       `INSERT INTO approval_requests
-         (company_id, definition_id, reference, requester_id, title, amount, currency, data, current_step, due_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now() + ($10 || ' hours')::interval)
-       RETURNING *`,
+         (id, company_id, definition_id, reference, requester_id, title, amount, currency,
+          data, current_step, due_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, DATE_ADD(NOW(3), INTERVAL $11 HOUR))`,
       [
+        requestId,
         actor.companyId,
         definition.id,
         reference,
@@ -175,14 +177,16 @@ export async function createRequest(
         firstRule.dueHours ?? 72,
       ],
     );
-    const created = res.rows[0]!;
+    const created = (await reload<RequestRow>(tx, 'approval_requests', requestId))!;
 
     for (const { rule, approvers } of resolved) {
       for (const approverId of approvers) {
         await tx.query(
-          `INSERT INTO approval_steps (company_id, request_id, step_number, approver_id, mode, state)
-           VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
+          `INSERT IGNORE INTO approval_steps
+             (id, company_id, request_id, step_number, approver_id, mode, state)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
           [
+            newId(),
             actor.companyId,
             created.id,
             rule.step,
@@ -240,7 +244,7 @@ export async function listRequests(
        JOIN approval_definitions d ON d.id = r.definition_id
        JOIN users u ON u.id = r.requester_id
       WHERE r.company_id = $1
-        AND ($3::text IS NULL OR r.status = $3)
+        AND ($3 IS NULL OR r.status = $3)
         AND (
           ($4 = 'mine' AND r.requester_id = $2)
           OR ($4 = 'all')
@@ -324,9 +328,18 @@ export async function decide(
     if (!step) throw forbidden('This request is not waiting for your decision');
 
     await tx.query(
-      `INSERT INTO approval_decisions (company_id, request_id, step_number, approver_id, decision, comment)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [actor.companyId, requestId, request.current_step, actor.userId, input.decision, input.comment ?? null],
+      `INSERT INTO approval_decisions
+         (id, company_id, request_id, step_number, approver_id, decision, comment)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [
+        newId(),
+        actor.companyId,
+        requestId,
+        request.current_step,
+        actor.userId,
+        input.decision,
+        input.comment ?? null,
+      ],
     );
     await tx.query(`UPDATE approval_steps SET state = 'done' WHERE id = $1`, [step.id]);
 
@@ -343,7 +356,7 @@ export async function decide(
     } else {
       // Parallel steps need every approver on the step to have decided.
       const remaining = await tx.query<{ count: number }>(
-        `SELECT count(*)::int AS count FROM approval_steps
+        `SELECT count(*) AS count FROM approval_steps
           WHERE request_id = $1 AND step_number = $2 AND state = 'active'`,
         [requestId, request.current_step],
       );
@@ -374,9 +387,9 @@ export async function decide(
       }
     }
 
-    const updated = await tx.query<RequestRow>(
-      `UPDATE approval_requests SET status = $2, current_step = $3, version = version + 1, updated_at = now()
-        WHERE id = $1 RETURNING *`,
+    await tx.query(
+      `UPDATE approval_requests SET status = $2, current_step = $3, version = version + 1, updated_at = NOW(3)
+        WHERE id = $1`,
       [requestId, finalStatus, nextStep],
     );
 
@@ -406,7 +419,7 @@ export async function decide(
       },
       tx,
     );
-    return updated.rows[0]!;
+    return (await reload<RequestRow>(tx, 'approval_requests', requestId))!;
   });
 }
 
@@ -422,7 +435,7 @@ export async function cancelRequest(actor: Actor, requestId: string): Promise<vo
   if (request.status !== 'pending') throw conflict(`This request is already ${request.status}`);
   await transaction(async (tx) => {
     await tx.query(
-      `UPDATE approval_requests SET status = 'cancelled', version = version + 1, updated_at = now() WHERE id = $1`,
+      `UPDATE approval_requests SET status = 'cancelled', version = version + 1, updated_at = NOW(3) WHERE id = $1`,
       [requestId],
     );
     await tx.query(`UPDATE approval_steps SET state = 'skipped' WHERE request_id = $1 AND state <> 'done'`, [
@@ -436,7 +449,7 @@ export async function cancelRequest(actor: Actor, requestId: string): Promise<vo
 export async function escalateOverdue(): Promise<number> {
   const overdue = await many<{ id: string; company_id: string; reference: string; current_step: number }>(
     `SELECT id, company_id, reference, current_step FROM approval_requests
-      WHERE status = 'pending' AND due_at IS NOT NULL AND due_at < now()
+      WHERE status = 'pending' AND due_at IS NOT NULL AND due_at < NOW(3)
       LIMIT 100`,
   );
   for (const request of overdue) {
@@ -446,7 +459,9 @@ export async function escalateOverdue(): Promise<number> {
       payload: { requestId: request.id, reference: request.reference, escalated: true },
     });
     await pool.query(
-      `UPDATE approval_requests SET due_at = now() + interval '24 hours', updated_at = now() WHERE id = $1`,
+      `UPDATE approval_requests
+          SET due_at = DATE_ADD(NOW(3), INTERVAL 24 HOUR), updated_at = NOW(3)
+        WHERE id = $1`,
       [request.id],
     );
   }

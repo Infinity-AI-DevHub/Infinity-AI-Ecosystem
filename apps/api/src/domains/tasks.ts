@@ -3,7 +3,17 @@
  * Project membership governs task visibility; every field change is recorded in the
  * task activity history.
  */
-import { many, one, pool, transaction, isPgError, PG } from '../core/db.js';
+import {
+  isPgError,
+  jsonArray,
+  many,
+  newId,
+  one,
+  PG,
+  pool,
+  reload,
+  transaction,
+} from '../core/db.js';
 import { conflict, notFound, preconditionFailed, unprocessable } from '../core/errors.js';
 import { authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
@@ -34,7 +44,7 @@ export type TaskRow = {
   reporter_id: string | null;
   due_at: Date | null;
   start_at: Date | null;
-  labels: string[];
+  labels: unknown;
   checklist: unknown;
   position: number;
   version: number;
@@ -81,12 +91,13 @@ export async function createProject(
   return transaction(async (tx) => {
     let project: ProjectRow;
     try {
-      const res = await tx.query<ProjectRow>(
-        `INSERT INTO projects (company_id, name, key, description, owner_id)
-         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-        [actor.companyId, input.name.trim(), key, input.description ?? '', actor.userId],
+      const projectId = newId();
+      await tx.query(
+        `INSERT INTO projects (id, company_id, name, \`key\`, description, owner_id)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [projectId, actor.companyId, input.name.trim(), key, input.description ?? '', actor.userId],
       );
-      project = res.rows[0]!;
+      project = (await reload<ProjectRow>(tx, 'projects', projectId))!;
     } catch (err) {
       if (isPgError(err, PG.UNIQUE_VIOLATION)) throw conflict('A project with that key already exists');
       throw err;
@@ -97,8 +108,8 @@ export async function createProject(
     ]);
     for (const userId of (input.memberIds ?? []).filter((id) => id !== actor.userId)) {
       await tx.query(
-        `INSERT INTO project_members (project_id, user_id) SELECT $1, id FROM users
-          WHERE id = $2 AND company_id = $3 AND status = 'active' ON CONFLICT DO NOTHING`,
+        `INSERT IGNORE INTO project_members (project_id, user_id) SELECT $1, id FROM users
+          WHERE id = $2 AND company_id = $3 AND status = 'active'`,
         [project.id, userId, actor.companyId],
       );
     }
@@ -110,8 +121,8 @@ export async function createProject(
 export async function listProjects(actor: Actor) {
   return many(
     `SELECT p.*, pm.role AS my_role,
-            (SELECT count(*)::int FROM tasks t WHERE t.project_id = p.id AND t.status <> 'done') AS open_tasks,
-            (SELECT count(*)::int FROM project_members m WHERE m.project_id = p.id) AS member_count
+            (SELECT count(*) FROM tasks t WHERE t.project_id = p.id AND t.status <> 'done') AS open_tasks,
+            (SELECT count(*) FROM project_members m WHERE m.project_id = p.id) AS member_count
        FROM projects p
        LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
       WHERE p.company_id = $1
@@ -146,11 +157,14 @@ export async function createTask(
       'SELECT COALESCE(max(number), 0) + 1 AS number FROM tasks WHERE project_id = $1',
       [projectId],
     );
-    const res = await tx.query<TaskRow>(
+    const taskId = newId();
+    await tx.query(
       `INSERT INTO tasks
-         (company_id, project_id, number, title, description, priority, assignee_id, reporter_id, due_at, labels)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+         (id, company_id, project_id, number, title, description, priority,
+          assignee_id, reporter_id, due_at, labels, checklist)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
+        taskId,
         actor.companyId,
         projectId,
         numberRes.rows[0]?.number ?? 1,
@@ -160,19 +174,20 @@ export async function createTask(
         input.assigneeId ?? null,
         actor.userId,
         input.dueAt ? new Date(input.dueAt) : null,
-        input.labels ?? [],
+        JSON.stringify(input.labels ?? []),
+        JSON.stringify([]),
       ],
     );
-    const created = res.rows[0]!;
+    const created = (await reload<TaskRow>(tx, 'tasks', taskId))!;
 
     for (const dependencyId of input.dependsOn ?? []) {
       await assertNoDependencyCycle(created.id, dependencyId);
       await tx.query(
-        'INSERT INTO task_dependencies (task_id, depends_on) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+        'INSERT IGNORE INTO task_dependencies (task_id, depends_on) VALUES ($1,$2)',
         [created.id, dependencyId],
       );
     }
-    await tx.query('INSERT INTO task_watchers (task_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [
+    await tx.query('INSERT IGNORE INTO task_watchers (task_id, user_id) VALUES ($1,$2)', [
       created.id,
       actor.userId,
     ]);
@@ -214,13 +229,13 @@ async function assertCompanyMember(companyId: string, userId: string): Promise<v
 /** Prevents a dependency graph that can never complete. */
 async function assertNoDependencyCycle(taskId: string, dependsOn: string): Promise<void> {
   if (taskId === dependsOn) throw unprocessable('A task cannot depend on itself', []);
-  const cycle = await one<{ exists: boolean }>(
+  const cycle = await one<{ cycle_found: number }>(
     `WITH RECURSIVE chain AS (
        SELECT depends_on FROM task_dependencies WHERE task_id = $2
        UNION
        SELECT d.depends_on FROM task_dependencies d JOIN chain c ON d.task_id = c.depends_on
      )
-     SELECT true AS exists FROM chain WHERE depends_on = $1 LIMIT 1`,
+     SELECT 1 AS cycle_found FROM chain WHERE depends_on = $1 LIMIT 1`,
     [taskId, dependsOn],
   );
   if (cycle) throw conflict('That dependency would create a cycle');
@@ -238,9 +253,9 @@ export async function listTasks(
        JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
        LEFT JOIN users u ON u.id = t.assignee_id
       WHERE t.company_id = $1
-        AND ($3::uuid IS NULL OR t.project_id = $3)
-        AND ($4::uuid IS NULL OR t.assignee_id = $4)
-        AND ($5::text IS NULL OR t.status = $5)
+        AND ($3 IS NULL OR t.project_id = $3)
+        AND ($4 IS NULL OR t.assignee_id = $4)
+        AND ($5 IS NULL OR t.status = $5)
       ORDER BY t.position, t.created_at DESC
       LIMIT $6`,
     [
@@ -264,7 +279,7 @@ export async function updateTask(
     priority: string;
     assigneeId: string | null;
     dueAt: string | null;
-    labels: string[];
+    labels: unknown;
     position: number;
   }>,
   expectedVersion: number | null,
@@ -290,22 +305,22 @@ export async function updateTask(
   }
 
   const updated = await transaction(async (tx) => {
-    const res = await tx.query<TaskRow>(
+    await tx.query(
       `UPDATE tasks SET
          title = COALESCE($3, title),
          description = COALESCE($4, description),
          status = COALESCE($5, status),
          priority = COALESCE($6, priority),
-         assignee_id = CASE WHEN $7::boolean THEN $8 ELSE assignee_id END,
-         due_at = CASE WHEN $9::boolean THEN $10 ELSE due_at END,
+         assignee_id = CASE WHEN $7 THEN $8 ELSE assignee_id END,
+         due_at = CASE WHEN $9 THEN $10 ELSE due_at END,
          labels = COALESCE($11, labels),
          position = COALESCE($12, position),
-         completed_at = CASE WHEN $5 = 'done' THEN now()
+         completed_at = CASE WHEN $5 = 'done' THEN NOW(3)
                              WHEN $5 IS NOT NULL AND $5 <> 'done' THEN NULL
                              ELSE completed_at END,
          version = version + 1,
-         updated_at = now()
-       WHERE id = $1 AND company_id = $2 RETURNING *`,
+         updated_at = NOW(3)
+       WHERE id = $1 AND company_id = $2`,
       [
         taskId,
         actor.companyId,
@@ -317,11 +332,11 @@ export async function updateTask(
         input.assigneeId ?? null,
         'dueAt' in input,
         input.dueAt ? new Date(input.dueAt) : null,
-        input.labels ?? null,
+        input.labels ? JSON.stringify(input.labels) : null,
         input.position ?? null,
       ],
     );
-    const task = res.rows[0]!;
+    const task = (await reload<TaskRow>(tx, 'tasks', taskId))!;
 
     // Activity history: one row per changed field.
     const changes: [string, unknown, unknown][] = [
@@ -340,7 +355,7 @@ export async function updateTask(
       );
     }
     if (task.assignee_id && task.assignee_id !== existing.assignee_id) {
-      await tx.query('INSERT INTO task_watchers (task_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [
+      await tx.query('INSERT IGNORE INTO task_watchers (task_id, user_id) VALUES ($1,$2)', [
         taskId,
         task.assignee_id,
       ]);
@@ -412,12 +427,12 @@ export async function comment(actor: Actor, taskId: string, body: string) {
   ]);
   if (!task) throw notFound('Task not found');
   await requireProject(actor, task.project_id, 'task.update');
-  const res = await pool.query<{ id: string; created_at: Date }>(
-    `INSERT INTO task_comments (company_id, task_id, author_id, body) VALUES ($1,$2,$3,$4)
-     RETURNING id, created_at`,
-    [actor.companyId, taskId, actor.userId, body.trim()],
+  const commentId = newId();
+  await pool.query(
+    `INSERT INTO task_comments (id, company_id, task_id, author_id, body) VALUES ($1,$2,$3,$4,$5)`,
+    [commentId, actor.companyId, taskId, actor.userId, body.trim()],
   );
-  await pool.query('INSERT INTO task_watchers (task_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [
+  await pool.query('INSERT IGNORE INTO task_watchers (task_id, user_id) VALUES ($1,$2)', [
     taskId,
     actor.userId,
   ]);
@@ -427,7 +442,7 @@ export async function comment(actor: Actor, taskId: string, body: string) {
     actorId: actor.userId,
     payload: { taskId, projectId: task.project_id, commented: true },
   });
-  return { id: res.rows[0]!.id, body: body.trim(), createdAt: res.rows[0]!.created_at };
+  return { id: commentId, body: body.trim(), createdAt: new Date() };
 }
 
 export async function indexTask(taskId: string): Promise<void> {
@@ -469,7 +484,7 @@ export function publicTask(row: TaskRow & { assignee_name?: string | null; proje
     assigneeName: row.assignee_name ?? null,
     reporterId: row.reporter_id,
     dueAt: row.due_at,
-    labels: row.labels,
+    labels: jsonArray(row.labels),
     checklist: row.checklist,
     position: row.position,
     version: row.version,

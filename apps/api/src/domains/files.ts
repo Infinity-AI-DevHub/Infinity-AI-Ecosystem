@@ -8,7 +8,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
-import { many, one, pool, transaction } from '../core/db.js';
+import { many, newId, one, pool, reload, transaction } from '../core/db.js';
 import { conflict, forbidden, notFound, payloadTooLarge, unprocessable } from '../core/errors.js';
 import { authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
@@ -77,12 +77,13 @@ export async function createFolder(actor: Actor, name: string, parentId: string 
     path,
   ]);
   if (existing) throw conflict('A folder with that name already exists here');
-  const res = await pool.query(
-    `INSERT INTO folders (company_id, parent_id, name, owner_id, path) VALUES ($1,$2,$3,$4,$5)
-     RETURNING id, parent_id, name, path`,
-    [actor.companyId, parentId, clean, actor.userId, path],
+  const folderId = newId();
+  await pool.query(
+    `INSERT INTO folders (id, company_id, parent_id, name, owner_id, path)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [folderId, actor.companyId, parentId, clean, actor.userId, path],
   );
-  return res.rows[0];
+  return { id: folderId, parent_id: parentId, name: clean, path };
 }
 
 export type UploadSession = {
@@ -96,9 +97,9 @@ export type UploadSession = {
 /** Storage quota is enforced before an upload is allowed to start. */
 async function assertQuota(companyId: string, additionalBytes: number): Promise<void> {
   const row = await one<{ used: number; quota: number }>(
-    `SELECT COALESCE(sum(size_bytes),0)::bigint AS used,
-            COALESCE((SELECT (settings->>'storageQuotaBytes')::bigint FROM companies WHERE id = $1),
-                     1099511627776)::bigint AS quota
+    `SELECT COALESCE(sum(size_bytes),0) AS used,
+            COALESCE((SELECT (settings->>'$.storageQuotaBytes') FROM companies WHERE id = $1),
+                     1099511627776) AS quota
        FROM files WHERE company_id = $1 AND state <> 'expired'`,
     [companyId],
   );
@@ -127,21 +128,23 @@ export async function beginUpload(
       if (existing.state === 'legal_hold') throw forbidden('This file is under legal hold');
       nextVersion = existing.current_version + 1;
     } else {
-      const res = await tx.query<FileRow>(
-        `INSERT INTO files (company_id, folder_id, name, owner_id, mime_type, state)
-         VALUES ($1,$2,$3,$4,$5,'processing') RETURNING *`,
-        [actor.companyId, input.folderId ?? null, filename, actor.userId, input.mimeType],
+      fileId = newId();
+      await tx.query(
+        `INSERT INTO files (id, company_id, folder_id, name, owner_id, mime_type, state)
+         VALUES ($1,$2,$3,$4,$5,$6,'processing')`,
+        [fileId, actor.companyId, input.folderId ?? null, filename, actor.userId, input.mimeType],
       );
-      fileId = res.rows[0]!.id;
     }
 
     const objectKey = buildObjectKey(actor.companyId, 'files', fileId, nextVersion);
     const expiresAt = new Date(Date.now() + 3600_000);
-    const session = await tx.query<{ id: string }>(
+    const uploadId = newId();
+    await tx.query(
       `INSERT INTO upload_sessions
-         (company_id, user_id, file_id, folder_id, filename, mime_type, declared_size, object_key, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+         (id, company_id, user_id, file_id, folder_id, filename, mime_type, declared_size, object_key, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [
+        uploadId,
         actor.companyId,
         actor.userId,
         fileId,
@@ -154,7 +157,7 @@ export async function beginUpload(
       ],
     );
     const uploadUrl = await storage.signedUploadUrl(objectKey, input.mimeType);
-    return { uploadId: session.rows[0]!.id, fileId, objectKey, uploadUrl, expiresAt };
+    return { uploadId, fileId, objectKey, uploadUrl, expiresAt };
   });
 }
 
@@ -177,7 +180,7 @@ export async function receiveUpload(
     state: string;
     user_id: string;
   }>(
-    `SELECT * FROM upload_sessions WHERE id = $1 AND company_id = $2 AND expires_at > now()`,
+    `SELECT * FROM upload_sessions WHERE id = $1 AND company_id = $2 AND expires_at > NOW(3)`,
     [uploadId, actor.companyId],
   );
   if (!session) throw notFound('Upload session not found or expired');
@@ -201,9 +204,11 @@ export async function receiveUpload(
     const version = versionRes.rows[0]?.version ?? 1;
     await tx.query(
       `INSERT INTO file_versions
-         (company_id, file_id, version, object_key, size_bytes, checksum, mime_type, scan_state, scan_detail, uploaded_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+         (id, company_id, file_id, version, object_key, size_bytes, checksum, mime_type,
+          scan_state, scan_detail, uploaded_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
+        newId(),
         actor.companyId,
         session.file_id,
         version,
@@ -217,10 +222,10 @@ export async function receiveUpload(
       ],
     );
     const state = verdict.state === 'infected' ? 'quarantined' : 'active';
-    const res = await tx.query<FileRow>(
+    await tx.query(
       `UPDATE files SET current_version = $2, size_bytes = $3, mime_type = $4, state = $5,
-              version = version + 1, updated_at = now()
-        WHERE id = $1 RETURNING *`,
+              version = version + 1, updated_at = NOW(3)
+        WHERE id = $1`,
       [session.file_id, version, put.size, sniffed, state],
     );
     await auditFromActor(
@@ -242,7 +247,7 @@ export async function receiveUpload(
       },
       tx,
     );
-    return res.rows[0]!;
+    return (await reload<FileRow>(tx, 'files', session.file_id))!;
   });
 
   if (verdict.state === 'infected') {
@@ -262,18 +267,18 @@ export async function listFiles(
        FROM files f LEFT JOIN users u ON u.id = f.owner_id
       WHERE f.company_id = $1
         -- The recycle bin is a separate view, not a filter over the active list.
-        AND (CASE WHEN $7::boolean
+        AND (CASE WHEN $7
                   THEN f.state = 'recycled'
                   ELSE f.state IN ('active','processing','quarantined','legal_hold')
              END)
-        AND ($2::uuid IS NULL OR f.folder_id = $2)
+        AND ($2 IS NULL OR f.folder_id = $2)
         AND (
           f.owner_id = $3
           OR EXISTS (
             SELECT 1 FROM resource_grants g
              WHERE g.resource_type = 'file' AND g.resource_id = f.id AND g.effect = 'allow'
                AND ((g.subject_type = 'user' AND g.subject_id = $3)
-                 OR (g.subject_type = 'group' AND g.subject_id = ANY($4::uuid[])))
+                 OR (g.subject_type = 'group' AND JSON_CONTAINS($4, JSON_QUOTE(g.subject_id))))
           )
           OR $5
         )
@@ -283,7 +288,7 @@ export async function listFiles(
       actor.companyId,
       opts.folderId ?? null,
       actor.userId,
-      actor.groupIds,
+      JSON.stringify(actor.groupIds),
       actor.accessLevel === 'admin' || actor.accessLevel === 'super_admin',
       opts.limit,
       opts.recycled ?? false,
@@ -299,7 +304,7 @@ export async function downloadUrl(actor: Actor, fileId: string, versionNumber?: 
 
   const version = await one<{ object_key: string; scan_state: string; version: number }>(
     `SELECT object_key, scan_state, version FROM file_versions
-      WHERE file_id = $1 AND ($2::int IS NULL OR version = $2)
+      WHERE file_id = $1 AND ($2 IS NULL OR version = $2)
       ORDER BY version DESC LIMIT 1`,
     [fileId, versionNumber ?? null],
   );
@@ -349,16 +354,19 @@ export async function share(
       { field: 'capabilities', message: 'file.read, file.update or file.delete' },
     ]);
   }
-  const res = await pool.query(
+  const grantId = newId();
+  await pool.query(
     `INSERT INTO resource_grants
-       (company_id, subject_type, subject_id, resource_type, resource_id, capabilities, granted_by, expires_at)
-     VALUES ($1,$2,$3,'file',$4,$5,$6,$7) RETURNING id`,
+       (id, company_id, subject_type, subject_id, resource_type, resource_id,
+        capabilities, conditions, granted_by, expires_at)
+     VALUES ($1,$2,$3,$4,'file',$5,$6,'{}',$7,$8)`,
     [
+      grantId,
       actor.companyId,
       input.subjectType,
       input.subjectId,
       fileId,
-      allowed,
+      JSON.stringify(allowed),
       actor.userId,
       input.expiresAt ? new Date(input.expiresAt) : null,
     ],
@@ -369,7 +377,7 @@ export async function share(
     metadata: { subjectType: input.subjectType, subjectId: input.subjectId, capabilities: allowed },
   });
   await indexFile(fileId);
-  return { grantId: (res.rows[0] as { id: string }).id };
+  return { grantId };
 }
 
 /** Deletion moves to the recycle bin; legal hold blocks it outright. */
@@ -378,9 +386,9 @@ export async function recycle(actor: Actor, fileId: string): Promise<void> {
   if (file.state === 'legal_hold') throw forbidden('This file is under legal hold and cannot be deleted');
   await transaction(async (tx) => {
     await tx.query(
-      `UPDATE files SET state = 'recycled', recycled_at = now(),
-              retention_until = now() + ($2 || ' days')::interval,
-              version = version + 1, updated_at = now()
+      `UPDATE files SET state = 'recycled', recycled_at = NOW(3),
+              retention_until = DATE_ADD(NOW(3), INTERVAL $2 DAY),
+              version = version + 1, updated_at = NOW(3)
         WHERE id = $1`,
       [fileId, config.retention.recycleBinDays],
     );
@@ -395,14 +403,14 @@ export async function recycle(actor: Actor, fileId: string): Promise<void> {
 
 export async function restore(actor: Actor, fileId: string): Promise<FileRow> {
   await authorize({ actor, capability: 'file.restore', resourceType: 'file', resourceId: fileId });
-  const res = await pool.query<FileRow>(
+  const res = await pool.query(
     `UPDATE files SET state = 'active', recycled_at = NULL, retention_until = NULL,
-            version = version + 1, updated_at = now()
-      WHERE id = $1 AND company_id = $2 AND state = 'recycled' RETURNING *`,
+            version = version + 1, updated_at = NOW(3)
+      WHERE id = $1 AND company_id = $2 AND state = 'recycled'`,
     [fileId, actor.companyId],
   );
-  const file = res.rows[0];
-  if (!file) throw notFound('No recycled file with that identifier');
+  if (res.rowCount === 0) throw notFound('No recycled file with that identifier');
+  const file = (await reload<FileRow>(pool, 'files', fileId))!;
   await auditFromActor(actor, 'file.restore', { resourceType: 'file', resourceId: fileId });
   await indexFile(fileId);
   return file;
@@ -411,7 +419,7 @@ export async function restore(actor: Actor, fileId: string): Promise<FileRow> {
 export async function setLegalHold(actor: Actor, fileId: string, held: boolean): Promise<void> {
   await authorize({ actor, capability: 'legal_hold.manage', resourceType: 'file', resourceId: fileId });
   await pool.query(
-    `UPDATE files SET state = $3, version = version + 1, updated_at = now()
+    `UPDATE files SET state = $3, version = version + 1, updated_at = NOW(3)
       WHERE id = $1 AND company_id = $2`,
     [fileId, actor.companyId, held ? 'legal_hold' : 'active'],
   );

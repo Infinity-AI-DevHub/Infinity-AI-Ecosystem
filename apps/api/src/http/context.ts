@@ -39,14 +39,14 @@ export async function resolveActor(request: FastifyRequest): Promise<Actor | nul
       capabilities: string[];
     }>(
       `SELECT id, user_id, capabilities FROM api_tokens
-        WHERE token_hash = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())`,
+        WHERE token_hash = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW(3))`,
       [hashToken(apiToken)],
     );
     if (!record) return null;
     const user = await identity.findUserById(record.user_id);
     if (!user || user.status !== 'active') return null;
     pool
-      .query('UPDATE api_tokens SET last_used_at = now() WHERE id = $1', [record.id])
+      .query('UPDATE api_tokens SET last_used_at = NOW(3) WHERE id = $1', [record.id])
       .catch(() => undefined);
     // A service token never carries an interactive session, so step-up actions are
     // unavailable to it by construction.
@@ -91,17 +91,24 @@ export async function assertCsrf(request: FastifyRequest): Promise<void> {
 
   const sessionCookie = request.cookies[config.security.sessionCookie];
   if (!sessionCookie) return; // unauthenticated endpoints handle their own protection
+
+  const session = await one<{ csrf_secret: string }>(
+    'SELECT csrf_secret FROM sessions WHERE token_hash = $1 AND revoked_at IS NULL',
+    [hashToken(sessionCookie)],
+  );
+  // A cookie that no longer matches a live session protects nothing, so the request is
+  // treated as unauthenticated. Without this a stale cookie would block the very
+  // endpoints someone needs when their session has gone - signing in, or activating an
+  // account - with a misleading CSRF error.
+  if (!session) return;
+
   if (!sameOriginAllowed(request)) throw forbidden('Request origin is not allowed');
 
   const header = request.headers['x-csrf-token'];
   const provided = Array.isArray(header) ? header[0] : header;
   if (!provided) throw forbidden('Missing CSRF token');
 
-  const session = await one<{ csrf_secret: string }>(
-    'SELECT csrf_secret FROM sessions WHERE token_hash = $1 AND revoked_at IS NULL',
-    [hashToken(sessionCookie)],
-  );
-  if (!session || !safeEqual(session.csrf_secret, provided)) {
+  if (!safeEqual(session.csrf_secret, provided)) {
     throw forbidden('CSRF validation failed');
   }
 }

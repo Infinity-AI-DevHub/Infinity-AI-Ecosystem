@@ -17,7 +17,7 @@ audit and retention are enforced on the server; the browser is never trusted.
 
 ```
 apps/
-  api/         Node + TypeScript + Fastify + PostgreSQL
+  api/         Node + TypeScript + Fastify + MySQL 8
     migrations/  Versioned, checksum-guarded SQL migrations
     src/core/    Config, database, authorization, audit, outbox, crypto, realtime
     src/domains/ Identity, calendar, chat, tasks, files, approvals, announcements, search…
@@ -30,11 +30,14 @@ docs/          Architecture, security, operations and API reference
 
 ## Running it locally
 
-You need Node 20+ and PostgreSQL 14+.
+You need Node 20+ and MySQL 8.0+ (8.0 is required for `SKIP LOCKED`, JSON functions,
+CHECK constraints and multi-valued indexes).
 
 ```bash
-# 1. Database
-createdb infinity
+# 1. Database — create it once
+mysql -h 127.0.0.1 -P 8889 -u root -proot \
+  -e "CREATE DATABASE IF NOT EXISTS ecosystem
+      CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
 
 # 2. API
 cd apps/api
@@ -62,7 +65,7 @@ openssl rand -hex 32
 ### With Docker
 
 ```bash
-docker compose up -d          # postgres, minio, clamav, mailpit
+docker compose up -d          # mysql, minio, clamav
 ```
 
 ## Testing

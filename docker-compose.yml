@@ -1,16 +1,21 @@
 # Local development stack. Production uses managed equivalents (blueprint 13).
 services:
-  postgres:
-    image: postgres:16-alpine
+  mysql:
+    image: mysql:8.0
     environment:
-      POSTGRES_USER: infinity
-      POSTGRES_PASSWORD: infinity_dev_only
-      POSTGRES_DB: infinity
-    # 5434 avoids colliding with a locally installed PostgreSQL on the default port.
-    ports: ['5434:5432']
-    volumes: ['pgdata:/var/lib/postgresql/data']
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: ecosystem
+    # The server runs in UTC; the application also pins each connection, so the two
+    # agree no matter how the host is configured.
+    command: >-
+      --default-time-zone=+00:00
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_0900_ai_ci
+    # 3307 avoids colliding with a locally installed MySQL (MAMP uses 8889).
+    ports: ['3307:3306']
+    volumes: ['mysqldata:/var/lib/mysql']
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U infinity -d infinity']
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-proot']
       interval: 5s
       timeout: 3s
       retries: 20
@@ -43,5 +48,5 @@ services:
 
 
 volumes:
-  pgdata:
+  mysqldata:
   miniodata:

@@ -10,7 +10,7 @@
  *
  * A role name alone never grants access to a specific record.
  */
-import { many, one, type Queryable } from './db.js';
+import { jsonArray, many, one, type Queryable } from './db.js';
 import { forbidden } from './errors.js';
 import { pool } from './db.js';
 
@@ -127,23 +127,25 @@ export async function explicitGrant(
   capability: string,
   db: Queryable = pool,
 ): Promise<'allow' | 'deny' | null> {
-  const rows = await db.query<{ effect: string; capabilities: string[] }>(
+  const rows = await db.query<{ effect: string; capabilities: unknown }>(
     `SELECT effect, capabilities FROM resource_grants
       WHERE company_id = $1
         AND resource_type = $2
         AND resource_id = $3
-        AND (expires_at IS NULL OR expires_at > now())
+        AND (expires_at IS NULL OR expires_at > NOW(3))
         AND (
           (subject_type = 'user'  AND subject_id = $4)
-          OR (subject_type = 'group' AND subject_id = ANY($5::uuid[]))
+          -- Group membership is passed as a JSON array; an empty array matches nothing.
+          OR (subject_type = 'group' AND JSON_CONTAINS($5, JSON_QUOTE(subject_id)))
         )`,
-    [actor.companyId, resourceType, resourceId, actor.userId, actor.groupIds],
+    [actor.companyId, resourceType, resourceId, actor.userId, JSON.stringify(actor.groupIds)],
   );
   if (rows.rows.length === 0) return null;
   // An explicit deny always wins over any allow.
-  const matches = rows.rows.filter(
-    (r) => r.capabilities.length === 0 || r.capabilities.includes(capability),
-  );
+  const matches = rows.rows.filter((r) => {
+    const granted = jsonArray(r.capabilities);
+    return granted.length === 0 || granted.includes(capability);
+  });
   if (matches.length === 0) return null;
   if (matches.some((r) => r.effect === 'deny')) return 'deny';
   return 'allow';

@@ -10,6 +10,7 @@
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL ?? '';
@@ -114,32 +115,41 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
 
     // A dedicated company keeps this suite isolated from seeded data.
     await db.purgeTransaction((tx) =>
-      tx.query(`DELETE FROM companies WHERE 'e2e.test' = ANY(verified_domains)`),
+      tx.query(
+        `DELETE FROM companies WHERE JSON_CONTAINS(verified_domains, JSON_QUOTE('e2e.test'))`,
+      ),
     );
-    const company = await db.one<{ id: string }>(
-      `INSERT INTO companies (name, verified_domains) VALUES ('E2E Corp', ARRAY['e2e.test'])
-       RETURNING id`,
+    companyId = randomUUID();
+    await db.query(
+      `INSERT INTO companies (id, name, verified_domains, settings)
+       VALUES ($1, 'E2E Corp', JSON_ARRAY('e2e.test'), JSON_OBJECT())`,
+      [companyId],
     );
-    companyId = company!.id;
 
-    const user = await db.one<{ id: string }>(
-      `INSERT INTO users (company_id, email, email_display, display_name, access_level, status, activated_at)
-       VALUES ($1,$2,$2,'E2E Administrator','super_admin','active',now()) RETURNING id`,
-      [companyId, ADMIN_EMAIL],
+    adminId = randomUUID();
+    await db.query(
+      `INSERT INTO users
+         (id, company_id, email, email_display, display_name, access_level, status, activated_at, modules)
+       VALUES ($1,$2,$3,$3,'E2E Administrator','super_admin','active',NOW(3), JSON_ARRAY())`,
+      [adminId, companyId, ADMIN_EMAIL],
     );
-    adminId = user!.id;
     // The administrator is enrolled in MFA: privileged operations require a session
     // that actually satisfied a second factor, so the suite must go through it.
     adminTotpSecret = crypto.generateTotpSecret();
     await db.query(
-      `INSERT INTO identities (user_id, password_hash, password_set_at, mfa_enabled, mfa_secret_enc, mfa_confirmed_at)
-       VALUES ($1,$2,now(),true,$3,now())`,
+      `INSERT INTO identities
+         (user_id, password_hash, password_set_at, mfa_enabled, mfa_secret_enc, mfa_confirmed_at, recovery_codes)
+       VALUES ($1,$2,NOW(3),1,$3,NOW(3), JSON_ARRAY())`,
       [adminId, await crypto.hashPassword(ADMIN_PASSWORD), crypto.encryptField(adminTotpSecret)],
     );
     await db.query(
-      `INSERT INTO approval_definitions (company_id, key, name, routing)
-       VALUES ($1,'expense','Expense claim', $2::jsonb)`,
-      [companyId, JSON.stringify([{ step: 1, approver: { type: 'manager' }, dueHours: 48 }])],
+      `INSERT INTO approval_definitions (id, company_id, \`key\`, name, form_schema, routing)
+       VALUES ($1,$2,'expense','Expense claim', JSON_ARRAY(), $3)`,
+      [
+        randomUUID(),
+        companyId,
+        JSON.stringify([{ step: 1, approver: { type: 'manager' }, dueHours: 48 }]),
+      ],
     );
 
     const { buildServer } = await import('../src/http/server.js');
@@ -228,14 +238,17 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     // A password-only session for an account whose role can create users must still be
     // refused: step-up is a property of the session, not of the role.
     const email = `nomfa.${Date.now()}@e2e.test`;
-    const created = await db.one<{ id: string }>(
-      `INSERT INTO users (company_id, email, email_display, display_name, access_level, status, activated_at)
-       VALUES ($1,$2,$2,'No MFA Admin','admin','active',now()) RETURNING id`,
-      [companyId, email],
+    const noMfaId = randomUUID();
+    await db.query(
+      `INSERT INTO users
+         (id, company_id, email, email_display, display_name, access_level, status, activated_at, modules)
+       VALUES ($1,$2,$3,$3,'No MFA Admin','admin','active',NOW(3), JSON_ARRAY())`,
+      [noMfaId, companyId, email],
     );
     await db.query(
-      `INSERT INTO identities (user_id, password_hash, password_set_at) VALUES ($1,$2,now())`,
-      [created!.id, await crypto.hashPassword(ADMIN_PASSWORD)],
+      `INSERT INTO identities (user_id, password_hash, password_set_at, recovery_codes)
+       VALUES ($1,$2,NOW(3), JSON_ARRAY())`,
+      [noMfaId, await crypto.hashPassword(ADMIN_PASSWORD)],
     );
 
     const client = new Client(app);
@@ -366,7 +379,7 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(second.headers['idempotent-replay'], 'true');
 
     const count = await db.one<{ count: number }>(
-      'SELECT count(*)::int AS count FROM users WHERE company_id = $1 AND email = $2',
+      'SELECT count(*) AS count FROM users WHERE company_id = $1 AND email = $2',
       [companyId, email],
     );
     assert.equal(count!.count, 1);
@@ -401,26 +414,32 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
   });
 
   it('isolates tenants: another company cannot be reached', async () => {
-    const other = await db.one<{ id: string }>(
-      `INSERT INTO companies (name, verified_domains) VALUES ('Other Corp', ARRAY['other.test'])
-       RETURNING id`,
+    const otherCompanyId = randomUUID();
+    await db.query(
+      `INSERT INTO companies (id, name, verified_domains, settings)
+       VALUES ($1, 'Other Corp', JSON_ARRAY('other.test'), JSON_OBJECT())`,
+      [otherCompanyId],
     );
-    const otherUser = await db.one<{ id: string }>(
-      `INSERT INTO users (company_id, email, email_display, display_name, access_level, status)
-       VALUES ($1,'outsider@other.test','outsider@other.test','Outsider','staff','active') RETURNING id`,
-      [other!.id],
+    const otherUserId = randomUUID();
+    await db.query(
+      `INSERT INTO users
+         (id, company_id, email, email_display, display_name, access_level, status, modules)
+       VALUES ($1,$2,'outsider@other.test','outsider@other.test','Outsider','staff','active', JSON_ARRAY())`,
+      [otherUserId, otherCompanyId],
     );
 
     // A valid identifier from a different company must read as "not found", never as data.
-    const attempt = await admin.get(`/api/v1/users/${otherUser!.id}`);
+    const attempt = await admin.get(`/api/v1/users/${otherUserId}`);
     assert.equal(attempt.status, 404);
 
     const listed = await admin.get('/api/v1/users?limit=100');
     assert.equal(
-      listed.body.items.some((u: Json) => u.id === otherUser!.id),
+      listed.body.items.some((u: Json) => u.id === otherUserId),
       false,
     );
-    await db.purgeTransaction((tx) => tx.query('DELETE FROM companies WHERE id = $1', [other!.id]));
+    await db.purgeTransaction((tx) =>
+      tx.query('DELETE FROM companies WHERE id = $1', [otherCompanyId]),
+    );
   });
 
   // --------------------------------------------------------------- collaboration
@@ -453,9 +472,10 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
   });
 
   it('schedules a meeting and prevents double-booking a room', async () => {
-    const room = await db.one<{ id: string }>(
-      `INSERT INTO rooms (company_id, name, capacity) VALUES ($1,'E2E Boardroom',10) RETURNING id`,
-      [companyId],
+    const roomId = randomUUID();
+    await db.query(
+      `INSERT INTO rooms (id, company_id, name, capacity) VALUES ($1,$2,'E2E Boardroom',10)`,
+      [roomId, companyId],
     );
     const startsAt = new Date(Date.now() + 86_400_000).toISOString();
     const endsAt = new Date(Date.now() + 90_000_000).toISOString();
@@ -467,7 +487,7 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
         startsAt,
         endsAt,
         timezone: 'Asia/Colombo',
-        roomId: room!.id,
+        roomId,
         attendeeIds: [staffId],
       },
       { 'idempotency-key': `event-${Date.now()}` },
@@ -481,7 +501,7 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
         startsAt,
         endsAt,
         timezone: 'Asia/Colombo',
-        roomId: room!.id,
+        roomId,
         attendeeIds: [],
       },
       { 'idempotency-key': `event-clash-${Date.now()}` },
@@ -742,7 +762,7 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
 
   it('returns only results the caller is authorized to see', async () => {
     const searchIndex = await import('../src/domains/search.js');
-    const secretId = (await db.one<{ id: string }>('SELECT gen_random_uuid() AS id'))!.id;
+    const secretId = randomUUID();
     await searchIndex.index({
       companyId,
       docType: 'file',

@@ -28,7 +28,7 @@ export async function build(actor: Actor) {
            FROM calendar_events e
            JOIN event_attendees a ON a.event_id = e.id AND a.user_id = $1
           WHERE e.status = 'confirmed'
-            AND e.ends_at > now() AND e.starts_at < now() + interval '24 hours'
+            AND e.ends_at > NOW(3) AND e.starts_at < DATE_ADD(NOW(3), INTERVAL 24 HOUR)
           ORDER BY e.starts_at LIMIT 8`,
         [actor.userId],
       ),
@@ -47,11 +47,11 @@ export async function build(actor: Actor) {
     widget('approvals', async () => {
       const row = await one<{ awaiting: number; mine_pending: number }>(
         `SELECT
-           (SELECT count(*)::int FROM approval_requests r
+           (SELECT count(*) FROM approval_requests r
               JOIN approval_steps s ON s.request_id = r.id
              WHERE r.status = 'pending' AND s.approver_id = $1
                AND s.step_number = r.current_step AND s.state = 'active') AS awaiting,
-           (SELECT count(*)::int FROM approval_requests
+           (SELECT count(*) FROM approval_requests
              WHERE requester_id = $1 AND status = 'pending') AS mine_pending`,
         [actor.userId],
       );
@@ -60,7 +60,7 @@ export async function build(actor: Actor) {
 
     widget('notifications', async () => {
       const row = await one<{ unread: number }>(
-        'SELECT count(*)::int AS unread FROM notifications WHERE user_id = $1 AND read_at IS NULL',
+        'SELECT count(*) AS unread FROM notifications WHERE user_id = $1 AND read_at IS NULL',
         [actor.userId],
       );
       return { unread: row?.unread ?? 0 };
@@ -73,7 +73,7 @@ export async function build(actor: Actor) {
 
     widget('storage', async () => {
       const row = await one<{ used: number; files: number }>(
-        `SELECT COALESCE(sum(size_bytes),0)::bigint AS used, count(*)::int AS files
+        `SELECT COALESCE(sum(size_bytes),0) AS used, count(*) AS files
            FROM files WHERE company_id = $1 AND state = 'active'`,
         [actor.companyId],
       );

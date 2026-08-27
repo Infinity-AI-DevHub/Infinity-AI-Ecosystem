@@ -73,7 +73,7 @@ export const config = {
   trustProxy: bool('TRUST_PROXY', isProd),
 
   db: {
-    url: req('DATABASE_URL', 'postgres://postgres:postgres@localhost:5432/infinity'),
+    url: req('DATABASE_URL', 'mysql://root:root@localhost:8889/ecosystem'),
     poolMax: int('DATABASE_POOL_MAX', 10),
     ssl: bool('DATABASE_SSL', false),
     statementTimeoutMs: int('DATABASE_STATEMENT_TIMEOUT_MS', 15000),

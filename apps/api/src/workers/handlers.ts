@@ -373,15 +373,18 @@ const onAnnouncementPublished: Handler = async (event) => {
     );
   } else if (audience.scope === 'department') {
     recipients = await many<{ id: string }>(
-      `SELECT id FROM users WHERE company_id = $1 AND status = 'active' AND department_id = ANY($2::uuid[])`,
-      [event.company_id, audience.departmentIds ?? []],
+      `SELECT id FROM users
+        WHERE company_id = $1 AND status = 'active'
+          AND JSON_CONTAINS($2, JSON_QUOTE(department_id))`,
+      [event.company_id, JSON.stringify(audience.departmentIds ?? [])],
     );
   } else if (audience.scope === 'group') {
     recipients = await many<{ id: string }>(
       `SELECT DISTINCT u.id FROM users u
          JOIN group_members gm ON gm.user_id = u.id
-        WHERE u.company_id = $1 AND u.status = 'active' AND gm.group_id = ANY($2::uuid[])`,
-      [event.company_id, audience.groupIds ?? []],
+        WHERE u.company_id = $1 AND u.status = 'active'
+          AND JSON_CONTAINS($2, JSON_QUOTE(gm.group_id))`,
+      [event.company_id, JSON.stringify(audience.groupIds ?? [])],
     );
   }
 

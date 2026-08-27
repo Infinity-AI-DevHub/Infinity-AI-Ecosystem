@@ -11,7 +11,7 @@
  * data before real people are loaded.
  */
 import { randomUUID } from 'node:crypto';
-import { pool, closePool, transaction } from '../core/db.js';
+import { closePool, newId, pool, transaction } from '../core/db.js';
 import { logger } from '../core/logger.js';
 import { config } from '../core/config.js';
 import { generateToken, hashPassword, hashToken, generateTotpSecret, encryptField } from '../core/crypto.js';
@@ -85,17 +85,21 @@ async function seed(): Promise<void> {
 
   const result = await transaction(async (tx) => {
     // Company
-    const companyRes = await tx.query<{ id: string }>(
-      `INSERT INTO companies (name, verified_domains, settings)
-       VALUES ($1, ARRAY[$2]::text[], $3)
-       ON CONFLICT DO NOTHING
-       RETURNING id`,
-      [COMPANY_NAME, DOMAIN, JSON.stringify({ storageQuotaBytes: 1099511627776 })],
+    const newCompanyId = newId();
+    const companyRes = await tx.query(
+      `INSERT IGNORE INTO companies (id, name, verified_domains, settings)
+       VALUES ($1,$2,$3,$4)`,
+      [
+        newCompanyId,
+        COMPANY_NAME,
+        JSON.stringify([DOMAIN]),
+        JSON.stringify({ storageQuotaBytes: 1099511627776 }),
+      ],
     );
-    let companyId = companyRes.rows[0]?.id;
+    let companyId: string | undefined = companyRes.rowCount > 0 ? newCompanyId : undefined;
     if (!companyId) {
       const existing = await tx.query<{ id: string }>(
-        'SELECT id FROM companies WHERE $1 = ANY(verified_domains) LIMIT 1',
+        'SELECT id FROM companies WHERE JSON_CONTAINS(verified_domains, JSON_QUOTE($1)) LIMIT 1',
         [DOMAIN],
       );
       companyId = existing.rows[0]?.id;
@@ -106,30 +110,33 @@ async function seed(): Promise<void> {
     // Departments
     const departmentIds = new Map<string, string>();
     for (const name of DEPARTMENTS) {
-      const res = await tx.query<{ id: string }>(
-        `INSERT INTO departments (company_id, name) VALUES ($1,$2)
-         ON CONFLICT (company_id, name) DO UPDATE SET name = EXCLUDED.name
-         RETURNING id`,
+      const departmentId = newId();
+      await tx.query(
+        'INSERT IGNORE INTO departments (id, company_id, name) VALUES ($1,$2,$3)',
+        [departmentId, companyId, name],
+      );
+      const row = await tx.query<{ id: string }>(
+        'SELECT id FROM departments WHERE company_id = $1 AND name = $2',
         [companyId, name],
       );
-      departmentIds.set(name, res.rows[0]!.id);
+      departmentIds.set(name, row.rows[0]!.id);
     }
 
     for (const room of ROOMS) {
       await tx.query(
-        `INSERT INTO rooms (company_id, name, capacity, location) VALUES ($1,$2,$3,$4)
-         ON CONFLICT (company_id, name) DO NOTHING`,
-        [companyId, room.name, room.capacity, room.location],
+        `INSERT IGNORE INTO rooms (id, company_id, name, capacity, location) VALUES ($1,$2,$3,$4,$5)`,
+        [newId(), companyId, room.name, room.capacity, room.location],
       );
     }
 
     for (const definition of APPROVAL_DEFINITIONS) {
       await tx.query(
-        `INSERT INTO approval_definitions (company_id, key, name, form_schema, routing)
-         VALUES ($1,$2,$3,$4,$5)
-         ON CONFLICT (company_id, key) DO UPDATE
-           SET name = EXCLUDED.name, form_schema = EXCLUDED.form_schema, routing = EXCLUDED.routing`,
+        `INSERT INTO approval_definitions (id, company_id, \`key\`, name, form_schema, routing)
+         VALUES ($1,$2,$3,$4,$5,$6) AS incoming
+         ON DUPLICATE KEY UPDATE
+           name = incoming.name, form_schema = incoming.form_schema, routing = incoming.routing`,
         [
+          newId(),
           companyId,
           definition.key,
           definition.name,
@@ -140,18 +147,27 @@ async function seed(): Promise<void> {
     }
 
     // Super administrator
-    const adminRes = await tx.query<{ id: string }>(
-      `INSERT INTO users (company_id, email, email_display, display_name, title, department_id,
-                          access_level, status, activated_at)
-       VALUES ($1,$2,$3,$4,'Workspace Administrator',$5,'super_admin',
-               CASE WHEN $6::text = '' THEN 'invited' ELSE 'active' END,
-               CASE WHEN $6::text = '' THEN NULL ELSE now() END)
-       ON CONFLICT (company_id, email) DO NOTHING
-       RETURNING id`,
-      [companyId, ADMIN_EMAIL, ADMIN_EMAIL, ADMIN_NAME, departmentIds.get('Executive'), ADMIN_PASSWORD],
+    const newAdminId = newId();
+    const adminRes = await tx.query(
+      `INSERT IGNORE INTO users
+         (id, company_id, email, email_display, display_name, title, department_id,
+          access_level, status, activated_at, modules)
+       VALUES ($1,$2,$3,$4,$5,'Workspace Administrator',$6,'super_admin',
+               CASE WHEN $7 = '' THEN 'invited' ELSE 'active' END,
+               CASE WHEN $7 = '' THEN NULL ELSE NOW(3) END,
+               JSON_ARRAY())`,
+      [
+        newAdminId,
+        companyId,
+        ADMIN_EMAIL,
+        ADMIN_EMAIL,
+        ADMIN_NAME,
+        departmentIds.get('Executive'),
+        ADMIN_PASSWORD,
+      ],
     );
 
-    let adminId: string | null = adminRes.rows[0]?.id ?? null;
+    let adminId: string | null = adminRes.rowCount > 0 ? newAdminId : null;
     let invitationToken: string | null = null;
 
     if (adminId) {
@@ -160,19 +176,22 @@ async function seed(): Promise<void> {
         // enrolled but not yet confirmed - the first login completes enrolment.
         const secret = generateTotpSecret();
         await tx.query(
-          `INSERT INTO identities (user_id, password_hash, password_set_at, mfa_secret_enc)
-           VALUES ($1,$2,now(),$3)`,
+          `INSERT INTO identities (user_id, password_hash, password_set_at, mfa_secret_enc, recovery_codes)
+           VALUES ($1,$2,NOW(3),$3, JSON_ARRAY())`,
           [adminId, await hashPassword(ADMIN_PASSWORD), encryptField(secret)],
         );
       } else {
         // No password given: issue a normal single-use activation invitation instead of
         // inventing one. This is the path the blueprint requires.
-        await tx.query('INSERT INTO identities (user_id) VALUES ($1)', [adminId]);
+        await tx.query(
+          'INSERT INTO identities (user_id, recovery_codes) VALUES ($1, JSON_ARRAY())',
+          [adminId],
+        );
         invitationToken = generateToken();
         await tx.query(
-          `INSERT INTO invitations (company_id, user_id, token_hash, expires_at)
-           VALUES ($1,$2,$3, now() + interval '72 hours')`,
-          [companyId, adminId, hashToken(invitationToken)],
+          `INSERT INTO invitations (id, company_id, user_id, token_hash, expires_at)
+           VALUES ($1,$2,$3,$4, DATE_ADD(NOW(3), INTERVAL 72 HOUR))`,
+          [newId(), companyId, adminId, hashToken(invitationToken)],
         );
       }
     } else {
@@ -189,13 +208,14 @@ async function seed(): Promise<void> {
     if (!config.isProd && adminId) {
       for (const person of SAMPLE_PEOPLE) {
         const email = `${person.name.toLowerCase().replace(/[^a-z]+/g, '.')}@${DOMAIN}`;
-        const res = await tx.query<{ id: string }>(
-          `INSERT INTO users (company_id, email, email_display, display_name, title, department_id,
-                              manager_id, access_level, status, activated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'invited',NULL)
-           ON CONFLICT (company_id, email) DO NOTHING
-           RETURNING id`,
+        const personId = newId();
+        const res = await tx.query(
+          `INSERT IGNORE INTO users
+             (id, company_id, email, email_display, display_name, title, department_id,
+              manager_id, access_level, status, activated_at, modules)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'invited',NULL, JSON_ARRAY())`,
           [
+            personId,
             companyId,
             email,
             email,
@@ -206,41 +226,44 @@ async function seed(): Promise<void> {
             person.level,
           ],
         );
-        const userId = res.rows[0]?.id;
-        if (!userId) continue;
-        await tx.query('INSERT INTO identities (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [userId]);
+        if (res.rowCount === 0) continue;
+        const userId = personId;
+        await tx.query(
+          'INSERT IGNORE INTO identities (user_id, recovery_codes) VALUES ($1, JSON_ARRAY())',
+          [userId],
+        );
         // Each seeded colleague gets a real, single-use invitation - never a shared password.
         const token = generateToken();
         await tx.query(
-          `INSERT INTO invitations (company_id, user_id, token_hash, expires_at)
-           VALUES ($1,$2,$3, now() + interval '72 hours')`,
-          [companyId, userId, hashToken(token)],
+          `INSERT INTO invitations (id, company_id, user_id, token_hash, expires_at)
+           VALUES ($1,$2,$3,$4, DATE_ADD(NOW(3), INTERVAL 72 HOUR))`,
+          [newId(), companyId, userId, hashToken(token)],
         );
         created.push(`${person.name} <${email}> activation: ${config.publicUrl}/activate?token=${token}`);
       }
 
       // A company-wide channel and a starter project give the workspace somewhere to begin.
-      const channel = await tx.query<{ id: string }>(
-        `INSERT INTO chat_rooms (company_id, type, name, topic, visibility, created_by)
-         VALUES ($1,'channel','general','Company-wide announcements and discussion','company',$2)
-         ON CONFLICT DO NOTHING RETURNING id`,
-        [companyId, adminId],
+      const channelId = newId();
+      const channel = await tx.query(
+        `INSERT IGNORE INTO chat_rooms (id, company_id, type, name, topic, visibility, created_by)
+         VALUES ($1,$2,'channel','general','Company-wide announcements and discussion','company',$3)`,
+        [channelId, companyId, adminId],
       );
-      if (channel.rows[0]) {
+      if (channel.rowCount > 0) {
         await tx.query(`INSERT INTO chat_members (room_id, user_id, role) VALUES ($1,$2,'owner')`, [
-          channel.rows[0].id,
+          channelId,
           adminId,
         ]);
       }
-      const project = await tx.query<{ id: string }>(
-        `INSERT INTO projects (company_id, name, key, description, owner_id)
-         VALUES ($1,'Workspace Rollout','ROLL','Migration and adoption of Infinity Workspace',$2)
-         ON CONFLICT (company_id, key) DO NOTHING RETURNING id`,
-        [companyId, adminId],
+      const projectId = newId();
+      const project = await tx.query(
+        `INSERT IGNORE INTO projects (id, company_id, name, \`key\`, description, owner_id)
+         VALUES ($1,$2,'Workspace Rollout','ROLL','Migration and adoption of Infinity Workspace',$3)`,
+        [projectId, companyId, adminId],
       );
-      if (project.rows[0]) {
+      if (project.rowCount > 0) {
         await tx.query(`INSERT INTO project_members (project_id, user_id, role) VALUES ($1,$2,'owner')`, [
-          project.rows[0].id,
+          projectId,
           adminId,
         ]);
       }

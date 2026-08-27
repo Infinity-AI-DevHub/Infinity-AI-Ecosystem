@@ -1,483 +1,462 @@
--- Infinity Workspace :: module schema (mail, calendar, chat, tasks, files, approvals)
-
--- =============================================================== mail
-CREATE TABLE mailboxes (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id  uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  owner_id    uuid REFERENCES users(id) ON DELETE CASCADE,
-  address     text NOT NULL,
-  display_name text NOT NULL,
-  type        text NOT NULL DEFAULT 'user' CHECK (type IN ('user','shared','resource')),
-  provider_id text,
-  provision_state text NOT NULL DEFAULT 'pending'
-              CHECK (provision_state IN ('pending','provisioning','ready','failed','disabled')),
-  quota_bytes bigint NOT NULL DEFAULT 21474836480,
-  used_bytes  bigint NOT NULL DEFAULT 0,
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  updated_at  timestamptz NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX mailboxes_address_key ON mailboxes (company_id, address);
-
-CREATE TABLE mailbox_delegates (
-  mailbox_id uuid NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
-  user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  access     text NOT NULL DEFAULT 'read' CHECK (access IN ('read','send','full')),
-  PRIMARY KEY (mailbox_id, user_id)
-);
-
-CREATE TABLE mail_folders (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  mailbox_id uuid NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
-  name       text NOT NULL,
-  kind       text NOT NULL DEFAULT 'custom'
-             CHECK (kind IN ('inbox','sent','drafts','archive','trash','spam','quarantine','custom')),
-  position   integer NOT NULL DEFAULT 100,
-  UNIQUE (mailbox_id, name)
-);
-
-CREATE TABLE mail_threads (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id  uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  mailbox_id  uuid NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
-  subject     text NOT NULL DEFAULT '',
-  last_message_at timestamptz NOT NULL DEFAULT now(),
-  message_count integer NOT NULL DEFAULT 0,
-  unread_count  integer NOT NULL DEFAULT 0
-);
-CREATE INDEX mail_threads_mailbox_idx ON mail_threads (mailbox_id, last_message_at DESC);
-
-CREATE TABLE mail_messages (
-  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id    uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  mailbox_id    uuid NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
-  folder_id     uuid NOT NULL REFERENCES mail_folders(id) ON DELETE CASCADE,
-  thread_id     uuid REFERENCES mail_threads(id) ON DELETE SET NULL,
-  provider_message_id text,
-  message_id_header   text,
-  in_reply_to   text,
-  direction     text NOT NULL CHECK (direction IN ('inbound','outbound')),
-  from_address  text NOT NULL,
-  from_name     text,
-  to_addresses  text[] NOT NULL DEFAULT '{}',
-  cc_addresses  text[] NOT NULL DEFAULT '{}',
-  bcc_addresses text[] NOT NULL DEFAULT '{}',
-  subject       text NOT NULL DEFAULT '',
-  body_text     text NOT NULL DEFAULT '',
-  body_html_sanitized text,
-  snippet       text NOT NULL DEFAULT '',
-  size_bytes    integer NOT NULL DEFAULT 0,
-  is_read       boolean NOT NULL DEFAULT false,
-  is_flagged    boolean NOT NULL DEFAULT false,
-  is_draft      boolean NOT NULL DEFAULT false,
-  labels        text[] NOT NULL DEFAULT '{}',
-  delivery_state text NOT NULL DEFAULT 'stored'
-                CHECK (delivery_state IN ('draft','queued','sending','sent','delivered','bounced','failed','stored','quarantined')),
-  delivery_detail text,
-  scan_state    text NOT NULL DEFAULT 'clean' CHECK (scan_state IN ('pending','clean','infected','skipped')),
-  retention_until timestamptz,
-  version       integer NOT NULL DEFAULT 1,
-  sent_at       timestamptz,
-  received_at   timestamptz NOT NULL DEFAULT now(),
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  updated_at    timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX mail_messages_folder_idx ON mail_messages (folder_id, received_at DESC);
-CREATE INDEX mail_messages_mailbox_unread_idx ON mail_messages (mailbox_id) WHERE is_read = false;
-CREATE UNIQUE INDEX mail_provider_dedupe_idx ON mail_messages (mailbox_id, provider_message_id)
-  WHERE provider_message_id IS NOT NULL;
-CREATE INDEX mail_messages_search_idx ON mail_messages
-  USING gin (to_tsvector('english', subject || ' ' || body_text));
-
-CREATE TABLE mail_attachments (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id  uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  message_id  uuid NOT NULL REFERENCES mail_messages(id) ON DELETE CASCADE,
-  filename    text NOT NULL,
-  mime_type   text NOT NULL,
-  size_bytes  bigint NOT NULL,
-  object_key  text NOT NULL,
-  checksum    text,
-  scan_state  text NOT NULL DEFAULT 'pending' CHECK (scan_state IN ('pending','clean','infected'))
-);
-
-CREATE TABLE mail_signatures (
-  user_id    uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  body_text  text NOT NULL DEFAULT '',
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
+-- Infinity Workspace :: module schema (calendar, chat, tasks, files, approvals)
+-- Employee email lives in a separate application, so there are no mailbox tables.
 
 -- =============================================================== calendar
 CREATE TABLE rooms (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  name       text NOT NULL,
-  capacity   integer NOT NULL DEFAULT 4,
-  location   text,
-  active     boolean NOT NULL DEFAULT true,
-  UNIQUE (company_id, name)
-);
+  id         CHAR(36)     NOT NULL PRIMARY KEY,
+  company_id CHAR(36)     NOT NULL,
+  name       VARCHAR(160) NOT NULL,
+  capacity   INT          NOT NULL DEFAULT 4,
+  location   VARCHAR(200) NULL,
+  active     TINYINT(1)   NOT NULL DEFAULT 1,
+  UNIQUE KEY rooms_company_name (company_id, name),
+  CONSTRAINT rooms_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
 
 CREATE TABLE calendar_events (
-  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id    uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  organizer_id  uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  title         text NOT NULL,
-  description   text NOT NULL DEFAULT '',
-  location      text,
-  room_id       uuid REFERENCES rooms(id) ON DELETE SET NULL,
-  starts_at     timestamptz NOT NULL,
-  ends_at       timestamptz NOT NULL,
-  timezone      text NOT NULL DEFAULT 'UTC',
-  all_day       boolean NOT NULL DEFAULT false,
-  recurrence_rule text,
-  recurrence_parent_id uuid REFERENCES calendar_events(id) ON DELETE CASCADE,
-  visibility    text NOT NULL DEFAULT 'company' CHECK (visibility IN ('private','company','public')),
-  status        text NOT NULL DEFAULT 'confirmed' CHECK (status IN ('confirmed','cancelled')),
-  meeting_room_key text,
-  meeting_provider text,
-  agenda        text NOT NULL DEFAULT '',
-  notes         text NOT NULL DEFAULT '',
-  reminder_minutes integer NOT NULL DEFAULT 10,
-  version       integer NOT NULL DEFAULT 1,
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  updated_at    timestamptz NOT NULL DEFAULT now(),
-  CHECK (ends_at > starts_at)
-);
-CREATE INDEX events_company_time_idx ON calendar_events (company_id, starts_at);
-CREATE INDEX events_room_time_idx ON calendar_events (room_id, starts_at) WHERE room_id IS NOT NULL;
+  id                   CHAR(36)     NOT NULL PRIMARY KEY,
+  company_id           CHAR(36)     NOT NULL,
+  organizer_id         CHAR(36)     NOT NULL,
+  title                VARCHAR(300) NOT NULL,
+  description          TEXT         NOT NULL,
+  location             VARCHAR(300) NULL,
+  room_id              CHAR(36)     NULL,
+  starts_at            DATETIME(3)  NOT NULL,
+  ends_at              DATETIME(3)  NOT NULL,
+  timezone             VARCHAR(64)  NOT NULL DEFAULT 'UTC',
+  all_day              TINYINT(1)   NOT NULL DEFAULT 0,
+  recurrence_rule      VARCHAR(300) NULL,
+  recurrence_parent_id CHAR(36)     NULL,
+  visibility           VARCHAR(20)  NOT NULL DEFAULT 'company',
+  status               VARCHAR(20)  NOT NULL DEFAULT 'confirmed',
+  meeting_room_key     VARCHAR(120) NULL,
+  meeting_provider     VARCHAR(40)  NULL,
+  agenda               TEXT         NOT NULL,
+  notes                TEXT         NOT NULL,
+  reminder_minutes     INT          NOT NULL DEFAULT 10,
+  version              INT          NOT NULL DEFAULT 1,
+  created_at           DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at           DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  KEY events_company_time (company_id, starts_at),
+  KEY events_room_time (room_id, starts_at),
+  CONSTRAINT events_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT events_organizer_fk FOREIGN KEY (organizer_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT events_room_fk FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE SET NULL,
+  CONSTRAINT events_parent_fk FOREIGN KEY (recurrence_parent_id) REFERENCES calendar_events(id) ON DELETE CASCADE,
+  CONSTRAINT events_visibility_chk CHECK (visibility IN ('private','company','public')),
+  CONSTRAINT events_status_chk CHECK (status IN ('confirmed','cancelled')),
+  CONSTRAINT events_time_chk CHECK (ends_at > starts_at)
+) ENGINE=InnoDB;
 
 CREATE TABLE event_attendees (
-  event_id  uuid NOT NULL REFERENCES calendar_events(id) ON DELETE CASCADE,
-  user_id   uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  role      text NOT NULL DEFAULT 'attendee' CHECK (role IN ('host','attendee','optional')),
-  rsvp      text NOT NULL DEFAULT 'needs_action'
-            CHECK (rsvp IN ('needs_action','accepted','declined','tentative')),
-  responded_at timestamptz,
-  PRIMARY KEY (event_id, user_id)
-);
+  event_id     CHAR(36)    NOT NULL,
+  user_id      CHAR(36)    NOT NULL,
+  role         VARCHAR(20) NOT NULL DEFAULT 'attendee',
+  rsvp         VARCHAR(20) NOT NULL DEFAULT 'needs_action',
+  responded_at DATETIME(3) NULL,
+  PRIMARY KEY (event_id, user_id),
+  KEY event_attendees_user (user_id),
+  CONSTRAINT event_attendees_event_fk FOREIGN KEY (event_id) REFERENCES calendar_events(id) ON DELETE CASCADE,
+  CONSTRAINT event_attendees_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT event_attendees_role_chk CHECK (role IN ('host','attendee','optional')),
+  CONSTRAINT event_attendees_rsvp_chk CHECK (rsvp IN ('needs_action','accepted','declined','tentative'))
+) ENGINE=InnoDB;
 
 CREATE TABLE meeting_participants (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  event_id   uuid NOT NULL REFERENCES calendar_events(id) ON DELETE CASCADE,
-  user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  joined_at  timestamptz NOT NULL DEFAULT now(),
-  left_at    timestamptz,
-  role       text NOT NULL DEFAULT 'participant' CHECK (role IN ('host','participant'))
-);
+  id         CHAR(36)    NOT NULL PRIMARY KEY,
+  company_id CHAR(36)    NOT NULL,
+  event_id   CHAR(36)    NOT NULL,
+  user_id    CHAR(36)    NOT NULL,
+  joined_at  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  left_at    DATETIME(3) NULL,
+  role       VARCHAR(20) NOT NULL DEFAULT 'participant',
+  KEY meeting_participants_event (event_id),
+  CONSTRAINT meeting_participants_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT meeting_participants_event_fk FOREIGN KEY (event_id) REFERENCES calendar_events(id) ON DELETE CASCADE,
+  CONSTRAINT meeting_participants_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT meeting_participants_role_chk CHECK (role IN ('host','participant'))
+) ENGINE=InnoDB;
 
 -- =============================================================== chat
 CREATE TABLE chat_rooms (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id  uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  type        text NOT NULL CHECK (type IN ('channel','group','direct')),
-  name        text,
-  topic       text,
-  visibility  text NOT NULL DEFAULT 'private' CHECK (visibility IN ('private','company')),
-  direct_key  text,
-  created_by  uuid REFERENCES users(id) ON DELETE SET NULL,
-  archived_at timestamptz,
-  last_message_at timestamptz,
-  created_at  timestamptz NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX chat_direct_key_idx ON chat_rooms (company_id, direct_key) WHERE direct_key IS NOT NULL;
-CREATE UNIQUE INDEX chat_channel_name_idx ON chat_rooms (company_id, lower(name)) WHERE type = 'channel';
+  id              CHAR(36)     NOT NULL PRIMARY KEY,
+  company_id      CHAR(36)     NOT NULL,
+  type            VARCHAR(10)  NOT NULL,
+  name            VARCHAR(80)  NULL,
+  topic           VARCHAR(300) NULL,
+  visibility      VARCHAR(20)  NOT NULL DEFAULT 'private',
+  direct_key      VARCHAR(80)  NULL,
+  created_by      CHAR(36)     NULL,
+  archived_at     DATETIME(3)  NULL,
+  last_message_at DATETIME(3)  NULL,
+  created_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  -- Reproduces the PostgreSQL partial unique index on channel names: the generated
+  -- column is NULL for non-channels, and MySQL allows repeated NULLs in a unique key.
+  channel_key     VARCHAR(80) GENERATED ALWAYS AS
+                    (CASE WHEN type = 'channel' THEN LOWER(name) ELSE NULL END) STORED,
+  UNIQUE KEY chat_direct_key (company_id, direct_key),
+  UNIQUE KEY chat_channel_name (company_id, channel_key),
+  CONSTRAINT chat_rooms_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT chat_rooms_creator_fk FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT chat_rooms_type_chk CHECK (type IN ('channel','group','direct')),
+  CONSTRAINT chat_rooms_visibility_chk CHECK (visibility IN ('private','company'))
+) ENGINE=InnoDB;
 
 CREATE TABLE chat_members (
-  room_id     uuid NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE,
-  user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  role        text NOT NULL DEFAULT 'member' CHECK (role IN ('owner','moderator','member')),
-  read_cursor bigint NOT NULL DEFAULT 0,
-  muted       boolean NOT NULL DEFAULT false,
-  joined_at   timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (room_id, user_id)
-);
+  room_id     CHAR(36)    NOT NULL,
+  user_id     CHAR(36)    NOT NULL,
+  role        VARCHAR(20) NOT NULL DEFAULT 'member',
+  read_cursor BIGINT      NOT NULL DEFAULT 0,
+  muted       TINYINT(1)  NOT NULL DEFAULT 0,
+  joined_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (room_id, user_id),
+  KEY chat_members_user (user_id),
+  CONSTRAINT chat_members_room_fk FOREIGN KEY (room_id) REFERENCES chat_rooms(id) ON DELETE CASCADE,
+  CONSTRAINT chat_members_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT chat_members_role_chk CHECK (role IN ('owner','moderator','member'))
+) ENGINE=InnoDB;
 
 CREATE TABLE chat_messages (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  room_id    uuid NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE,
-  seq        bigint NOT NULL,
-  author_id  uuid REFERENCES users(id) ON DELETE SET NULL,
-  parent_id  uuid REFERENCES chat_messages(id) ON DELETE SET NULL,
-  body       text NOT NULL DEFAULT '',
-  mentions   uuid[] NOT NULL DEFAULT '{}',
-  file_id    uuid,
-  edited_at  timestamptz,
-  deleted_at timestamptz,
-  deleted_by uuid REFERENCES users(id) ON DELETE SET NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (room_id, seq)
-);
-CREATE INDEX chat_messages_room_idx ON chat_messages (room_id, seq DESC);
-CREATE INDEX chat_messages_search_idx ON chat_messages USING gin (to_tsvector('english', body));
+  id         CHAR(36)    NOT NULL PRIMARY KEY,
+  company_id CHAR(36)    NOT NULL,
+  room_id    CHAR(36)    NOT NULL,
+  seq        BIGINT      NOT NULL,
+  author_id  CHAR(36)    NULL,
+  parent_id  CHAR(36)    NULL,
+  body       TEXT        NOT NULL,
+  mentions   JSON        NOT NULL,
+  file_id    CHAR(36)    NULL,
+  edited_at  DATETIME(3) NULL,
+  deleted_at DATETIME(3) NULL,
+  deleted_by CHAR(36)    NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY chat_messages_room_seq (room_id, seq),
+  KEY chat_messages_room (room_id, seq DESC),
+  FULLTEXT KEY chat_messages_search (body),
+  CONSTRAINT chat_messages_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT chat_messages_room_fk FOREIGN KEY (room_id) REFERENCES chat_rooms(id) ON DELETE CASCADE,
+  CONSTRAINT chat_messages_author_fk FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT chat_messages_parent_fk FOREIGN KEY (parent_id) REFERENCES chat_messages(id) ON DELETE SET NULL,
+  CONSTRAINT chat_messages_deleter_fk FOREIGN KEY (deleted_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
 
 CREATE TABLE chat_reactions (
-  message_id uuid NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
-  user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  emoji      text NOT NULL,
-  PRIMARY KEY (message_id, user_id, emoji)
-);
-
-CREATE SEQUENCE IF NOT EXISTS chat_room_seq;
+  message_id CHAR(36)    NOT NULL,
+  user_id    CHAR(36)    NOT NULL,
+  emoji      VARCHAR(16) NOT NULL,
+  PRIMARY KEY (message_id, user_id, emoji),
+  CONSTRAINT chat_reactions_message_fk FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE CASCADE,
+  CONSTRAINT chat_reactions_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
 
 -- =============================================================== tasks
 CREATE TABLE projects (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  name       text NOT NULL,
-  key        text NOT NULL,
-  description text NOT NULL DEFAULT '',
-  status     text NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived')),
-  owner_id   uuid REFERENCES users(id) ON DELETE SET NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (company_id, key)
-);
+  id          CHAR(36)     NOT NULL PRIMARY KEY,
+  company_id  CHAR(36)     NOT NULL,
+  name        VARCHAR(160) NOT NULL,
+  `key`       VARCHAR(10)  NOT NULL,
+  description TEXT         NOT NULL,
+  status      VARCHAR(20)  NOT NULL DEFAULT 'active',
+  owner_id    CHAR(36)     NULL,
+  created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY projects_company_key (company_id, `key`),
+  CONSTRAINT projects_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT projects_owner_fk FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT projects_status_chk CHECK (status IN ('active','archived'))
+) ENGINE=InnoDB;
 
 CREATE TABLE project_members (
-  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  role       text NOT NULL DEFAULT 'member' CHECK (role IN ('owner','manager','member','viewer')),
-  PRIMARY KEY (project_id, user_id)
-);
+  project_id CHAR(36)    NOT NULL,
+  user_id    CHAR(36)    NOT NULL,
+  role       VARCHAR(20) NOT NULL DEFAULT 'member',
+  PRIMARY KEY (project_id, user_id),
+  KEY project_members_user (user_id),
+  CONSTRAINT project_members_project_fk FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  CONSTRAINT project_members_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT project_members_role_chk CHECK (role IN ('owner','manager','member','viewer'))
+) ENGINE=InnoDB;
 
 CREATE TABLE tasks (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id  uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  project_id  uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  number      integer NOT NULL,
-  title       text NOT NULL,
-  description text NOT NULL DEFAULT '',
-  status      text NOT NULL DEFAULT 'todo' CHECK (status IN ('todo','in_progress','review','blocked','done','cancelled')),
-  priority    text NOT NULL DEFAULT 'medium' CHECK (priority IN ('low','medium','high','urgent')),
-  assignee_id uuid REFERENCES users(id) ON DELETE SET NULL,
-  reporter_id uuid REFERENCES users(id) ON DELETE SET NULL,
-  due_at      timestamptz,
-  start_at    timestamptz,
-  labels      text[] NOT NULL DEFAULT '{}',
-  checklist   jsonb NOT NULL DEFAULT '[]'::jsonb,
-  position    double precision NOT NULL DEFAULT 1000,
-  version     integer NOT NULL DEFAULT 1,
-  completed_at timestamptz,
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  updated_at  timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (project_id, number)
-);
-CREATE INDEX tasks_project_status_idx ON tasks (project_id, status);
-CREATE INDEX tasks_assignee_idx ON tasks (assignee_id, status);
+  id           CHAR(36)     NOT NULL PRIMARY KEY,
+  company_id   CHAR(36)     NOT NULL,
+  project_id   CHAR(36)     NOT NULL,
+  number       INT          NOT NULL,
+  title        VARCHAR(300) NOT NULL,
+  description  TEXT         NOT NULL,
+  status       VARCHAR(20)  NOT NULL DEFAULT 'todo',
+  priority     VARCHAR(20)  NOT NULL DEFAULT 'medium',
+  assignee_id  CHAR(36)     NULL,
+  reporter_id  CHAR(36)     NULL,
+  due_at       DATETIME(3)  NULL,
+  start_at     DATETIME(3)  NULL,
+  labels       JSON         NOT NULL,
+  checklist    JSON         NOT NULL,
+  position     DOUBLE       NOT NULL DEFAULT 1000,
+  version      INT          NOT NULL DEFAULT 1,
+  completed_at DATETIME(3)  NULL,
+  created_at   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY tasks_project_number (project_id, number),
+  KEY tasks_project_status (project_id, status),
+  KEY tasks_assignee (assignee_id, status),
+  CONSTRAINT tasks_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT tasks_project_fk FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  CONSTRAINT tasks_assignee_fk FOREIGN KEY (assignee_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT tasks_reporter_fk FOREIGN KEY (reporter_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT tasks_status_chk CHECK (status IN ('todo','in_progress','review','blocked','done','cancelled')),
+  CONSTRAINT tasks_priority_chk CHECK (priority IN ('low','medium','high','urgent'))
+) ENGINE=InnoDB;
 
 CREATE TABLE task_dependencies (
-  task_id     uuid NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  depends_on  uuid NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  task_id    CHAR(36) NOT NULL,
+  depends_on CHAR(36) NOT NULL,
   PRIMARY KEY (task_id, depends_on),
-  CHECK (task_id <> depends_on)
-);
+  KEY task_dependencies_depends (depends_on),
+  CONSTRAINT task_dependencies_task_fk FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  CONSTRAINT task_dependencies_depends_fk FOREIGN KEY (depends_on) REFERENCES tasks(id) ON DELETE CASCADE,
+  CONSTRAINT task_dependencies_self_chk CHECK (task_id <> depends_on)
+) ENGINE=InnoDB;
 
 CREATE TABLE task_watchers (
-  task_id uuid NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  PRIMARY KEY (task_id, user_id)
-);
+  task_id CHAR(36) NOT NULL,
+  user_id CHAR(36) NOT NULL,
+  PRIMARY KEY (task_id, user_id),
+  KEY task_watchers_user (user_id),
+  CONSTRAINT task_watchers_task_fk FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  CONSTRAINT task_watchers_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
 
 CREATE TABLE task_comments (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  task_id    uuid NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  author_id  uuid REFERENCES users(id) ON DELETE SET NULL,
-  body       text NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
+  id         CHAR(36)    NOT NULL PRIMARY KEY,
+  company_id CHAR(36)    NOT NULL,
+  task_id    CHAR(36)    NOT NULL,
+  author_id  CHAR(36)    NULL,
+  body       TEXT        NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  KEY task_comments_task (task_id),
+  CONSTRAINT task_comments_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT task_comments_task_fk FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  CONSTRAINT task_comments_author_fk FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
 
 CREATE TABLE task_activity (
-  id         bigserial PRIMARY KEY,
-  company_id uuid NOT NULL,
-  task_id    uuid NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  actor_id   uuid,
-  field      text NOT NULL,
-  before_value text,
-  after_value  text,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
+  id           BIGINT      NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  company_id   CHAR(36)    NOT NULL,
+  task_id      CHAR(36)    NOT NULL,
+  actor_id     CHAR(36)    NULL,
+  field        VARCHAR(60) NOT NULL,
+  before_value TEXT        NULL,
+  after_value  TEXT        NULL,
+  created_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  KEY task_activity_task (task_id, created_at DESC),
+  CONSTRAINT task_activity_task_fk FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
 
 -- =============================================================== files
 CREATE TABLE folders (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  parent_id  uuid REFERENCES folders(id) ON DELETE CASCADE,
-  name       text NOT NULL,
-  owner_id   uuid REFERENCES users(id) ON DELETE SET NULL,
-  path       text NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (company_id, path)
-);
+  id         CHAR(36)     NOT NULL PRIMARY KEY,
+  company_id CHAR(36)     NOT NULL,
+  parent_id  CHAR(36)     NULL,
+  name       VARCHAR(255) NOT NULL,
+  owner_id   CHAR(36)     NULL,
+  path       VARCHAR(700) NOT NULL,
+  created_at DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY folders_company_path (company_id, path),
+  CONSTRAINT folders_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT folders_parent_fk FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE,
+  CONSTRAINT folders_owner_fk FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
 
 CREATE TABLE files (
-  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id     uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  folder_id      uuid REFERENCES folders(id) ON DELETE SET NULL,
-  name           text NOT NULL,
-  owner_id       uuid REFERENCES users(id) ON DELETE SET NULL,
-  classification text NOT NULL DEFAULT 'internal'
-                 CHECK (classification IN ('public','internal','confidential','restricted')),
-  state          text NOT NULL DEFAULT 'processing'
-                 CHECK (state IN ('processing','quarantined','active','recycled','legal_hold','expired')),
-  current_version integer NOT NULL DEFAULT 0,
-  size_bytes     bigint NOT NULL DEFAULT 0,
-  mime_type      text NOT NULL DEFAULT 'application/octet-stream',
-  recycled_at    timestamptz,
-  retention_until timestamptz,
-  version        integer NOT NULL DEFAULT 1,
-  created_at     timestamptz NOT NULL DEFAULT now(),
-  updated_at     timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX files_folder_idx ON files (folder_id) WHERE state = 'active';
-CREATE INDEX files_owner_idx ON files (owner_id);
+  id              CHAR(36)     NOT NULL PRIMARY KEY,
+  company_id      CHAR(36)     NOT NULL,
+  folder_id       CHAR(36)     NULL,
+  name            VARCHAR(255) NOT NULL,
+  owner_id        CHAR(36)     NULL,
+  classification  VARCHAR(20)  NOT NULL DEFAULT 'internal',
+  state           VARCHAR(20)  NOT NULL DEFAULT 'processing',
+  current_version INT          NOT NULL DEFAULT 0,
+  size_bytes      BIGINT       NOT NULL DEFAULT 0,
+  mime_type       VARCHAR(200) NOT NULL DEFAULT 'application/octet-stream',
+  recycled_at     DATETIME(3)  NULL,
+  retention_until DATETIME(3)  NULL,
+  version         INT          NOT NULL DEFAULT 1,
+  created_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  KEY files_folder (folder_id, state),
+  KEY files_owner (owner_id),
+  KEY files_state (company_id, state),
+  CONSTRAINT files_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT files_folder_fk FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL,
+  CONSTRAINT files_owner_fk FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT files_classification_chk CHECK (classification IN ('public','internal','confidential','restricted')),
+  CONSTRAINT files_state_chk CHECK (state IN ('processing','quarantined','active','recycled','legal_hold','expired'))
+) ENGINE=InnoDB;
 
 CREATE TABLE file_versions (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id  uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  file_id     uuid NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-  version     integer NOT NULL,
-  object_key  text NOT NULL,
-  size_bytes  bigint NOT NULL,
-  checksum    text NOT NULL,
-  mime_type   text NOT NULL,
-  scan_state  text NOT NULL DEFAULT 'pending' CHECK (scan_state IN ('pending','clean','infected','skipped')),
-  scan_detail text,
-  uploaded_by uuid REFERENCES users(id) ON DELETE SET NULL,
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (file_id, version)
-);
+  id          CHAR(36)     NOT NULL PRIMARY KEY,
+  company_id  CHAR(36)     NOT NULL,
+  file_id     CHAR(36)     NOT NULL,
+  version     INT          NOT NULL,
+  object_key  VARCHAR(500) NOT NULL,
+  size_bytes  BIGINT       NOT NULL,
+  checksum    VARCHAR(64)  NOT NULL,
+  mime_type   VARCHAR(200) NOT NULL,
+  scan_state  VARCHAR(20)  NOT NULL DEFAULT 'pending',
+  scan_detail VARCHAR(300) NULL,
+  uploaded_by CHAR(36)     NULL,
+  created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY file_versions_file_version (file_id, version),
+  CONSTRAINT file_versions_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT file_versions_file_fk FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+  CONSTRAINT file_versions_uploader_fk FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT file_versions_scan_chk CHECK (scan_state IN ('pending','clean','infected','skipped'))
+) ENGINE=InnoDB;
 
 CREATE TABLE upload_sessions (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id  uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  file_id     uuid REFERENCES files(id) ON DELETE CASCADE,
-  folder_id   uuid REFERENCES folders(id) ON DELETE SET NULL,
-  filename    text NOT NULL,
-  mime_type   text NOT NULL,
-  declared_size bigint NOT NULL,
-  object_key  text NOT NULL,
-  state       text NOT NULL DEFAULT 'open' CHECK (state IN ('open','finalizing','complete','aborted')),
-  expires_at  timestamptz NOT NULL,
-  created_at  timestamptz NOT NULL DEFAULT now()
-);
+  id            CHAR(36)     NOT NULL PRIMARY KEY,
+  company_id    CHAR(36)     NOT NULL,
+  user_id       CHAR(36)     NOT NULL,
+  file_id       CHAR(36)     NULL,
+  folder_id     CHAR(36)     NULL,
+  filename      VARCHAR(255) NOT NULL,
+  mime_type     VARCHAR(200) NOT NULL,
+  declared_size BIGINT       NOT NULL,
+  object_key    VARCHAR(500) NOT NULL,
+  state         VARCHAR(20)  NOT NULL DEFAULT 'open',
+  expires_at    DATETIME(3)  NOT NULL,
+  created_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  CONSTRAINT upload_sessions_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT upload_sessions_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT upload_sessions_file_fk FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+  CONSTRAINT upload_sessions_folder_fk FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL,
+  CONSTRAINT upload_sessions_state_chk CHECK (state IN ('open','finalizing','complete','aborted'))
+) ENGINE=InnoDB;
 
 -- =============================================================== approvals
 CREATE TABLE approval_definitions (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id  uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  key         text NOT NULL,
-  name        text NOT NULL,
-  schema_version integer NOT NULL DEFAULT 1,
-  form_schema jsonb NOT NULL DEFAULT '[]'::jsonb,
-  routing     jsonb NOT NULL DEFAULT '[]'::jsonb,
-  active      boolean NOT NULL DEFAULT true,
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (company_id, key)
-);
+  id             CHAR(36)     NOT NULL PRIMARY KEY,
+  company_id     CHAR(36)     NOT NULL,
+  `key`          VARCHAR(60)  NOT NULL,
+  name           VARCHAR(160) NOT NULL,
+  schema_version INT          NOT NULL DEFAULT 1,
+  form_schema    JSON         NOT NULL,
+  routing        JSON         NOT NULL,
+  active         TINYINT(1)   NOT NULL DEFAULT 1,
+  created_at     DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY approval_definitions_company_key (company_id, `key`),
+  CONSTRAINT approval_definitions_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
 
 CREATE TABLE approval_requests (
-  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id    uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  definition_id uuid NOT NULL REFERENCES approval_definitions(id) ON DELETE RESTRICT,
-  reference     text NOT NULL,
-  requester_id  uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  title         text NOT NULL,
-  amount        numeric(14,2),
-  currency      text NOT NULL DEFAULT 'USD',
-  data          jsonb NOT NULL DEFAULT '{}'::jsonb,
-  status        text NOT NULL DEFAULT 'pending'
-                CHECK (status IN ('pending','approved','rejected','returned','cancelled','expired')),
-  current_step  integer NOT NULL DEFAULT 1,
-  due_at        timestamptz,
-  version       integer NOT NULL DEFAULT 1,
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  updated_at    timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (company_id, reference)
-);
-CREATE INDEX approvals_status_idx ON approval_requests (company_id, status);
+  id            CHAR(36)      NOT NULL PRIMARY KEY,
+  company_id    CHAR(36)      NOT NULL,
+  definition_id CHAR(36)      NOT NULL,
+  reference     VARCHAR(60)   NOT NULL,
+  requester_id  CHAR(36)      NOT NULL,
+  title         VARCHAR(300)  NOT NULL,
+  amount        DECIMAL(14,2) NULL,
+  currency      VARCHAR(3)    NOT NULL DEFAULT 'USD',
+  data          JSON          NOT NULL,
+  status        VARCHAR(20)   NOT NULL DEFAULT 'pending',
+  current_step  INT           NOT NULL DEFAULT 1,
+  due_at        DATETIME(3)   NULL,
+  version       INT           NOT NULL DEFAULT 1,
+  created_at    DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at    DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY approval_requests_reference (company_id, reference),
+  KEY approvals_status (company_id, status),
+  CONSTRAINT approval_requests_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT approval_requests_definition_fk FOREIGN KEY (definition_id) REFERENCES approval_definitions(id),
+  CONSTRAINT approval_requests_requester_fk FOREIGN KEY (requester_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT approval_requests_status_chk CHECK (status IN
+    ('pending','approved','rejected','returned','cancelled','expired'))
+) ENGINE=InnoDB;
 
 CREATE TABLE approval_steps (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id  uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  request_id  uuid NOT NULL REFERENCES approval_requests(id) ON DELETE CASCADE,
-  step_number integer NOT NULL,
-  approver_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  delegate_of uuid REFERENCES users(id) ON DELETE SET NULL,
-  mode        text NOT NULL DEFAULT 'sequential' CHECK (mode IN ('sequential','parallel')),
-  state       text NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting','active','done','skipped')),
-  UNIQUE (request_id, step_number, approver_id)
-);
+  id          CHAR(36)    NOT NULL PRIMARY KEY,
+  company_id  CHAR(36)    NOT NULL,
+  request_id  CHAR(36)    NOT NULL,
+  step_number INT         NOT NULL,
+  approver_id CHAR(36)    NOT NULL,
+  delegate_of CHAR(36)    NULL,
+  mode        VARCHAR(20) NOT NULL DEFAULT 'sequential',
+  state       VARCHAR(20) NOT NULL DEFAULT 'waiting',
+  UNIQUE KEY approval_steps_unique (request_id, step_number, approver_id),
+  CONSTRAINT approval_steps_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT approval_steps_request_fk FOREIGN KEY (request_id) REFERENCES approval_requests(id) ON DELETE CASCADE,
+  CONSTRAINT approval_steps_approver_fk FOREIGN KEY (approver_id) REFERENCES users(id),
+  CONSTRAINT approval_steps_delegate_fk FOREIGN KEY (delegate_of) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT approval_steps_mode_chk CHECK (mode IN ('sequential','parallel')),
+  CONSTRAINT approval_steps_state_chk CHECK (state IN ('waiting','active','done','skipped'))
+) ENGINE=InnoDB;
 
--- decisions are immutable history
+-- Decisions are immutable history.
 CREATE TABLE approval_decisions (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id  uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  request_id  uuid NOT NULL REFERENCES approval_requests(id) ON DELETE CASCADE,
-  step_number integer NOT NULL,
-  approver_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  decision    text NOT NULL CHECK (decision IN ('approved','rejected','returned')),
-  comment     text,
-  created_at  timestamptz NOT NULL DEFAULT now()
-);
-CREATE TRIGGER approval_decisions_immutable BEFORE UPDATE OR DELETE ON approval_decisions
-  FOR EACH ROW EXECUTE FUNCTION audit_is_append_only();
+  id          CHAR(36)     NOT NULL PRIMARY KEY,
+  company_id  CHAR(36)     NOT NULL,
+  request_id  CHAR(36)     NOT NULL,
+  step_number INT          NOT NULL,
+  approver_id CHAR(36)     NOT NULL,
+  decision    VARCHAR(20)  NOT NULL,
+  comment     TEXT         NULL,
+  created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  KEY approval_decisions_request (request_id, created_at),
+  CONSTRAINT approval_decisions_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT approval_decisions_request_fk FOREIGN KEY (request_id) REFERENCES approval_requests(id) ON DELETE CASCADE,
+  CONSTRAINT approval_decisions_approver_fk FOREIGN KEY (approver_id) REFERENCES users(id),
+  CONSTRAINT approval_decisions_decision_chk CHECK (decision IN ('approved','rejected','returned'))
+) ENGINE=InnoDB;
 
 -- =============================================================== announcements
 CREATE TABLE announcements (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id  uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  author_id   uuid REFERENCES users(id) ON DELETE SET NULL,
-  title       text NOT NULL,
-  body        text NOT NULL,
-  priority    text NOT NULL DEFAULT 'normal' CHECK (priority IN ('normal','important','critical')),
-  audience    jsonb NOT NULL DEFAULT '{"scope":"company"}'::jsonb,
-  requires_ack boolean NOT NULL DEFAULT false,
-  publish_at  timestamptz NOT NULL DEFAULT now(),
-  expires_at  timestamptz,
-  state       text NOT NULL DEFAULT 'published' CHECK (state IN ('draft','published','withdrawn')),
-  created_at  timestamptz NOT NULL DEFAULT now()
-);
+  id           CHAR(36)     NOT NULL PRIMARY KEY,
+  company_id   CHAR(36)     NOT NULL,
+  author_id    CHAR(36)     NULL,
+  title        VARCHAR(300) NOT NULL,
+  body         TEXT         NOT NULL,
+  priority     VARCHAR(20)  NOT NULL DEFAULT 'normal',
+  audience     JSON         NOT NULL,
+  requires_ack TINYINT(1)   NOT NULL DEFAULT 0,
+  publish_at   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  expires_at   DATETIME(3)  NULL,
+  state        VARCHAR(20)  NOT NULL DEFAULT 'published',
+  created_at   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  KEY announcements_company_state (company_id, state, publish_at),
+  CONSTRAINT announcements_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  CONSTRAINT announcements_author_fk FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT announcements_priority_chk CHECK (priority IN ('normal','important','critical')),
+  CONSTRAINT announcements_state_chk CHECK (state IN ('draft','published','withdrawn'))
+) ENGINE=InnoDB;
 
 CREATE TABLE announcement_reads (
-  announcement_id uuid NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
-  user_id         uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  read_at         timestamptz NOT NULL DEFAULT now(),
-  acknowledged_at timestamptz,
-  PRIMARY KEY (announcement_id, user_id)
-);
+  announcement_id CHAR(36)    NOT NULL,
+  user_id         CHAR(36)    NOT NULL,
+  read_at         DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  acknowledged_at DATETIME(3) NULL,
+  PRIMARY KEY (announcement_id, user_id),
+  CONSTRAINT announcement_reads_announcement_fk FOREIGN KEY (announcement_id) REFERENCES announcements(id) ON DELETE CASCADE,
+  CONSTRAINT announcement_reads_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
 
 -- =============================================================== search projection
 CREATE TABLE search_documents (
-  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id    uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  doc_type      text NOT NULL,
-  resource_id   uuid NOT NULL,
-  title         text NOT NULL DEFAULT '',
-  body          text NOT NULL DEFAULT '',
-  classification text NOT NULL DEFAULT 'internal',
-  acl_user_ids  uuid[] NOT NULL DEFAULT '{}',
-  acl_group_ids uuid[] NOT NULL DEFAULT '{}',
-  acl_company_wide boolean NOT NULL DEFAULT false,
-  link          text,
-  updated_at    timestamptz NOT NULL DEFAULT now(),
-  tsv           tsvector,
-  UNIQUE (doc_type, resource_id)
-);
-CREATE INDEX search_tsv_idx ON search_documents USING gin (tsv);
-CREATE INDEX search_acl_users_idx ON search_documents USING gin (acl_user_ids);
-
-CREATE OR REPLACE FUNCTION search_documents_tsv() RETURNS trigger AS $$
-BEGIN
-  NEW.tsv := setweight(to_tsvector('english', coalesce(NEW.title,'')), 'A')
-          || setweight(to_tsvector('english', coalesce(NEW.body,'')), 'B');
-  NEW.updated_at := now();
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-CREATE TRIGGER search_documents_tsv_trg BEFORE INSERT OR UPDATE ON search_documents
-  FOR EACH ROW EXECUTE FUNCTION search_documents_tsv();
+  id               CHAR(36)     NOT NULL PRIMARY KEY,
+  company_id       CHAR(36)     NOT NULL,
+  doc_type         VARCHAR(20)  NOT NULL,
+  resource_id      CHAR(36)     NOT NULL,
+  title            VARCHAR(500) NOT NULL,
+  body             MEDIUMTEXT   NOT NULL,
+  classification   VARCHAR(20)  NOT NULL DEFAULT 'internal',
+  acl_user_ids     JSON         NOT NULL,
+  acl_group_ids    JSON         NOT NULL,
+  acl_company_wide TINYINT(1)   NOT NULL DEFAULT 0,
+  link             VARCHAR(500) NULL,
+  updated_at       DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+                     ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY search_documents_resource (doc_type, resource_id),
+  KEY search_company (company_id),
+  -- Multi-valued index so an ACL membership test can use an index rather than a scan.
+  KEY search_acl_users ((CAST(acl_user_ids AS CHAR(36) ARRAY))),
+  FULLTEXT KEY search_fulltext (title, body)
+) ENGINE=InnoDB;

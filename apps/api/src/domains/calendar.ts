@@ -5,7 +5,7 @@
  * booked in Colombo reads correctly in London and survives a DST transition.
  * Media transport is delegated to the meeting adapter.
  */
-import { many, one, pool, transaction } from '../core/db.js';
+import { many, newId, one, pool, reload, transaction } from '../core/db.js';
 import { conflict, forbidden, notFound, preconditionFailed, unprocessable } from '../core/errors.js';
 import { authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
@@ -100,14 +100,15 @@ export async function createEvent(
   const meeting = input.withVideoRoom ? await meetingDriver.createRoom(crypto.randomUUID()) : null;
 
   return transaction(async (tx) => {
-    const res = await tx.query<EventRow>(
+    const eventId = newId();
+    await tx.query(
       `INSERT INTO calendar_events
-         (company_id, organizer_id, title, description, location, room_id, starts_at, ends_at,
+         (id, company_id, organizer_id, title, description, location, room_id, starts_at, ends_at,
           timezone, all_day, recurrence_rule, visibility, meeting_room_key, meeting_provider,
-          agenda, reminder_minutes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-       RETURNING *`,
+          agenda, notes, reminder_minutes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'',$17)`,
       [
+        eventId,
         actor.companyId,
         actor.userId,
         input.title.trim(),
@@ -126,7 +127,7 @@ export async function createEvent(
         input.reminderMinutes ?? 10,
       ],
     );
-    const event = res.rows[0]!;
+    const event = (await reload<EventRow>(tx, 'calendar_events', eventId))!;
 
     await tx.query(
       `INSERT INTO event_attendees (event_id, user_id, role, rsvp)
@@ -135,15 +136,13 @@ export async function createEvent(
     );
     for (const id of input.attendeeIds.filter((a) => a !== actor.userId)) {
       await tx.query(
-        `INSERT INTO event_attendees (event_id, user_id, role) VALUES ($1,$2,'attendee')
-         ON CONFLICT DO NOTHING`,
+        `INSERT IGNORE INTO event_attendees (event_id, user_id, role) VALUES ($1,$2,'attendee')`,
         [event.id, id],
       );
     }
     for (const id of (input.optionalAttendeeIds ?? []).filter((a) => a !== actor.userId)) {
       await tx.query(
-        `INSERT INTO event_attendees (event_id, user_id, role) VALUES ($1,$2,'optional')
-         ON CONFLICT DO NOTHING`,
+        `INSERT IGNORE INTO event_attendees (event_id, user_id, role) VALUES ($1,$2,'optional')`,
         [event.id, id],
       );
     }
@@ -181,8 +180,9 @@ async function validateAttendees(companyId: string, ids: string[]) {
   const unique = [...new Set(ids)];
   if (unique.length === 0) return [];
   const rows = await many<{ id: string }>(
-    `SELECT id FROM users WHERE company_id = $1 AND id = ANY($2::uuid[]) AND status = 'active'`,
-    [companyId, unique],
+    `SELECT id FROM users
+      WHERE company_id = $1 AND JSON_CONTAINS($2, JSON_QUOTE(id)) AND status = 'active'`,
+    [companyId, JSON.stringify(unique)],
   );
   if (rows.length !== unique.length) {
     throw unprocessable('One or more attendees are not active accounts in this company', [
@@ -208,7 +208,7 @@ async function assertRoomAvailable(
   const clash = await one<{ id: string; title: string }>(
     `SELECT id, title FROM calendar_events
       WHERE room_id = $1 AND status = 'confirmed'
-        AND ($4::uuid IS NULL OR id <> $4)
+        AND ($4 IS NULL OR id <> $4)
         AND starts_at < $3 AND ends_at > $2`,
     [roomId, startsAt, endsAt, excludeEventId],
   );
@@ -226,7 +226,7 @@ export async function listEvents(
   }
   const rows = await many<EventRow & { attendee_count: number; rsvp: string | null }>(
     `SELECT e.*,
-            (SELECT count(*)::int FROM event_attendees a WHERE a.event_id = e.id) AS attendee_count,
+            (SELECT count(*) FROM event_attendees a WHERE a.event_id = e.id) AS attendee_count,
             me.rsvp
        FROM calendar_events e
        JOIN event_attendees ea ON ea.event_id = e.id AND ea.user_id = $2
@@ -247,12 +247,12 @@ export async function freeBusy(actor: Actor, userIds: string[], from: Date, to: 
        FROM calendar_events e
        JOIN event_attendees ea ON ea.event_id = e.id
       WHERE e.company_id = $1
-        AND ea.user_id = ANY($2::uuid[])
+        AND JSON_CONTAINS($2, JSON_QUOTE(ea.user_id))
         AND e.status = 'confirmed'
         AND ea.rsvp <> 'declined'
         AND e.starts_at < $4 AND e.ends_at > $3
       ORDER BY e.starts_at`,
-    [actor.companyId, userIds, from, to],
+    [actor.companyId, JSON.stringify(userIds), from, to],
   );
   const busy: Record<string, { from: Date; to: Date }[]> = {};
   for (const row of rows) {
@@ -319,20 +319,20 @@ export async function updateEvent(
   assertValidRecurrence(input.recurrenceRule);
 
   return transaction(async (tx) => {
-    const res = await tx.query<EventRow>(
+    await tx.query(
       `UPDATE calendar_events SET
          title = COALESCE($3, title),
          description = COALESCE($4, description),
-         location = CASE WHEN $5::boolean THEN $6 ELSE location END,
+         location = CASE WHEN $5 THEN $6 ELSE location END,
          room_id = $7,
          starts_at = $8, ends_at = $9,
          timezone = COALESCE($10, timezone),
-         recurrence_rule = CASE WHEN $11::boolean THEN $12 ELSE recurrence_rule END,
+         recurrence_rule = CASE WHEN $11 THEN $12 ELSE recurrence_rule END,
          agenda = COALESCE($13, agenda),
          reminder_minutes = COALESCE($14, reminder_minutes),
          version = version + 1,
-         updated_at = now()
-       WHERE id = $1 AND company_id = $2 RETURNING *`,
+         updated_at = NOW(3)
+       WHERE id = $1 AND company_id = $2`,
       [
         eventId,
         actor.companyId,
@@ -350,18 +350,19 @@ export async function updateEvent(
         input.reminderMinutes ?? null,
       ],
     );
-    const updated = res.rows[0]!;
+    const updated = (await reload<EventRow>(tx, 'calendar_events', eventId))!;
 
     if (input.attendeeIds) {
       await validateAttendees(actor.companyId, input.attendeeIds);
       await tx.query(
-        `DELETE FROM event_attendees WHERE event_id = $1 AND role <> 'host' AND user_id <> ALL($2::uuid[])`,
-        [eventId, input.attendeeIds],
+        `DELETE FROM event_attendees
+          WHERE event_id = $1 AND role <> 'host'
+            AND NOT JSON_CONTAINS($2, JSON_QUOTE(user_id))`,
+        [eventId, JSON.stringify(input.attendeeIds)],
       );
       for (const id of input.attendeeIds) {
         await tx.query(
-          `INSERT INTO event_attendees (event_id, user_id, role) VALUES ($1,$2,'attendee')
-           ON CONFLICT DO NOTHING`,
+          `INSERT IGNORE INTO event_attendees (event_id, user_id, role) VALUES ($1,$2,'attendee')`,
           [eventId, id],
         );
       }
@@ -399,7 +400,7 @@ export async function cancelEvent(actor: Actor, eventId: string, correlationId: 
   });
   await transaction(async (tx) => {
     await tx.query(
-      `UPDATE calendar_events SET status = 'cancelled', version = version + 1, updated_at = now() WHERE id = $1`,
+      `UPDATE calendar_events SET status = 'cancelled', version = version + 1, updated_at = NOW(3) WHERE id = $1`,
       [eventId],
     );
     await auditFromActor(actor, 'event.cancel', { resourceType: 'calendar_event', resourceId: eventId, correlationId }, tx);
@@ -418,7 +419,7 @@ export async function respond(
   rsvp: 'accepted' | 'declined' | 'tentative',
 ): Promise<void> {
   const res = await pool.query(
-    `UPDATE event_attendees SET rsvp = $3, responded_at = now()
+    `UPDATE event_attendees SET rsvp = $3, responded_at = NOW(3)
       WHERE event_id = $1 AND user_id = $2`,
     [eventId, actor.userId, rsvp],
   );
@@ -472,9 +473,9 @@ export async function joinMeeting(actor: Actor, eventId: string): Promise<JoinTi
   });
 
   await pool.query(
-    `INSERT INTO meeting_participants (company_id, event_id, user_id, role)
-     VALUES ($1,$2,$3,$4)`,
-    [actor.companyId, eventId, actor.userId, isHost ? 'host' : 'participant'],
+    `INSERT INTO meeting_participants (id, company_id, event_id, user_id, role)
+     VALUES ($1,$2,$3,$4,$5)`,
+    [newId(), actor.companyId, eventId, actor.userId, isHost ? 'host' : 'participant'],
   );
   await auditFromActor(actor, 'meeting.join', {
     resourceType: 'calendar_event',

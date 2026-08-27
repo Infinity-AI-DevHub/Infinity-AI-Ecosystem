@@ -12,7 +12,7 @@ Everything comes from the environment; see `apps/api/.env.example`. Required in 
 
 | Variable | Notes |
 |---|---|
-| `DATABASE_URL` | Managed PostgreSQL with multi-zone HA and PITR |
+| `DATABASE_URL` | Managed MySQL 8.0+ with multi-zone HA and point-in-time recovery |
 | `DATA_ENCRYPTION_KEY` | ≥32 characters. Move to a managed KMS and rotate on a schedule. The process refuses to start without it in production. |
 | `NOTIFY_DRIVER` | `smtp` or `provider`. `log` is refused in production, because invitations would then silently never arrive. |
 | `STORAGE_DRIVER` | `s3` for anything beyond a single node |
@@ -32,12 +32,16 @@ node dist/src/workers/index.js
 ```
 
 Running workers inside the API (`WORKERS_ENABLED=true`) is fine for a small installation
-and is the default. Scheduled jobs take a PostgreSQL advisory lock, so running several
-instances never duplicates work.
+and is the default. Scheduled jobs take a MySQL named lock (`GET_LOCK`), so running
+several instances never duplicates work.
 
 Migrations follow expand → migrate → contract so an old and a new application version can
 overlap safely during a rolling deploy. Applied migrations are checksum-guarded: editing
 one that has already run is a hard error, because it would silently diverge environments.
+
+MySQL has no transactional DDL. A migration that fails part-way leaves the statements
+before it applied, so the runner reports exactly which statement stopped and each file is
+written to be safe to inspect and resume.
 
 - **Liveness**: `GET /health` — process is up, touches nothing.
 - **Readiness**: `GET /ready` — dependencies are reachable. Gate traffic on this one.
@@ -71,7 +75,7 @@ Every alert should link to a dashboard and a runbook and have a named owning tea
 
 The blueprint's targets: **RPO 15 minutes**, **RTO 4 hours**.
 
-- Automated encrypted PostgreSQL backups plus point-in-time recovery.
+- Automated encrypted MySQL backups plus binlog-based point-in-time recovery.
 - Object storage versioning and deletion protection.
 - Configuration, infrastructure code and key-recovery procedures are part of the backup —
   a database dump alone is not a system backup.

@@ -1,11 +1,13 @@
 -- Infinity Workspace :: role -> capability baseline (blueprint appendix A)
+--
 -- A role grants an action CATEGORY only. Final authorization additionally evaluates
--- tenant, resource membership/ownership, classification, lifecycle and policy conditions.
+-- tenant, resource membership/ownership, classification, lifecycle and policy
+-- conditions. Mail capabilities are absent: employee email lives in a separate
+-- application, and a role must never claim an authority this system cannot enforce.
 
 INSERT INTO role_capabilities (role, capability) VALUES
 -- staff: personal work surface
 ('staff','user.read'),
-('staff','mail.read'),('staff','mail.send'),('staff','mail.delete'),
 ('staff','calendar.read'),('staff','event.create'),('staff','event.update'),('staff','event.cancel'),
 ('staff','freebusy.read'),
 ('staff','meeting.join'),
@@ -19,7 +21,6 @@ INSERT INTO role_capabilities (role, capability) VALUES
 
 -- manager: staff plus leadership actions
 ('manager','user.read'),
-('manager','mail.read'),('manager','mail.send'),('manager','mail.delete'),
 ('manager','calendar.read'),('manager','event.create'),('manager','event.update'),('manager','event.cancel'),
 ('manager','freebusy.read'),('manager','room.manage'),
 ('manager','meeting.join'),('manager','meeting.host'),('manager','participant.manage'),
@@ -43,8 +44,6 @@ INSERT INTO role_capabilities (role, capability) VALUES
 -- admin: everything operational
 ('admin','user.read'),('admin','user.create'),('admin','user.update'),('admin','user.suspend'),
 ('admin','user.reactivate'),('admin','role.assign'),('admin','session.revoke'),
-('admin','mail.read'),('admin','mail.send'),('admin','mail.delete'),('admin','mailbox.delegate'),
-('admin','shared_mailbox.manage'),('admin','quarantine.manage'),
 ('admin','calendar.read'),('admin','event.create'),('admin','event.update'),('admin','event.cancel'),
 ('admin','room.manage'),('admin','freebusy.read'),
 ('admin','meeting.join'),('admin','meeting.host'),('admin','participant.manage'),
@@ -65,14 +64,40 @@ INSERT INTO role_capabilities (role, capability) VALUES
 -- guest: explicitly shared resources only
 ('guest','file.read'),('guest','message.send'),('guest','room.join'),('guest','meeting.join'),
 
--- service: machine integration, narrow by token scope
-('service','mail.send'),('service','search.query')
-ON CONFLICT DO NOTHING;
+-- service: machine integration, narrowed further by token scope
+('service','search.query');
 
 -- super_admin inherits every admin capability plus platform ownership.
 INSERT INTO role_capabilities (role, capability)
-SELECT 'super_admin', capability FROM role_capabilities WHERE role = 'admin'
-ON CONFLICT DO NOTHING;
+SELECT 'super_admin', capability FROM (SELECT capability FROM role_capabilities WHERE role = 'admin') AS a;
+
 INSERT INTO role_capabilities (role, capability) VALUES
-('super_admin','company.manage'),('super_admin','domain.manage'),('super_admin','superadmin.grant')
-ON CONFLICT DO NOTHING;
+('super_admin','company.manage'),('super_admin','domain.manage'),('super_admin','superadmin.grant');
+
+-- =============================================================== append-only history
+--
+-- UPDATE is refused unconditionally: history is never rewritten.
+-- DELETE is refused unless the transaction opted in by setting @infinity_purge, which
+-- only tenant removal and approved retention do. A control that blocked lawful
+-- operations would get switched off in production, which is worse than one that is
+-- precise.
+
+CREATE TRIGGER audit_events_no_update BEFORE UPDATE ON audit_events FOR EACH ROW
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_events is append-only';
+
+CREATE TRIGGER audit_events_no_delete BEFORE DELETE ON audit_events FOR EACH ROW
+BEGIN
+  IF COALESCE(@infinity_purge, '') <> 'on' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_events is append-only';
+  END IF;
+END;
+
+CREATE TRIGGER approval_decisions_no_update BEFORE UPDATE ON approval_decisions FOR EACH ROW
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'approval_decisions is append-only';
+
+CREATE TRIGGER approval_decisions_no_delete BEFORE DELETE ON approval_decisions FOR EACH ROW
+BEGIN
+  IF COALESCE(@infinity_purge, '') <> 'on' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'approval_decisions is append-only';
+  END IF;
+END;
