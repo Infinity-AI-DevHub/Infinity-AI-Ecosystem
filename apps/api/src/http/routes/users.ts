@@ -4,7 +4,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { emailSchema, paginationSchema, parse } from '../../core/validation.js';
-import { authorize, requireStepUp } from '../../core/authz.js';
+import { authorize } from '../../core/authz.js';
 import { requireActor, expectedVersion, setVersionHeader, withIdempotency } from '../context.js';
 import * as identity from '../../domains/identity.js';
 import * as admin from '../../domains/admin.js';
@@ -47,7 +47,6 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
   app.post('/users', async (request, reply) => {
     const actor = requireActor(request);
     await authorize({ actor, capability: 'user.create', resourceless: true });
-    requireStepUp(actor, 'user.create');
 
     return withIdempotency(request, reply, 'POST /users', async () => {
       const input = parse(
@@ -93,7 +92,6 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       }),
       request.body,
     );
-    if (input.accessLevel) requireStepUp(actor, 'role.assign');
     const updated = await identity.updateUser(
       actor,
       id,
@@ -108,7 +106,6 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
   app.post('/users/:id/suspend', async (request, reply) => {
     const actor = requireActor(request);
     await authorize({ actor, capability: 'user.suspend', resourceless: true });
-    requireStepUp(actor, 'user.suspend');
     const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
     const input = parse(z.object({ reason: z.string().min(3).max(500) }), request.body);
     const updated = await identity.suspendUser(actor, id, input.reason, request.requestContext);
@@ -119,7 +116,6 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
   app.post('/users/:id/reactivate', async (request) => {
     const actor = requireActor(request);
     await authorize({ actor, capability: 'user.reactivate', resourceless: true });
-    requireStepUp(actor, 'user.reactivate');
     const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
     return identity.publicUser(await identity.reactivateUser(actor, id, request.requestContext));
   });
@@ -127,7 +123,6 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
   app.post('/users/:id/invitation', async (request) => {
     const actor = requireActor(request);
     await authorize({ actor, capability: 'user.create', resourceless: true });
-    requireStepUp(actor, 'user.create');
     const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
     return identity.reissueInvitation(actor, id, request.requestContext);
   });

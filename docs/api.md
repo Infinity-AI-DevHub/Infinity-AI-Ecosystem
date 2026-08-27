@@ -5,8 +5,7 @@ Base path `/api/v1`. All responses are JSON. Health endpoints are unversioned.
 ## Conventions
 
 **Authentication** — an HttpOnly session cookie, or `X-API-Token` for service integrations.
-A service token is additionally narrowed to its own capability scope and can never perform
-step-up-protected actions, because it has no interactive session.
+A service token is additionally narrowed to its own capability scope.
 
 **CSRF** — every cookie-authenticated state change must echo the readable `iw_csrf` cookie
 in an `X-CSRF-Token` header.
@@ -28,7 +27,7 @@ in an `X-CSRF-Token` header.
 |---|---|
 | 400 / 422 | Malformed request / validation failed (`fields` explains which) |
 | 401 | Not authenticated, or the session was revoked |
-| 403 | Authenticated but not permitted, or step-up MFA required |
+| 403 | Authenticated but not permitted |
 | 404 | Not found — also returned for another tenant's records, deliberately |
 | 409 | Conflict (double booking, already decided, dependency open) |
 | 412 | `If-Match` version precondition failed |
@@ -48,10 +47,8 @@ original response with `Idempotent-Replay: true`. Required in production.
 ### Authentication
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/auth/login` | Returns `authenticated`, or `mfa_required` with a challenge token |
-| POST | `/auth/mfa/verify` | Authenticator code or a single-use recovery code |
-| POST | `/auth/activate` | Consumes an invitation; returns the MFA secret and recovery codes **once** |
-| POST | `/auth/mfa/confirm` | Confirms enrolment |
+| POST | `/auth/login` | Password only; returns an authenticated session |
+| POST | `/auth/activate` | Consumes a single-use invitation and sets the password |
 | POST | `/auth/logout` · `/auth/password` | Password change revokes all sessions |
 | GET/DELETE | `/auth/sessions` · `/auth/sessions/:id` | List and revoke your own sessions |
 
@@ -60,8 +57,8 @@ original response with `Idempotent-Replay: true`. Required in production.
 `GET /me/notifications` · `POST /me/notifications/:id/read` · `POST /me/notifications/read-all`
 
 ### People
-`GET /users` · `GET /users/:id` · `POST /users` *(step-up)* · `PATCH /users/:id`
-`POST /users/:id/suspend` *(step-up)* · `POST /users/:id/reactivate` *(step-up)*
+`GET /users` · `GET /users/:id` · `POST /users` · `PATCH /users/:id`
+`POST /users/:id/suspend` · `POST /users/:id/reactivate`
 `POST /users/:id/invitation` · `GET /departments`
 
 ### Calendar and meetings
@@ -90,9 +87,9 @@ original response with `Idempotent-Replay: true`. Required in production.
 `GET|POST /announcements` · `POST /announcements/:id/read` · `GET /announcements/:id/stats`
 `DELETE /announcements/:id` *(withdraw)*
 `GET /search?q=&types=&limit=`
-`GET|PATCH /admin/company` · `POST /admin/company/domains` *(step-up)*
+`GET|PATCH /admin/company` (name, legal name, settings) · `POST /admin/company/domains`
 `GET|POST /admin/groups` · `PUT /admin/groups/:id/members` · `GET /admin/operations`
-`GET /audit/events` · `GET /audit/export` *(step-up)*
+`GET /audit/events` · `GET /audit/export`
 
 ### Realtime
 `GET /api/v1/ws` — authenticate, then `{"action":"subscribe","channel":"room:<uuid>"}`.

@@ -200,13 +200,16 @@ export type User = {
   createdAt: string;
 };
 
-export type Company = { id: string; name: string; verified_domains: string[] };
+export type Company = {
+  id: string;
+  name: string;
+  legal_name: string | null;
+  verified_domains: string[];
+};
 
 export type Session = {
   user: User | null;
   company: Company | null;
-  mfaEnabled: boolean;
-  mfaSatisfied: boolean;
 };
 
 export type Capabilities = {

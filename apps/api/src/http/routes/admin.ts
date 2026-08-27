@@ -4,7 +4,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { paginationSchema, parse } from '../../core/validation.js';
-import { requireStepUp } from '../../core/authz.js';
 import { requireActor } from '../context.js';
 import * as admin from '../../domains/admin.js';
 import { config } from '../../core/config.js';
@@ -16,9 +15,12 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   app.patch('/admin/company', async (request) => {
     const actor = requireActor(request);
-    requireStepUp(actor, 'settings.update');
     const input = parse(
-      z.object({ name: z.string().min(1).max(200).optional(), settings: z.record(z.unknown()).optional() }),
+      z.object({
+        name: z.string().min(1).max(200).optional(),
+        legalName: z.string().max(200).nullable().optional(),
+        settings: z.record(z.unknown()).optional(),
+      }),
       request.body,
     );
     return admin.updateSettings(actor, input);
@@ -26,7 +28,6 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/admin/company/domains', async (request, reply) => {
     const actor = requireActor(request);
-    requireStepUp(actor, 'domain.manage');
     const input = parse(z.object({ domain: z.string().min(3).max(253) }), request.body);
     reply.code(201);
     return admin.addVerifiedDomain(actor, input.domain);
@@ -72,7 +73,6 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/audit/export', async (request, reply) => {
     const actor = requireActor(request);
-    requireStepUp(actor, 'audit.export');
     const query = parse(
       z.object({ from: z.string().datetime(), to: z.string().datetime() }),
       request.query,

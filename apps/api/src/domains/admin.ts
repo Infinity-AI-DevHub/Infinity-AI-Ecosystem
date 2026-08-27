@@ -14,7 +14,8 @@ import { config } from '../core/config.js';
 export async function companySettings(actor: Actor) {
   await authorize({ actor, capability: 'settings.read', resourceless: true });
   const company = await one(
-    'SELECT id, name, verified_domains, region, status, settings, created_at FROM companies WHERE id = $1',
+    `SELECT id, name, legal_name, verified_domains, region, status, settings, created_at
+       FROM companies WHERE id = $1`,
     [actor.companyId],
   );
   if (!company) throw notFound('Company not found');
@@ -23,20 +24,28 @@ export async function companySettings(actor: Actor) {
 
 export async function updateSettings(
   actor: Actor,
-  input: { name?: string; settings?: Record<string, unknown> },
+  input: { name?: string; legalName?: string | null; settings?: Record<string, unknown> },
 ) {
   await authorize({ actor, capability: 'settings.update', resourceless: true });
   const before = await companySettings(actor);
   await pool.query(
     `UPDATE companies SET
        name = COALESCE($2, name),
-       settings = COALESCE($3, settings),
+       legal_name = CASE WHEN $3 THEN $4 ELSE legal_name END,
+       settings = COALESCE($5, settings),
        updated_at = NOW(3)
      WHERE id = $1`,
-    [actor.companyId, input.name ?? null, input.settings ? JSON.stringify(input.settings) : null],
+    [
+      actor.companyId,
+      input.name ?? null,
+      'legalName' in input,
+      input.legalName ?? null,
+      input.settings ? JSON.stringify(input.settings) : null,
+    ],
   );
   const res = await pool.query(
-    'SELECT id, name, verified_domains, region, status, settings FROM companies WHERE id = $1',
+    `SELECT id, name, legal_name, verified_domains, region, status, settings
+       FROM companies WHERE id = $1`,
     [actor.companyId],
   );
   await auditFromActor(actor, 'settings.update', {

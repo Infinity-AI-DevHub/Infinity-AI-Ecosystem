@@ -120,6 +120,5 @@ deadlines — without blame.
 - [ ] Backups running; **a timed restore drill has actually been performed**
 - [ ] Dashboards, alert routing and on-call rota live and tested
 - [ ] Penetration test complete and findings remediated or formally risk-accepted
-- [ ] All administrators enrolled in MFA
 - [ ] Migration reconciliation signed off; source, imported and skipped counts agree
 - [ ] Training delivered, helpdesk scripts and escalation route ready

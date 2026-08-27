@@ -159,14 +159,8 @@ export function Shell({ children }: { children: ReactNode }) {
           <div className="security-panel">
             <ShieldCheck size={16} aria-hidden="true" />
             <div>
-              <strong>{session?.mfaSatisfied ? 'Verified session' : 'Password only'}</strong>
-              <span>
-                {session?.mfaEnabled
-                  ? session.mfaSatisfied
-                    ? 'Two-factor verified'
-                    : 'Re-verify for admin actions'
-                  : 'Two-factor not enrolled'}
-              </span>
+              <strong>{session?.company?.name ?? 'Workspace'}</strong>
+              <span>{session?.user?.email ?? ''}</span>
             </div>
           </div>
           <p className={`connection-pill connection-${connection}`}>

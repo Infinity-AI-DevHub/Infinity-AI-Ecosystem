@@ -40,6 +40,7 @@ type Group = { id: string; name: string; description: string | null; member_coun
 type Company = {
   id: string;
   name: string;
+  legal_name: string | null;
   verified_domains: string[];
   region: string;
   status: string;
@@ -374,10 +375,11 @@ export default function Admin() {
 function CompanySettings({ company, onSaved }: { company: Company; onSaved: () => void }) {
   const { can, session } = useSession();
   const [name, setName] = useState(company.name);
+  const [legalName, setLegalName] = useState(company.legal_name ?? '');
   const [domain, setDomain] = useState('');
   const [saved, setSaved] = useState(false);
 
-  const rename = useMutation(async () => api.patch('/admin/company', { name }), {
+  const rename = useMutation(async () => api.patch('/admin/company', { name, legalName }), {
     invalidates: ['/admin/company'],
     onSuccess: () => {
       setSaved(true);
@@ -426,6 +428,20 @@ function CompanySettings({ company, onSaved }: { company: Company; onSaved: () =
               required
               disabled={!can('settings.update')}
             />
+            <p className="field-hint">The name people see throughout the workspace.</p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="company-legal-name">Registered legal name</label>
+            <input
+              id="company-legal-name"
+              value={legalName}
+              onChange={(event) => setLegalName(event.target.value)}
+              disabled={!can('settings.update')}
+            />
+            <p className="field-hint">
+              Used where the registered entity matters, such as contracts and exports.
+            </p>
           </div>
           {can('settings.update') ? (
             <button type="submit" className="primary-button" disabled={rename.pending}>

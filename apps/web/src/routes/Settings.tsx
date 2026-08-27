@@ -18,7 +18,6 @@ type SessionRecord = {
   device: string | null;
   ip: string | null;
   user_agent: string | null;
-  mfa_satisfied: boolean;
   last_seen_at: string;
   created_at: string;
   expires_at: string;
@@ -133,12 +132,8 @@ export default function Settings() {
               <dd>{titleCase(user?.accessLevel ?? '')}</dd>
             </div>
             <div>
-              <dt>Two-factor</dt>
-              <dd>{session?.mfaEnabled ? 'Enrolled' : 'Not enrolled'}</dd>
-            </div>
-            <div>
-              <dt>This session</dt>
-              <dd>{session?.mfaSatisfied ? 'Two-factor verified' : 'Password only'}</dd>
+              <dt>Company</dt>
+              <dd>{session?.company?.name ?? '—'}</dd>
             </div>
           </dl>
 
@@ -209,7 +204,6 @@ export default function Settings() {
                         <time dateTime={record.last_seen_at}>
                           {relativeTime(record.last_seen_at)}
                         </time>
-                        {record.mfa_satisfied ? ' · two-factor verified' : ''}
                       </span>
                       <span className="field-hint">
                         Expires {formatDateTime(record.expires_at)}

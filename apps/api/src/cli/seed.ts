@@ -14,10 +14,11 @@ import { randomUUID } from 'node:crypto';
 import { closePool, newId, pool, transaction } from '../core/db.js';
 import { logger } from '../core/logger.js';
 import { config } from '../core/config.js';
-import { generateToken, hashPassword, hashToken, generateTotpSecret, encryptField } from '../core/crypto.js';
+import { generateToken, hashPassword, hashToken } from '../core/crypto.js';
 import { migrate } from './migrate.js';
 
-const COMPANY_NAME = process.env.SEED_COMPANY_NAME ?? 'Infinity Holdings';
+const COMPANY_NAME = process.env.SEED_COMPANY_NAME ?? 'Infinity AI';
+const COMPANY_LEGAL_NAME = process.env.SEED_COMPANY_LEGAL_NAME ?? 'Infinity AI (Pvt) Ltd';
 const DOMAIN = (process.env.SEED_DOMAIN ?? config.notifications.defaultDomain).toLowerCase();
 const ADMIN_EMAIL = (process.env.SEED_ADMIN_EMAIL ?? `admin@${DOMAIN}`).toLowerCase();
 const ADMIN_NAME = process.env.SEED_ADMIN_NAME ?? 'Workspace Administrator';
@@ -87,11 +88,12 @@ async function seed(): Promise<void> {
     // Company
     const newCompanyId = newId();
     const companyRes = await tx.query(
-      `INSERT IGNORE INTO companies (id, name, verified_domains, settings)
-       VALUES ($1,$2,$3,$4)`,
+      `INSERT IGNORE INTO companies (id, name, legal_name, verified_domains, settings)
+       VALUES ($1,$2,$3,$4,$5)`,
       [
         newCompanyId,
         COMPANY_NAME,
+        COMPANY_LEGAL_NAME,
         JSON.stringify([DOMAIN]),
         JSON.stringify({ storageQuotaBytes: 1099511627776 }),
       ],
@@ -172,21 +174,16 @@ async function seed(): Promise<void> {
 
     if (adminId) {
       if (ADMIN_PASSWORD) {
-        // A password supplied by the operator sets up the account directly, with MFA
-        // enrolled but not yet confirmed - the first login completes enrolment.
-        const secret = generateTotpSecret();
+        // A password supplied by the operator sets up the account directly.
         await tx.query(
-          `INSERT INTO identities (user_id, password_hash, password_set_at, mfa_secret_enc, recovery_codes)
-           VALUES ($1,$2,NOW(3),$3, JSON_ARRAY())`,
-          [adminId, await hashPassword(ADMIN_PASSWORD), encryptField(secret)],
+          `INSERT INTO identities (user_id, password_hash, password_set_at)
+           VALUES ($1,$2,NOW(3))`,
+          [adminId, await hashPassword(ADMIN_PASSWORD)],
         );
       } else {
         // No password given: issue a normal single-use activation invitation instead of
         // inventing one. This is the path the blueprint requires.
-        await tx.query(
-          'INSERT INTO identities (user_id, recovery_codes) VALUES ($1, JSON_ARRAY())',
-          [adminId],
-        );
+        await tx.query('INSERT INTO identities (user_id) VALUES ($1)', [adminId]);
         invitationToken = generateToken();
         await tx.query(
           `INSERT INTO invitations (id, company_id, user_id, token_hash, expires_at)
@@ -228,10 +225,7 @@ async function seed(): Promise<void> {
         );
         if (res.rowCount === 0) continue;
         const userId = personId;
-        await tx.query(
-          'INSERT IGNORE INTO identities (user_id, recovery_codes) VALUES ($1, JSON_ARRAY())',
-          [userId],
-        );
+        await tx.query('INSERT IGNORE INTO identities (user_id) VALUES ($1)', [userId]);
         // Each seeded colleague gets a real, single-use invitation - never a shared password.
         const token = generateToken();
         await tx.query(
@@ -278,6 +272,7 @@ async function seed(): Promise<void> {
     '',
     '================ Infinity Workspace seeded ================',
     `Company:  ${COMPANY_NAME}`,
+    `Legal:    ${COMPANY_LEGAL_NAME}`,
     `Domain:   ${DOMAIN}`,
     `Admin:    ${ADMIN_EMAIL}`,
   ];
@@ -285,7 +280,7 @@ async function seed(): Promise<void> {
     lines.push(
       '',
       'No SEED_ADMIN_PASSWORD was provided, so an activation link was issued.',
-      'Open it to set a password and enrol your authenticator app:',
+      'Open it to set your password:',
       `  ${config.publicUrl}/activate?token=${result.invitationToken}`,
       '',
       'This link expires in 72 hours and works once.',

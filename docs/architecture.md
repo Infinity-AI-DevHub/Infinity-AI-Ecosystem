@@ -47,15 +47,15 @@ after a crash.
 2. **Lifecycle** — suspended or offboarded accounts are denied before anything else.
 3. **Capability** — the role must grant the action category (see appendix A of the blueprint).
 4. **Resource authorization** — membership, ownership or an explicit grant on the target.
-5. **Policy conditions** — step-up MFA for destructive actions, separation of duties.
+5. **Policy conditions** — separation of duties on approvals.
 
 A role name never grants access to a specific record on its own. An explicit `deny` grant
 always beats an `allow`. Administrators may reach company resources they do not belong
 to, but only for capabilities their role already carries, and every such access is audited.
 
-**Step-up** is a property of the *session*, not the role: an administrator signed in with a
-password only cannot create users, change roles or export the audit trail until they have
-satisfied a second factor. This is enforced server-side and covered by tests.
+Multi-factor authentication and step-up verification have been removed from the
+product, so a valid session reaches everything its role permits. See
+[security.md](security.md#multi-factor-authentication--removed).
 
 ## Data model notes
 

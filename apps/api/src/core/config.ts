@@ -80,7 +80,7 @@ export const config = {
   },
 
   security: {
-    /** Encrypts MFA secrets at rest. Rotate through KMS in production. */
+    /** Encrypts sensitive fields at rest. Rotate through KMS in production. */
     dataKey: secret('DATA_ENCRYPTION_KEY'),
     sessionCookie: process.env.SESSION_COOKIE_NAME ?? 'iw_session',
     csrfCookie: process.env.CSRF_COOKIE_NAME ?? 'iw_csrf',
@@ -92,7 +92,6 @@ export const config = {
     scryptCost: int('SCRYPT_COST', 1 << 17),
     maxFailedLogins: int('MAX_FAILED_LOGINS', 8),
     lockoutMinutes: int('LOCKOUT_MINUTES', 15),
-    requireMfaForAdmins: bool('REQUIRE_MFA_FOR_ADMINS', true),
   },
 
   limits: {
@@ -135,7 +134,7 @@ export const config = {
     providerApiKey: process.env.NOTIFY_PROVIDER_API_KEY ?? '',
     /** Envelope sender for system messages. Must be on a verified domain. */
     fromAddress: process.env.NOTIFY_FROM_ADDRESS ?? '',
-    defaultDomain: process.env.NOTIFY_DEFAULT_DOMAIN ?? 'infinity.test',
+    defaultDomain: process.env.NOTIFY_DEFAULT_DOMAIN ?? 'iinfinityai.com',
   },
 
   meetings: {

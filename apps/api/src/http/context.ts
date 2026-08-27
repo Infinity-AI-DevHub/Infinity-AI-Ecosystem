@@ -48,8 +48,8 @@ export async function resolveActor(request: FastifyRequest): Promise<Actor | nul
     pool
       .query('UPDATE api_tokens SET last_used_at = NOW(3) WHERE id = $1', [record.id])
       .catch(() => undefined);
-    // A service token never carries an interactive session, so step-up actions are
-    // unavailable to it by construction.
+    // A service token carries no interactive session; its reach is bounded by the
+    // capability scope recorded on the token itself.
     return identity.buildActor(user, null, record.capabilities, record.id);
   }
 

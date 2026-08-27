@@ -2,8 +2,8 @@
  * People directory and account administration (blueprint 03).
  *
  * Creating an account issues a single-use activation invitation; no password is ever
- * generated or shown here. Suspension and reactivation are step-up protected on the
- * server, so an administrator without a verified session is refused with a clear reason.
+ * generated or shown here. Suspension and reactivation are capability-gated on the
+ * server, and both are recorded in the audit trail.
  */
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';

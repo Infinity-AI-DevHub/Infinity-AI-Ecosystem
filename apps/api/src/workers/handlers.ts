@@ -53,7 +53,7 @@ const onUserInvited: Handler = async (event) => {
         `Hello ${displayName},`,
         '',
         'An account has been created for you in Infinity Workspace.',
-        'Use the link below to set your password and enrol your authenticator app.',
+        'Use the link below to set your password.',
         '',
         activationUrl,
         '',

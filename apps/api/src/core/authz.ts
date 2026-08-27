@@ -6,7 +6,7 @@
  *   2. lifecycle           - suspended/offboarded users and suspended companies are denied
  *   3. capability          - the role must grant the action category
  *   4. resource authorization - membership / ownership / explicit grant on the target
- *   5. policy conditions   - MFA state, classification, separation of duties
+ *   5. policy conditions   - classification, lifecycle state, separation of duties
  *
  * A role name alone never grants access to a specific record.
  */
@@ -34,8 +34,6 @@ export type Actor = {
   managerId: string | null;
   capabilities: Set<string>;
   groupIds: string[];
-  mfaSatisfied: boolean;
-  mfaEnabled: boolean;
   sessionId: string | null;
   tokenId: string | null;
   /** Capabilities a service token is narrowed to, if the request used one. */
@@ -89,35 +87,14 @@ export function requireCapability(actor: Actor, capability: string): void {
 }
 
 /**
- * Destructive and privileged operations require a session that actually satisfied MFA,
- * not merely an account that has MFA enabled (blueprint 12: "step-up for destructive
- * / high-risk operations").
+ * Privileged operations are gated on capability alone.
+ *
+ * There was previously a step-up requirement here: destructive actions demanded a
+ * session that had satisfied a second factor, not merely an account whose role allowed
+ * it. Multi-factor authentication has been removed from the product, so that second
+ * gate no longer exists and a valid session reaches everything the role permits.
+ * See docs/security.md.
  */
-const STEP_UP_CAPABILITIES = new Set([
-  'user.create',
-  'user.suspend',
-  'user.reactivate',
-  'role.assign',
-  'session.revoke',
-  'settings.update',
-  'retention.manage',
-  'legal_hold.manage',
-  'integration.manage',
-  'audit.export',
-  'domain.manage',
-  'superadmin.grant',
-]);
-
-export function requiresStepUp(capability: string): boolean {
-  return STEP_UP_CAPABILITIES.has(capability);
-}
-
-export function requireStepUp(actor: Actor, capability: string): void {
-  if (!requiresStepUp(capability)) return;
-  if (!actor.mfaSatisfied) {
-    throw forbidden('This action requires multi-factor re-verification');
-  }
-}
 
 /** Explicit grant lookup: direct user grants plus grants inherited from group membership. */
 export async function explicitGrant(
@@ -167,16 +144,13 @@ export type Decision = { allowed: boolean; reason: string };
 
 /**
  * Central decision function. Domain services call this rather than hand-rolling checks
- * so that grant, deny and step-up semantics stay identical everywhere.
+ * so that grant and deny semantics stay identical everywhere.
  */
 export async function decide(input: AuthorizeInput): Promise<Decision> {
   const { actor, capability } = input;
 
   if (actor.status !== 'active') return { allowed: false, reason: 'actor_not_active' };
   if (!hasCapability(actor, capability)) return { allowed: false, reason: 'missing_capability' };
-  if (requiresStepUp(capability) && !actor.mfaSatisfied) {
-    return { allowed: false, reason: 'step_up_required' };
-  }
   if (input.resourceless || !input.resourceType || !input.resourceId) {
     return { allowed: true, reason: 'capability_only' };
   }
@@ -202,12 +176,7 @@ export async function decide(input: AuthorizeInput): Promise<Decision> {
 
 export async function authorize(input: AuthorizeInput): Promise<void> {
   const decision = await decide(input);
-  if (!decision.allowed) {
-    if (decision.reason === 'step_up_required') {
-      throw forbidden('This action requires multi-factor re-verification');
-    }
-    throw forbidden();
-  }
+  if (!decision.allowed) throw forbidden();
 }
 
 /**

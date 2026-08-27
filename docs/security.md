@@ -8,7 +8,6 @@ Maps the blueprint's section 12 controls to where each one is actually enforced.
 |---|---|
 | Password hashing | scrypt (memory-hard, RFC 7914), per-password random salt, parameters stored with the hash. Verification is constant-time and never throws on malformed input. Weak stored parameters are transparently upgraded on next sign-in. |
 | Password policy | Minimum 12 characters, must not contain the local part of the address, rejects single repeated characters, optional k-anonymity breached-password check (only a 5-character SHA-1 prefix ever leaves the process, and a lookup failure never blocks the user). |
-| MFA | TOTP (RFC 6238), ±1 step drift tolerance. Secrets encrypted at rest with AES-256-GCM. Ten single-use recovery codes, stored only as hashes. |
 | No plaintext passwords | Accounts are created *invited*; the person sets their own password through a single-use, expiring invitation. No password is ever generated, emailed or displayed. |
 | Account enumeration | Wrong password, unknown address and inactive company all return an identical 401. Password verification runs even for unknown accounts to keep timing comparable. |
 | Lockout | Configurable failed-attempt threshold, then a timed lock. The correct password is still refused while the lock stands. |
@@ -22,6 +21,32 @@ Maps the blueprint's section 12 controls to where each one is actually enforced.
 - Suspension, role change or password change revokes every session **and** closes live
   WebSocket connections immediately — verified by test, not assumed.
 - Users can list and revoke their own sessions.
+
+## Multi-factor authentication — removed
+
+The blueprint (§12) requires MFA for administrators and step-up verification for
+destructive actions. **Both have been removed from the product at the owner's
+direction.** This is a deliberate deviation, recorded here rather than left implicit.
+
+What this costs:
+
+- A password is now the only thing standing between an attacker and an account.
+  Phishing, credential reuse and password stuffing are no longer backstopped.
+- **Step-up verification is gone with it.** Creating accounts, changing roles,
+  suspending people and exporting the audit trail were gated on a session that had
+  re-verified; they are now gated on role alone. A stolen session cookie, or an
+  unattended signed-in laptop, reaches every administrative action.
+
+What still limits the damage:
+
+- Per-account and per-IP rate limiting plus timed lockout on repeated failures.
+- Password policy, including the optional breached-password check.
+- Every privileged action is still capability-checked and written to the append-only
+  audit trail, so the actions are attributable after the fact.
+- Suspension closes sessions and sockets immediately.
+
+If MFA is reinstated later, the step-up capability list is the piece to restore first:
+it is what made a compromised session insufficient for destructive work.
 
 ## Authorization
 
@@ -57,7 +82,7 @@ Threats from the blueprint that are explicitly tested:
 ## Transport and data
 
 - TLS terminates at the edge; HSTS is set in production.
-- MFA secrets are encrypted at rest with AES-256-GCM keyed from `DATA_ENCRYPTION_KEY`.
+- Field-level encryption uses AES-256-GCM keyed from `DATA_ENCRYPTION_KEY`.
 - Object storage is private. Access is only ever via short-lived signed URLs; there are no
   permanent public object links.
 - Secrets come from the environment. `.env` files are gitignored and CI fails if one is
@@ -67,7 +92,7 @@ Threats from the blueprint that are explicitly tested:
 
 - Per-account and per-IP rate limits on sign-in, so neither a single-account attack nor
   credential stuffing across many accounts is cheap.
-- Per-endpoint limits on activation, MFA verification and general API traffic.
+- Per-endpoint limits on activation and general API traffic.
 - Idempotency keys on retry-sensitive commands (account creation, scheduling, approval
   decisions) so a timeout retry cannot double-apply.
 - Outbound URLs from configuration are validated against private and link-local address
@@ -81,7 +106,7 @@ Threats from the blueprint that are explicitly tested:
 
 - Append-only, database-enforced. `UPDATE` is impossible; `DELETE` requires an explicit,
   transaction-local opt-in used only by tenant removal and approved retention.
-- Reading the audit trail is itself audited, and exporting requires step-up MFA.
+- Reading the audit trail is itself audited, and exporting is capability-gated.
 - Recorded state is redacted before it is written: passwords, tokens, secrets, recovery
   codes and message bodies are replaced with `[redacted]`, and long values truncated.
 - Logs are structured JSON with the same redaction applied at the logger, so a careless

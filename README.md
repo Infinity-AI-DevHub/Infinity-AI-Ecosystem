@@ -53,8 +53,8 @@ npm install
 npm run dev
 ```
 
-Open the activation link the seed printed, set a password, enrol an authenticator,
-then sign in at <http://localhost:5173>.
+Open the activation link the seed printed, set a password, then sign in at
+<http://localhost:5173>.
 
 Generate the encryption key with:
 
@@ -76,7 +76,7 @@ npm test                      # unit + end-to-end, needs TEST_DATABASE_URL
 ```
 
 The end-to-end suite runs against a real database and a real HTTP server, and asserts
-the blueprint's acceptance criteria directly: invite → activate → sign in → MFA →
+the blueprint's acceptance criteria directly: invite → activate → sign in →
 authorized dashboard, suspension closing every session immediately, cross-tenant
 isolation, separation of duties, optimistic concurrency and idempotent retries.
 

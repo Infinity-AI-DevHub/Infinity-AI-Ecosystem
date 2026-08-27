@@ -3,8 +3,8 @@
  * "API contract"). These run against a real Postgres database and a real HTTP server.
  *
  * They assert the acceptance criteria from blueprint 20: invite -> activate -> login ->
- * MFA -> authorized dashboard, suspension closing access, cross-tenant isolation,
- * separation of duties, concurrency preconditions and idempotency.
+ * authorized dashboard, suspension closing access, cross-tenant isolation, separation
+ * of duties, concurrency preconditions and idempotency.
  *
  * Skipped automatically when TEST_DATABASE_URL is not set.
  */
@@ -87,7 +87,6 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
   let companyId: string;
   let adminId: string;
   let admin: Client;
-  let adminTotpSecret: string;
 
   const ADMIN_EMAIL = 'e2e.admin@e2e.test';
   const ADMIN_PASSWORD = 'e2e-Administrator-Passphrase-9';
@@ -99,7 +98,6 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     process.env.DATA_ENCRYPTION_KEY ??= 'a'.repeat(64);
     process.env.NOTIFY_DRIVER = 'log';
     process.env.NOTIFY_DEFAULT_DOMAIN = 'e2e.test';
-    process.env.REQUIRE_MFA_FOR_ADMINS = 'false';
     process.env.RATE_API_PER_MIN = '100000';
     process.env.RATE_LOGIN_PER_MIN = '10000';
 
@@ -133,14 +131,10 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
        VALUES ($1,$2,$3,$3,'E2E Administrator','super_admin','active',NOW(3), JSON_ARRAY())`,
       [adminId, companyId, ADMIN_EMAIL],
     );
-    // The administrator is enrolled in MFA: privileged operations require a session
-    // that actually satisfied a second factor, so the suite must go through it.
-    adminTotpSecret = crypto.generateTotpSecret();
     await db.query(
-      `INSERT INTO identities
-         (user_id, password_hash, password_set_at, mfa_enabled, mfa_secret_enc, mfa_confirmed_at, recovery_codes)
-       VALUES ($1,$2,NOW(3),1,$3,NOW(3), JSON_ARRAY())`,
-      [adminId, await crypto.hashPassword(ADMIN_PASSWORD), crypto.encryptField(adminTotpSecret)],
+      `INSERT INTO identities (user_id, password_hash, password_set_at)
+       VALUES ($1,$2,NOW(3))`,
+      [adminId, await crypto.hashPassword(ADMIN_PASSWORD)],
     );
     await db.query(
       `INSERT INTO approval_definitions (id, company_id, \`key\`, name, form_schema, routing)
@@ -156,27 +150,16 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     app = await buildServer();
     await app.ready();
 
-    admin = await signInWithMfa();
+    admin = await signIn(ADMIN_EMAIL, ADMIN_PASSWORD);
   });
 
-  /** Full two-step sign-in, producing a session that satisfied MFA. */
-  async function signInWithMfa(): Promise<Client> {
+  /** Signs in and returns a client holding the resulting session. */
+  async function signIn(email: string, password: string): Promise<Client> {
     const client = new Client(app);
-    const login = await client.post('/api/v1/auth/login', {
-      email: ADMIN_EMAIL,
-      password: ADMIN_PASSWORD,
-    });
+    const login = await client.post('/api/v1/auth/login', { email, password });
     assert.equal(login.status, 200);
-    assert.equal(login.body.status, 'mfa_required');
-
-    const code = crypto.totpCode(adminTotpSecret, Math.floor(Date.now() / 1000 / 30));
-    const verified = await client.post('/api/v1/auth/mfa/verify', {
-      challengeToken: login.body.challengeToken,
-      code,
-    });
-    assert.equal(verified.status, 200);
-    assert.equal(verified.body.status, 'authenticated');
-    client.csrfToken = verified.body.csrfToken;
+    assert.equal(login.body.status, 'authenticated');
+    client.csrfToken = login.body.csrfToken;
     return client;
   }
 
@@ -218,6 +201,50 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(wrongPassword.body.error.message, unknownAccount.body.error.message);
   });
 
+  it('signs in with a password alone, without a second factor', async () => {
+    // Multi-factor authentication was removed from the product, so a correct password
+    // must yield a usable session in one step rather than a challenge.
+    const client = new Client(app);
+    const login = await client.post('/api/v1/auth/login', {
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD,
+    });
+    assert.equal(login.status, 200);
+    assert.equal(login.body.status, 'authenticated');
+    assert.ok(login.body.csrfToken);
+    client.csrfToken = login.body.csrfToken;
+
+    // That session reaches privileged actions immediately; there is no step-up gate.
+    const created = await client.post(
+      '/api/v1/users',
+      {
+        email: `nostepup.${Date.now()}@e2e.test`,
+        displayName: 'No Step Up',
+        accessLevel: 'staff',
+      },
+      { 'idempotency-key': `nostepup-${Date.now()}` },
+    );
+    assert.equal(created.status, 201);
+  });
+
+  it('no longer exposes multi-factor endpoints', async () => {
+    for (const path of ['/api/v1/auth/mfa/verify', '/api/v1/auth/mfa/confirm']) {
+      const response = await admin.post(path, {});
+      assert.equal(response.status, 404, `${path} should not exist`);
+    }
+  });
+
+  it('stores and returns the company legal name', async () => {
+    const updated = await admin.patch('/api/v1/admin/company', {
+      legalName: 'Infinity AI (Pvt) Ltd',
+    });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.body.legal_name, 'Infinity AI (Pvt) Ltd');
+
+    const me = await admin.get('/api/v1/me');
+    assert.equal(me.body.company.legal_name, 'Infinity AI (Pvt) Ltd');
+  });
+
   it('refuses unauthenticated access to protected endpoints', async () => {
     const anonymous = new Client(app);
     assert.equal((await anonymous.get('/api/v1/me')).status, 401);
@@ -226,47 +253,12 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
   });
 
   it('rejects a state-changing request without a CSRF token', async () => {
-    const noCsrf = await signInWithMfa();
+    const noCsrf = await signIn(ADMIN_EMAIL, ADMIN_PASSWORD);
     // Drop the token so the header is omitted even though the session is valid.
     noCsrf.csrfToken = null;
     const attempt = await noCsrf.post('/api/v1/chat/rooms', { name: 'csrf-probe' });
     assert.equal(attempt.status, 403);
     assert.equal(attempt.body.error.code, 'forbidden');
-  });
-
-  it('refuses a privileged action from a session that has not satisfied MFA', async () => {
-    // A password-only session for an account whose role can create users must still be
-    // refused: step-up is a property of the session, not of the role.
-    const email = `nomfa.${Date.now()}@e2e.test`;
-    const noMfaId = randomUUID();
-    await db.query(
-      `INSERT INTO users
-         (id, company_id, email, email_display, display_name, access_level, status, activated_at, modules)
-       VALUES ($1,$2,$3,$3,'No MFA Admin','admin','active',NOW(3), JSON_ARRAY())`,
-      [noMfaId, companyId, email],
-    );
-    await db.query(
-      `INSERT INTO identities (user_id, password_hash, password_set_at, recovery_codes)
-       VALUES ($1,$2,NOW(3), JSON_ARRAY())`,
-      [noMfaId, await crypto.hashPassword(ADMIN_PASSWORD)],
-    );
-
-    const client = new Client(app);
-    const login = await client.post('/api/v1/auth/login', {
-      email,
-      password: ADMIN_PASSWORD,
-    });
-    assert.equal(login.status, 200);
-    assert.equal(login.body.status, 'authenticated');
-    client.csrfToken = login.body.csrfToken;
-
-    const attempt = await client.post(
-      '/api/v1/users',
-      { email: `blocked.${Date.now()}@e2e.test`, displayName: 'Blocked', accessLevel: 'staff' },
-      { 'idempotency-key': `stepup-${Date.now()}` },
-    );
-    assert.equal(attempt.status, 403);
-    assert.equal(/multi-factor/i.test(attempt.body.error.message), true);
   });
 
   it('returns the current user and capability set', async () => {
@@ -317,8 +309,6 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     });
     assert.equal(activated.status, 201);
     assert.equal(activated.body.user.status, 'active');
-    assert.equal(activated.body.recoveryCodes.length, 10);
-    assert.ok(activated.body.mfa.secret);
 
     // The same invitation cannot be replayed.
     const replay = await anonymous.post('/api/v1/auth/activate', {
@@ -685,7 +675,7 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     const fileDomain = await import('../src/domains/files.js');
     const actorContext = await (await import('../src/domains/identity.js')).findUserById(adminId);
     const { buildActor } = await import('../src/domains/identity.js');
-    const actor = await buildActor(actorContext!, { id: 'test', mfa_satisfied: true });
+    const actor = await buildActor(actorContext!, { id: 'test' });
     await fileDomain.receiveUpload(actor, upload.body.uploadId, Buffer.from('retention note content'));
 
     const active = await admin.get('/api/v1/files?limit=100');

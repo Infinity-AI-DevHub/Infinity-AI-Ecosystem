@@ -11,11 +11,7 @@ import {
   passwordNeedsRehash,
   encryptField,
   decryptField,
-  generateTotpSecret,
-  totpCode,
-  verifyTotp,
   hashToken,
-  generateRecoveryCodes,
 } from '../src/core/crypto.js';
 import { sanitizeEmailHtml, htmlToText, snippet } from '../src/core/sanitize.js';
 import {
@@ -25,12 +21,7 @@ import {
   decodeCursor,
   escapeHtml,
 } from '../src/core/validation.js';
-import {
-  hasCapability,
-  requiresStepUp,
-  assertSeparationOfDuties,
-  type Actor,
-} from '../src/core/authz.js';
+import { hasCapability, assertSeparationOfDuties, type Actor } from '../src/core/authz.js';
 import { redact } from '../src/core/audit.js';
 import { buildMime, assertNoHeaderInjection } from '../src/adapters/notifier.js';
 import { sniffMimeType } from '../src/adapters/scanner.js';
@@ -45,10 +36,8 @@ function actor(overrides: Partial<Actor> = {}): Actor {
     status: 'active',
     departmentId: null,
     managerId: null,
-    capabilities: new Set(['mail.read', 'mail.send', 'user.suspend']),
+    capabilities: new Set(['file.read', 'task.update', 'user.suspend']),
     groupIds: [],
-    mfaSatisfied: false,
-    mfaEnabled: false,
     sessionId: 'session',
     tokenId: null,
     tokenScopes: null,
@@ -92,37 +81,6 @@ describe('field encryption', () => {
     const parts = payload.split('.');
     parts[3] = Buffer.from('tampered').toString('base64url');
     assert.throws(() => decryptField(parts.join('.')));
-  });
-});
-
-describe('TOTP', () => {
-  it('accepts the current code and rejects an unrelated one', () => {
-    const secret = generateTotpSecret();
-    const now = Date.now();
-    assert.equal(verifyTotp(secret, totpCode(secret, Math.floor(now / 1000 / 30)), now), true);
-    assert.equal(verifyTotp(secret, '000000', now), false);
-  });
-
-  it('tolerates one step of clock drift but not more', () => {
-    const secret = generateTotpSecret();
-    const now = Date.now();
-    const counter = Math.floor(now / 1000 / 30);
-    assert.equal(verifyTotp(secret, totpCode(secret, counter - 1), now), true);
-    assert.equal(verifyTotp(secret, totpCode(secret, counter - 5), now), false);
-  });
-
-  it('rejects malformed input', () => {
-    const secret = generateTotpSecret();
-    assert.equal(verifyTotp(secret, 'abcdef'), false);
-    assert.equal(verifyTotp(secret, '12345'), false);
-  });
-});
-
-describe('recovery codes', () => {
-  it('generates unique codes that hash consistently', () => {
-    const codes = generateRecoveryCodes(10);
-    assert.equal(new Set(codes).size, 10);
-    assert.equal(hashToken(codes[0]!), hashToken(codes[0]!));
   });
 });
 
@@ -242,23 +200,17 @@ describe('pagination cursors', () => {
 describe('authorization', () => {
   it('denies a capability the role does not hold', () => {
     assert.equal(hasCapability(actor(), 'user.create'), false);
-    assert.equal(hasCapability(actor(), 'mail.send'), true);
+    assert.equal(hasCapability(actor(), 'file.read'), true);
   });
 
   it('denies every capability to a non-active account', () => {
-    assert.equal(hasCapability(actor({ status: 'suspended' }), 'mail.read'), false);
+    assert.equal(hasCapability(actor({ status: 'suspended' }), 'file.read'), false);
   });
 
   it('narrows a service token to its own scopes', () => {
-    const service = actor({ tokenScopes: ['mail.send'] });
-    assert.equal(hasCapability(service, 'mail.send'), true);
-    assert.equal(hasCapability(service, 'mail.read'), false);
-  });
-
-  it('marks destructive capabilities as needing step-up', () => {
-    assert.equal(requiresStepUp('user.suspend'), true);
-    assert.equal(requiresStepUp('audit.export'), true);
-    assert.equal(requiresStepUp('mail.read'), false);
+    const service = actor({ tokenScopes: ['task.update'] });
+    assert.equal(hasCapability(service, 'task.update'), true);
+    assert.equal(hasCapability(service, 'file.read'), false);
   });
 
   it('blocks a requester approving their own request', () => {
