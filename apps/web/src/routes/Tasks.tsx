@@ -7,7 +7,7 @@
  */
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { FolderPlus, Plus } from 'lucide-react';
 import { api } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, ErrorState, Loading } from '../components/States';
@@ -53,6 +53,7 @@ export default function Tasks() {
   const navigate = useNavigate();
   const [projectId, setProjectId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [creatingProject, setCreatingProject] = useState(false);
 
   const projects = useQuery<{ items: Project[] }>('/projects', (signal) =>
     api.get('/projects', signal),
@@ -96,6 +97,9 @@ export default function Tasks() {
               </option>
             ))}
           </select>
+          <button type="button" className="ghost-button" onClick={() => setCreatingProject(true)}>
+            <FolderPlus size={15} aria-hidden="true" /> New project
+          </button>
           <button
             type="button"
             className="primary-button"
@@ -115,6 +119,11 @@ export default function Tasks() {
         <Empty
           title="No projects yet"
           description="Projects group tasks and control who can see them."
+          action={
+            <button type="button" className="primary-button" onClick={() => setCreatingProject(true)}>
+              <FolderPlus size={15} aria-hidden="true" /> Create a project
+            </button>
+          }
         />
       ) : (
         <AsyncSection query={tasks}>
@@ -192,6 +201,17 @@ export default function Tasks() {
         <TaskDialog
           detail={detail}
           onClose={() => navigate('/tasks')}
+        />
+      ) : null}
+
+      {creatingProject ? (
+        <CreateProjectDialog
+          onClose={() => setCreatingProject(false)}
+          onCreated={(id) => {
+            setCreatingProject(false);
+            invalidate('/projects');
+            setProjectId(id);
+          }}
         />
       ) : null}
 
@@ -426,6 +446,154 @@ function CreateTaskDialog({
             <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
             <button type="submit" className="primary-button" disabled={create.pending}>
               {create.pending ? 'Creating…' : 'Create task'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Creating a project also creates its membership, which is what governs who can see
+ * the tasks inside it.
+ */
+function CreateProjectDialog({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (projectId: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [key, setKey] = useState('');
+  const [description, setDescription] = useState('');
+  const [memberIds, setMemberIds] = useState<string[]>([]);
+
+  const people = useQuery<{ items: { id: string; displayName: string }[] }>(
+    '/users?limit=200',
+    (signal) => api.get('/users?limit=200', signal),
+  );
+
+  const create = useMutation(
+    async () =>
+      api.post<{ id: string }>('/projects', {
+        name,
+        key: key.toUpperCase(),
+        description: description || undefined,
+        memberIds,
+      }),
+    { invalidates: ['/projects'], onSuccess: (project) => onCreated(project.id) },
+  );
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <div
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="project-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 id="project-title">New project</h3>
+
+        {create.error ? (
+          <div className="auth-error" role="alert">
+            <p>{create.error.message}</p>
+            {'fields' in create.error && create.error.fields.length > 0 ? (
+              <ul>
+                {create.error.fields.map((field) => (
+                  <li key={field.field}>{field.message}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void create.mutate();
+          }}
+        >
+          <div className="field">
+            <label htmlFor="project-name">Project name</label>
+            <input
+              id="project-name"
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+                // Suggest a key from the name, but let it be overridden.
+                if (!key) {
+                  setKey(
+                    event.target.value
+                      .replace(/[^a-zA-Z0-9 ]/g, '')
+                      .split(/\s+/)
+                      .map((word) => word[0] ?? '')
+                      .join('')
+                      .toUpperCase()
+                      .slice(0, 6),
+                  );
+                }
+              }}
+              required
+              autoFocus
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="project-key">Key</label>
+            <input
+              id="project-key"
+              value={key}
+              onChange={(event) => setKey(event.target.value.toUpperCase())}
+              required
+              maxLength={10}
+            />
+            <p className="field-hint">
+              2–10 uppercase letters or digits. Task references look like {key || 'KEY'}-1.
+            </p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="project-description">Description</label>
+            <textarea
+              id="project-description"
+              rows={3}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </div>
+
+          <fieldset className="field">
+            <legend>Members</legend>
+            <p className="field-hint">
+              Only members can see this project's tasks. You are added automatically.
+            </p>
+            <div className="attendee-picker">
+              {(people.data?.items ?? []).map((person) => (
+                <label key={person.id} className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={memberIds.includes(person.id)}
+                    onChange={(event) =>
+                      setMemberIds((current) =>
+                        event.target.checked
+                          ? [...current, person.id]
+                          : current.filter((id) => id !== person.id),
+                      )
+                    }
+                  />
+                  {person.displayName}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+
+          <div className="dialog-actions">
+            <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
+            <button type="submit" className="primary-button" disabled={create.pending}>
+              {create.pending ? 'Creating…' : 'Create project'}
             </button>
           </div>
         </form>

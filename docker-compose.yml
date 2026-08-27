@@ -6,7 +6,8 @@ services:
       POSTGRES_USER: infinity
       POSTGRES_PASSWORD: infinity_dev_only
       POSTGRES_DB: infinity
-    ports: ['5432:5432']
+    # 5434 avoids colliding with a locally installed PostgreSQL on the default port.
+    ports: ['5434:5432']
     volumes: ['pgdata:/var/lib/postgresql/data']
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U infinity -d infinity']
@@ -29,7 +30,7 @@ services:
       timeout: 3s
       retries: 20
 
-  # Malware scanning for uploads and mail attachments.
+  # Malware scanning for uploaded files.
   clamav:
     image: clamav/clamav:stable
     ports: ['3310:3310']
@@ -40,10 +41,6 @@ services:
       retries: 10
       start_period: 120s
 
-  # Local SMTP sink: captures outbound mail without delivering it to the internet.
-  mailpit:
-    image: axllent/mailpit:latest
-    ports: ['1025:1025', '8025:8025']
 
 volumes:
   pgdata:

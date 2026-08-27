@@ -9,7 +9,7 @@ import { many, pool, type Queryable } from '../core/db.js';
 import { escapeHtml } from '../core/validation.js';
 import type { Actor } from '../core/authz.js';
 
-export type DocType = 'mail' | 'chat' | 'file' | 'person' | 'task' | 'meeting' | 'announcement';
+export type DocType = 'chat' | 'file' | 'person' | 'task' | 'meeting' | 'announcement';
 
 export type IndexInput = {
   companyId: string;
@@ -65,7 +65,7 @@ export async function reindexForUserAccessChange(userId: string): Promise<void> 
   await pool.query(
     `UPDATE search_documents SET acl_user_ids = array_remove(acl_user_ids, $1::uuid)
       WHERE $1::uuid = ANY(acl_user_ids)
-        AND doc_type IN ('mail','chat','file')
+        AND doc_type IN ('chat','file')
         AND NOT acl_company_wide`,
     [userId],
   );
@@ -81,6 +81,12 @@ export type SearchHit = {
 };
 
 export type SearchResponse = { hits: SearchHit[]; facets: Record<string, number>; total: number };
+
+function safeInternalLink(value: string | null): string | null {
+  if (!value) return null;
+  if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return null;
+  return value;
+}
 
 export async function search(
   actor: Actor,
@@ -146,7 +152,7 @@ export async function search(
       title: row.title,
       // The snippet is escaped first, then the highlight markers become safe markup.
       snippet: escapeHtml(row.snippet).replaceAll('&lt;&lt;', '<mark>').replaceAll('&gt;&gt;', '</mark>'),
-      link: row.link,
+      link: safeInternalLink(row.link),
       score: Number(row.score),
     })),
   };

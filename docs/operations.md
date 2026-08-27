@@ -14,7 +14,7 @@ Everything comes from the environment; see `apps/api/.env.example`. Required in 
 |---|---|
 | `DATABASE_URL` | Managed PostgreSQL with multi-zone HA and PITR |
 | `DATA_ENCRYPTION_KEY` | ≥32 characters. Move to a managed KMS and rotate on a schedule. The process refuses to start without it in production. |
-| `MAIL_DRIVER` | `smtp` or `provider`. `log` is refused in production. |
+| `NOTIFY_DRIVER` | `smtp` or `provider`. `log` is refused in production, because invitations would then silently never arrive. |
 | `STORAGE_DRIVER` | `s3` for anything beyond a single node |
 | `PUBLIC_URL`, `API_URL` | Used for CORS, cookies and invitation links |
 | `TRUST_PROXY` | Enable behind a load balancer so client IPs in the audit trail are real |
@@ -51,7 +51,6 @@ stop, then the pool closes, with a hard timeout so a stuck process cannot hang a
 
 - Outbox depth and the age of the oldest unprocessed event
 - Dead letters in the last 7 days
-- Mail delivery failures in the last 24 hours
 - Account counts, live sessions, realtime connections
 - Which providers are configured — anything reading `log` or `not configured` is a
   development placeholder and is highlighted as such
@@ -62,7 +61,6 @@ Alert on user-visible impact rather than isolated errors:
 |---|---|
 | Outbox oldest event age | > 300s |
 | Dead letters | any new one |
-| Mail bounce/failure rate | sustained rise |
 | Authentication failures | unusual spike (credential stuffing) |
 | Backup or restore failure | any |
 | `/ready` failing | any instance |
@@ -89,7 +87,7 @@ Configured via `RETENTION_*` and enforced by the scheduler:
 - Recycled files are purged from object storage after the retention window, unless under
   legal hold. Storage deletion happens before the database record is dropped, so a storage
   failure cannot orphan an object.
-- Notifications and expired mail are cleared on schedule.
+- Notifications are cleared on schedule.
 - Legal hold blocks deletion outright and is capability-gated.
 
 ## Incident response
@@ -100,7 +98,7 @@ The application supports the containment actions the blueprint requires:
 |---|---|
 | Revoke a user's access instantly | Suspend the account — sessions, tokens and sockets close immediately |
 | Revoke one session | Settings → signed-in devices, or the admin API |
-| Stop outbound mail | Set the mailbox `provision_state` to `disabled`, or unset the provider credential |
+| Stop outbound notifications | Unset the provider credential; queued events retry and then dead-letter visibly |
 | Disable a provider | Change the driver to `none`; modules degrade visibly instead of failing |
 | Preserve evidence | Legal hold on files; the audit trail cannot be edited |
 
@@ -109,9 +107,9 @@ deadlines — without blame.
 
 ## Launch checklist
 
-- [ ] Verified domain with SPF, DKIM and DMARC aligned; inbound, outbound and bounce tests pass
+- [ ] Sending domain with SPF, DKIM and DMARC aligned; a test invitation reaches a real inbox
 - [ ] `DATA_ENCRYPTION_KEY` in a managed KMS with a rotation schedule
-- [ ] Mail provider configured; `MAIL_DRIVER` is not `log`
+- [ ] Notification sender configured; `NOTIFY_DRIVER` is not `log`
 - [ ] Meeting provider credentials in place, or reduced mode accepted in writing
 - [ ] Malware scanner reachable; uploads are not recording `skipped`
 - [ ] Object storage private, versioned, with deletion protection

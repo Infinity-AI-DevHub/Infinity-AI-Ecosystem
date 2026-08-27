@@ -7,10 +7,10 @@
  *
  * Objects are never public: every read is a short-lived signed URL.
  */
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, rm, stat } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
 import { config } from '../core/config.js';
@@ -31,6 +31,12 @@ export interface StorageDriver {
 
 /** Object keys are derived server-side; user input never reaches the path. */
 export function buildObjectKey(companyId: string, scope: string, id: string, version = 1): string {
+  if (![companyId, scope, id].every((part) => /^[a-zA-Z0-9_-]+$/.test(part))) {
+    throw new Error('Invalid object key component');
+  }
+  if (!Number.isInteger(version) || version < 1 || version > 1_000_000) {
+    throw new Error('Invalid object version');
+  }
   return `${companyId}/${scope}/${id}/v${version}`;
 }
 
@@ -47,7 +53,9 @@ class LocalStorage implements StorageDriver {
   private path(key: string): string {
     const target = resolve(join(this.root, key));
     // Defence in depth against traversal even though keys are server-generated.
-    if (!target.startsWith(this.root)) throw new Error('Invalid object key');
+    if (target !== this.root && !target.startsWith(`${this.root}${sep}`)) {
+      throw new Error('Invalid object key');
+    }
     return target;
   }
 
@@ -133,9 +141,10 @@ export function verifyLocalObjectSignature(
 ): boolean {
   if (!Number.isFinite(expires) || expires * 1000 < Date.now()) return false;
   const expected = signLocalObject(action, key, expires);
-  return expected.length === signature.length &&
-    createHash('sha256').update(expected).digest('hex') ===
-      createHash('sha256').update(signature).digest('hex');
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  const signatureBuffer = Buffer.from(signature, 'hex');
+  return expectedBuffer.length === signatureBuffer.length &&
+    timingSafeEqual(expectedBuffer, signatureBuffer);
 }
 
 // ------------------------------------------------------------------ s3 driver

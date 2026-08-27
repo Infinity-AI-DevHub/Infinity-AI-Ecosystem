@@ -20,17 +20,7 @@ async function widget<T>(name: string, load: () => Promise<T>): Promise<Widget<T
 }
 
 export async function build(actor: Actor) {
-  const [mail, meetings, tasks, approvals, notifications, announcements, storage] = await Promise.all([
-    widget('mail', async () => {
-      const row = await one<{ unread: number }>(
-        `SELECT count(*)::int AS unread FROM mail_messages m
-           JOIN mailboxes mb ON mb.id = m.mailbox_id
-          WHERE mb.owner_id = $1 AND m.is_read = false`,
-        [actor.userId],
-      );
-      return { unread: row?.unread ?? 0 };
-    }),
-
+  const [meetings, tasks, approvals, notifications, announcements, storage] = await Promise.all([
     widget('meetings', async () =>
       many(
         `SELECT e.id, e.title, e.starts_at, e.ends_at, e.timezone, e.meeting_room_key IS NOT NULL AS has_video,
@@ -91,5 +81,5 @@ export async function build(actor: Actor) {
     }),
   ]);
 
-  return { mail, meetings, tasks, approvals, notifications, announcements, storage };
+  return { meetings, tasks, approvals, notifications, announcements, storage };
 }

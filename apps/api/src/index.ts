@@ -36,7 +36,7 @@ async function main(): Promise<void> {
       port: config.port,
       env: config.env,
       providers: {
-        mail: config.mail.driver,
+        notifications: config.notifications.driver,
         storage: config.storage.driver,
         meetings: config.meetings.provider,
       },

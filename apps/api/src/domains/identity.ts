@@ -2,8 +2,8 @@
  * Identity domain (blueprint 02).
  *
  * Owns users, credential references, MFA, sessions, invitations, recovery and login
- * policy. It must not own mailbox content, project permissions or business approvals -
- * those domains subscribe to identity events instead.
+ * policy. It must not own project permissions or business approvals - those domains
+ * subscribe to identity events instead.
  */
 import { randomUUID } from 'node:crypto';
 import { many, one, pool, transaction, isPgError, PG, type Queryable } from '../core/db.js';
@@ -356,8 +356,21 @@ export async function activateAccount(
   };
 }
 
-/** Confirms the enrolled authenticator; MFA is not considered active until this passes. */
-export async function confirmMfa(userId: string, code: string): Promise<void> {
+/**
+ * Confirms the enrolled authenticator; MFA is not considered active until this passes.
+ * The activation token proves the caller owns the just-consumed invitation, preventing
+ * a UUID plus lucky TOTP guess from enabling MFA on another account.
+ */
+export async function confirmMfa(userId: string, activationToken: string, code: string): Promise<void> {
+  const activation = await one<{ id: string }>(
+    `SELECT id FROM invitations
+      WHERE user_id = $1
+        AND token_hash = $2
+        AND used_at > now() - interval '30 minutes'`,
+    [userId, hashToken(activationToken)],
+  );
+  if (!activation) throw badRequest('This MFA confirmation session is invalid or has expired');
+
   const identity = await one<{ mfa_secret_enc: string | null }>(
     'SELECT mfa_secret_enc FROM identities WHERE user_id = $1',
     [userId],
@@ -803,7 +816,8 @@ export async function updateUser(
 
 /**
  * Suspension (blueprint 03). Sessions, tokens and live connections are revoked
- * immediately; mailbox, files and ownership are preserved under retention.
+ * immediately; files and ownership are preserved under retention. Email access is
+ * revoked separately in the email application.
  */
 export async function suspendUser(
   actor: Actor,
@@ -825,11 +839,8 @@ export async function suspendUser(
       [userId, actor.companyId],
     );
     await revokeAllAccess(userId, 'account_suspended', tx);
-    // Outbound mail is blocked while suspended; the mailbox itself is retained.
-    await tx.query(
-      `UPDATE mailboxes SET provision_state = 'disabled', updated_at = now() WHERE owner_id = $1`,
-      [userId],
-    );
+    // Email lives in a separate application, so revoking access there is a step the
+    // administrator performs in that system; this event is emitted for that purpose.
     await recordAudit(
       {
         companyId: actor.companyId,
@@ -873,11 +884,6 @@ export async function reactivateUser(actor: Actor, userId: string, ctx: RequestC
     const res = await tx.query<UserRow>(
       `UPDATE users SET status = 'active', suspended_at = NULL, version = version + 1, updated_at = now()
         WHERE id = $1 RETURNING *`,
-      [userId],
-    );
-    await tx.query(
-      `UPDATE mailboxes SET provision_state = 'ready', updated_at = now()
-        WHERE owner_id = $1 AND provision_state = 'disabled'`,
       [userId],
     );
     await recordAudit(

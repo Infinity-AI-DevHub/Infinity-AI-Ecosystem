@@ -7,7 +7,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Hash, Plus, Send, UserPlus } from 'lucide-react';
+import { Hash, MessageSquarePlus, Plus, Send, UserPlus } from 'lucide-react';
 import { api } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, ErrorState, Loading } from '../components/States';
@@ -49,6 +49,7 @@ export default function Chat() {
   const [draft, setDraft] = useState('');
   const [live, setLive] = useState<Message[]>([]);
   const [creating, setCreating] = useState(false);
+  const [startingDirect, setStartingDirect] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const rooms = useQuery<{ items: Room[] }>('/chat/rooms', (signal) => api.get('/chat/rooms', signal));
@@ -126,9 +127,14 @@ export default function Chat() {
           <h2>Chat</h2>
           <p>Conversations with your colleagues.</p>
         </div>
-        <button type="button" className="primary-button" onClick={() => setCreating(true)}>
-          <Plus size={15} aria-hidden="true" /> New channel
-        </button>
+        <div className="header-controls">
+          <button type="button" className="ghost-button" onClick={() => setStartingDirect(true)}>
+            <MessageSquarePlus size={15} aria-hidden="true" /> Message someone
+          </button>
+          <button type="button" className="primary-button" onClick={() => setCreating(true)}>
+            <Plus size={15} aria-hidden="true" /> New channel
+          </button>
+        </div>
       </header>
 
       <div className="chat-layout">
@@ -240,6 +246,17 @@ export default function Chat() {
           )}
         </section>
       </div>
+
+      {startingDirect ? (
+        <DirectMessageDialog
+          onClose={() => setStartingDirect(false)}
+          onOpened={(id) => {
+            setStartingDirect(false);
+            invalidate('/chat/rooms');
+            navigate(`/chat/${id}`);
+          }}
+        />
+      ) : null}
 
       {creating ? (
         <CreateChannelDialog
@@ -362,6 +379,103 @@ function CreateChannelDialog({
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Opens (or reopens) a direct conversation. The server keys these by the participant
+ * pair, so choosing the same person twice returns the existing conversation rather
+ * than creating a duplicate.
+ */
+function DirectMessageDialog({
+  onClose,
+  onOpened,
+}: {
+  onClose: () => void;
+  onOpened: (roomId: string) => void;
+}) {
+  const { session } = useSession();
+  const [search, setSearch] = useState('');
+
+  const people = useQuery<{ items: { id: string; displayName: string; email: string }[] }>(
+    '/users?limit=200',
+    (signal) => api.get('/users?limit=200', signal),
+  );
+
+  const open = useMutation(
+    async (userId: string) => api.post<{ id: string }>('/chat/direct', { userId }),
+    { invalidates: ['/chat/rooms'], onSuccess: (room) => onOpened(room.id) },
+  );
+
+  const candidates = (people.data?.items ?? [])
+    .filter((person) => person.id !== session?.user?.id)
+    .filter((person) =>
+      search.trim().length === 0
+        ? true
+        : `${person.displayName} ${person.email}`.toLowerCase().includes(search.toLowerCase()),
+    );
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <div
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="direct-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 id="direct-title">Message someone</h3>
+
+        {open.error ? (
+          <div className="auth-error" role="alert"><p>{open.error.message}</p></div>
+        ) : null}
+
+        <div className="field">
+          <label htmlFor="direct-search">Search colleagues</label>
+          <input
+            id="direct-search"
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Name or email"
+            autoFocus
+          />
+        </div>
+
+        <AsyncSection query={people}>
+          {() =>
+            candidates.length === 0 ? (
+              <Empty title="No matches" description="Try a different name." />
+            ) : (
+              <ul className="person-list dialog-list">
+                {candidates.map((person) => (
+                  <li key={person.id}>
+                    <button
+                      type="button"
+                      className="person-row"
+                      disabled={open.pending}
+                      onClick={() => void open.mutate(person.id)}
+                    >
+                      <span className="thread-avatar" aria-hidden="true">
+                        {initials(person.displayName)}
+                      </span>
+                      <span className="person-body">
+                        <strong>{person.displayName}</strong>
+                        <span>{person.email}</span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )
+          }
+        </AsyncSection>
+
+        <div className="dialog-actions">
+          <button type="button" className="ghost-button" onClick={onClose}>Close</button>
+        </div>
       </div>
     </div>
   );

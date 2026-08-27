@@ -5,6 +5,8 @@
  * default approval definitions, and - only outside production - a small set of synthetic
  * colleagues so the application can be explored end to end.
  *
+ * Employee email lives in a separate application, so no mailboxes are provisioned here.
+ *
  * Real employee data is never seeded. The blueprint requires piloting with synthetic
  * data before real people are loaded.
  */
@@ -16,7 +18,7 @@ import { generateToken, hashPassword, hashToken, generateTotpSecret, encryptFiel
 import { migrate } from './migrate.js';
 
 const COMPANY_NAME = process.env.SEED_COMPANY_NAME ?? 'Infinity Holdings';
-const DOMAIN = (process.env.SEED_DOMAIN ?? config.mail.defaultDomain).toLowerCase();
+const DOMAIN = (process.env.SEED_DOMAIN ?? config.notifications.defaultDomain).toLowerCase();
 const ADMIN_EMAIL = (process.env.SEED_ADMIN_EMAIL ?? `admin@${DOMAIN}`).toLowerCase();
 const ADMIN_NAME = process.env.SEED_ADMIN_NAME ?? 'Workspace Administrator';
 const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? '';
@@ -173,11 +175,6 @@ async function seed(): Promise<void> {
           [companyId, adminId, hashToken(invitationToken)],
         );
       }
-      await tx.query(
-        `INSERT INTO mailboxes (company_id, owner_id, address, display_name, provision_state)
-         VALUES ($1,$2,$3,$4,'ready') ON CONFLICT DO NOTHING`,
-        [companyId, adminId, ADMIN_EMAIL, ADMIN_NAME],
-      );
     } else {
       const existing = await tx.query<{ id: string }>(
         'SELECT id FROM users WHERE company_id = $1 AND email = $2',
@@ -212,11 +209,6 @@ async function seed(): Promise<void> {
         const userId = res.rows[0]?.id;
         if (!userId) continue;
         await tx.query('INSERT INTO identities (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [userId]);
-        await tx.query(
-          `INSERT INTO mailboxes (company_id, owner_id, address, display_name, provision_state)
-           VALUES ($1,$2,$3,$4,'ready') ON CONFLICT DO NOTHING`,
-          [companyId, userId, email, person.name],
-        );
         // Each seeded colleague gets a real, single-use invitation - never a shared password.
         const token = generateToken();
         await tx.query(

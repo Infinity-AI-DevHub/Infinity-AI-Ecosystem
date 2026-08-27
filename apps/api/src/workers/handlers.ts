@@ -1,16 +1,15 @@
 /**
  * Event handlers (blueprint 06).
  *
- * Each handler reacts to a committed domain event: provisioning mailboxes, delivering
- * mail through the provider, fanning out notifications, and keeping the search index
- * current. Every handler is written to be safely repeatable.
+ * Each handler reacts to a committed domain event: sending activation invitations,
+ * fanning out notifications, and keeping the search index current. Every handler is
+ * written to be safely repeatable, because an event can be delivered more than once.
  */
 import { many, one, pool } from '../core/db.js';
 import { logger } from '../core/logger.js';
 import { config } from '../core/config.js';
 import type { StoredEvent } from '../core/outbox.js';
-import { mailDriver } from '../adapters/mail.js';
-import * as mail from '../domains/mail.js';
+import { notifier } from '../adapters/notifier.js';
 import * as notifications from '../domains/notifications.js';
 import * as searchIndex from '../domains/search.js';
 import * as tasks from '../domains/tasks.js';
@@ -21,12 +20,20 @@ type Handler = (event: StoredEvent) => Promise<void>;
 
 const publicUrl = config.publicUrl;
 
+/**
+ * Envelope sender for system messages. Falls back to a no-reply address on the
+ * configured domain so a missing setting cannot produce a malformed header.
+ */
+function systemSender(): string {
+  return config.notifications.fromAddress || `no-reply@${config.notifications.defaultDomain}`;
+}
+
 // ----------------------------------------------------------------- identity
 
 /**
- * A new employee needs a mailbox and an activation email. Provisioning is asynchronous
- * because the provider may be slow or briefly unavailable; the administrator sees
- * "pending" until it reports ready.
+ * A new employee needs their activation link. Delivery is asynchronous because the
+ * provider may be slow or briefly unavailable; a failure retries with backoff rather
+ * than silently stranding the invitation.
  */
 const onUserInvited: Handler = async (event) => {
   const { userId, email, displayName, invitationToken } = event.payload as {
@@ -36,31 +43,10 @@ const onUserInvited: Handler = async (event) => {
     invitationToken?: string;
   };
 
-  const mailbox = await mail.ensureMailbox(event.company_id, userId, email, displayName);
-
-  if (mailbox.provision_state === 'pending') {
-    await pool.query(`UPDATE mailboxes SET provision_state = 'provisioning' WHERE id = $1`, [mailbox.id]);
-    try {
-      const provisioned = await mailDriver.provisionMailbox(email, displayName);
-      await pool.query(
-        `UPDATE mailboxes SET provider_id = $2, provision_state = 'ready', updated_at = now() WHERE id = $1`,
-        [mailbox.id, provisioned.providerId],
-      );
-    } catch (err) {
-      await pool.query(
-        `UPDATE mailboxes SET provision_state = 'failed', updated_at = now() WHERE id = $1`,
-        [mailbox.id],
-      );
-      // Rethrow so the event retries with backoff rather than silently leaving a
-      // half-provisioned account.
-      throw err;
-    }
-  }
-
   if (invitationToken) {
     const activationUrl = `${publicUrl}/activate?token=${invitationToken}`;
-    await mailDriver.send({
-      from: { address: `no-reply@${config.mail.defaultDomain}`, name: 'Infinity Workspace' },
+    await notifier.send({
+      from: { address: systemSender(), name: 'Infinity Workspace' },
       to: [email],
       subject: 'Activate your Infinity Workspace account',
       text: [
@@ -90,11 +76,6 @@ const onUserInvited: Handler = async (event) => {
 
 const onUserActivated: Handler = async (event) => {
   const { userId } = event.payload as { userId: string };
-  await pool.query(
-    `UPDATE mailboxes SET provision_state = 'ready', updated_at = now()
-      WHERE owner_id = $1 AND provision_state IN ('pending','provisioning')`,
-    [userId],
-  );
   await notifications.create({
     companyId: event.company_id,
     userId,
@@ -114,114 +95,6 @@ const onUserActivated: Handler = async (event) => {
 const onAccessChanged: Handler = async (event) => {
   const { userId } = event.payload as { userId: string; accessLevelChanged?: boolean };
   await searchIndex.reindexForUserAccessChange(userId);
-};
-
-// ----------------------------------------------------------------- mail
-
-/**
- * Delivery. The message row was committed before this ran, so a provider failure
- * degrades to a retry and a visible failed state - never a lost message.
- */
-const onMailQueued: Handler = async (event) => {
-  const { messageId } = event.payload as { messageId: string };
-
-  const message = await one<{
-    id: string;
-    from_address: string;
-    from_name: string | null;
-    to_addresses: string[];
-    cc_addresses: string[];
-    bcc_addresses: string[];
-    subject: string;
-    body_text: string;
-    body_html_sanitized: string | null;
-    in_reply_to: string | null;
-    delivery_state: string;
-  }>(
-    `SELECT id, from_address, from_name, to_addresses, cc_addresses, bcc_addresses, subject,
-            body_text, body_html_sanitized, in_reply_to, delivery_state
-       FROM mail_messages WHERE id = $1`,
-    [messageId],
-  );
-  if (!message) return;
-  // Idempotency: a redelivered event must not send the message twice.
-  if (message.delivery_state !== 'queued') return;
-
-  await pool.query(`UPDATE mail_messages SET delivery_state = 'sending' WHERE id = $1`, [messageId]);
-
-  const attachments = await many<{ filename: string; mime_type: string; object_key: string }>(
-    'SELECT filename, mime_type, object_key FROM mail_attachments WHERE message_id = $1',
-    [messageId],
-  );
-
-  try {
-    const loaded = [];
-    for (const attachment of attachments) {
-      const stream = await files.readStream(attachment.object_key);
-      const chunks: Buffer[] = [];
-      for await (const chunk of stream) chunks.push(chunk as Buffer);
-      loaded.push({
-        filename: attachment.filename,
-        mimeType: attachment.mime_type,
-        content: Buffer.concat(chunks),
-      });
-    }
-
-    const result = await mailDriver.send({
-      from: { address: message.from_address, name: message.from_name ?? undefined },
-      to: message.to_addresses,
-      cc: message.cc_addresses,
-      bcc: message.bcc_addresses,
-      subject: message.subject,
-      text: message.body_text,
-      html: message.body_html_sanitized ?? undefined,
-      inReplyTo: message.in_reply_to,
-      attachments: loaded,
-    });
-
-    await mail.markDelivery(
-      messageId,
-      'sent',
-      result.rejected.length > 0 ? `Rejected: ${result.rejected.join(', ')}` : null,
-      result.providerMessageId,
-    );
-    await mail.indexMessage(messageId);
-  } catch (err) {
-    // Return to 'queued' so the retry is picked up cleanly, and surface the reason.
-    const detail = err instanceof Error ? err.message : String(err);
-    await pool.query(
-      `UPDATE mail_messages SET delivery_state = 'queued', delivery_detail = $2, updated_at = now()
-        WHERE id = $1`,
-      [messageId, detail.slice(0, 500)],
-    );
-    throw err;
-  }
-};
-
-const onMailReceived: Handler = async (event) => {
-  const { messageId, ownerId, quarantined } = event.payload as {
-    messageId: string;
-    ownerId: string | null;
-    quarantined?: boolean;
-  };
-  await mail.indexMessage(messageId);
-  if (!ownerId) return;
-
-  const message = await one<{ subject: string; from_address: string }>(
-    'SELECT subject, from_address FROM mail_messages WHERE id = $1',
-    [messageId],
-  );
-  await notifications.create({
-    companyId: event.company_id,
-    userId: ownerId,
-    type: quarantined ? 'mail.quarantined' : 'mail.received',
-    title: quarantined ? 'A message was quarantined' : `New message from ${message?.from_address ?? 'a sender'}`,
-    body: message?.subject ?? '',
-    link: `/mail/${messageId}`,
-    resourceType: 'mail_message',
-    resourceId: messageId,
-    dedupeKey: `mail:${messageId}`,
-  });
 };
 
 // ----------------------------------------------------------------- calendar
@@ -536,8 +409,6 @@ export const handlers: Record<string, Handler> = {
   'user.updated': onAccessChanged,
   'user.suspended': onAccessChanged,
   'user.reactivated': onAccessChanged,
-  'mail.queued': onMailQueued,
-  'mail.received': onMailReceived,
   'event.scheduled': onEventScheduled,
   'event.updated': onEventChanged,
   'event.cancelled': onEventChanged,

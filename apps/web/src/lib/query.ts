@@ -111,7 +111,17 @@ export function useQuery<T>(
 
   useEffect(() => {
     if (!active || key === null) return;
-    const handler = () => forceRender((n) => n + 1);
+
+    /**
+     * Invalidation drops the cached entry and notifies subscribers. A mounted component
+     * must then refetch, not just re-render - otherwise it renders its loading state
+     * forever and only recovers when it happens to remount.
+     */
+    const handler = () => {
+      forceRender((n) => n + 1);
+      if (!cache.has(key) && !inFlight.has(key)) void run(true);
+    };
+
     let set = subscribers.get(key);
     if (!set) {
       set = new Set();
@@ -143,15 +153,19 @@ export function useMutation<TArgs extends unknown[], TResult>(
 ) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ApiError | NetworkError | null>(null);
+  const performRef = useRef(perform);
+  const optionsRef = useRef(options);
+  performRef.current = perform;
+  optionsRef.current = options;
 
   const mutate = useCallback(
     async (...args: TArgs): Promise<TResult | undefined> => {
       setPending(true);
       setError(null);
       try {
-        const result = await perform(...args);
-        for (const prefix of options.invalidates ?? []) invalidate(prefix);
-        options.onSuccess?.(result);
+        const result = await performRef.current(...args);
+        for (const prefix of optionsRef.current.invalidates ?? []) invalidate(prefix);
+        optionsRef.current.onSuccess?.(result);
         return result;
       } catch (err) {
         setError(err instanceof ApiError || err instanceof NetworkError ? err : new NetworkError());
@@ -160,8 +174,7 @@ export function useMutation<TArgs extends unknown[], TResult>(
         setPending(false);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [perform],
+    [],
   );
 
   return { mutate, pending, error, reset: () => setError(null) };

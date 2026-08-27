@@ -45,7 +45,6 @@ export type Actor = {
 export type ResourceType =
   | 'company'
   | 'user'
-  | 'mailbox'
   | 'mail_message'
   | 'calendar_event'
   | 'chat_room'
@@ -107,7 +106,6 @@ const STEP_UP_CAPABILITIES = new Set([
   'audit.export',
   'domain.manage',
   'superadmin.grant',
-  'mailbox.delegate',
 ]);
 
 export function requiresStepUp(capability: string): boolean {

@@ -7,6 +7,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { one } from '../core/db.js';
+import { config } from '../core/config.js';
 import { logger } from '../core/logger.js';
 import { register, subscribe, unregister, unsubscribe, type Connection } from '../core/realtime.js';
 import { resolveActor } from './context.js';
@@ -59,6 +60,13 @@ async function canSubscribe(actor: Actor, channel: string): Promise<boolean> {
 
 export async function registerWebsocket(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/ws', { websocket: true }, async (socket, request) => {
+    const originHeader = request.headers.origin;
+    const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+    if (config.isProd && origin !== config.publicUrl && origin !== config.apiUrl) {
+      socket.close(4403, 'origin_not_allowed');
+      return;
+    }
+
     const actor = await resolveActor(request).catch(() => null);
     if (!actor || actor.status !== 'active') {
       socket.close(4401, 'unauthenticated');

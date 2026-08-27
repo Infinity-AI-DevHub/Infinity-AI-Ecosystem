@@ -65,6 +65,22 @@ export function requireActor(request: FastifyRequest): Actor {
   return request.actor;
 }
 
+function sameOriginAllowed(request: FastifyRequest): boolean {
+  const allowed = new Set([config.publicUrl, config.apiUrl]);
+  const originHeader = request.headers.origin;
+  const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+  if (origin) return allowed.has(origin);
+
+  const refererHeader = request.headers.referer;
+  const referer = Array.isArray(refererHeader) ? refererHeader[0] : refererHeader;
+  if (!referer) return !config.isProd;
+  try {
+    return allowed.has(new URL(referer).origin);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Double-submit CSRF protection for cookie-authenticated state changes.
  * Token-authenticated (service) calls do not use cookies and are exempt.
@@ -75,6 +91,7 @@ export async function assertCsrf(request: FastifyRequest): Promise<void> {
 
   const sessionCookie = request.cookies[config.security.sessionCookie];
   if (!sessionCookie) return; // unauthenticated endpoints handle their own protection
+  if (!sameOriginAllowed(request)) throw forbidden('Request origin is not allowed');
 
   const header = request.headers['x-csrf-token'];
   const provided = Array.isArray(header) ? header[0] : header;

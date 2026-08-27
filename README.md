@@ -1,8 +1,12 @@
 # Infinity Workspace
 
-An internal company workspace: mail, calendar and meetings, chat, tasks, files,
-approvals, announcements, directory, search and administration — built to the
-*Infinity Workspace Complete System Blueprint*.
+An internal company workspace: calendar and meetings, chat, tasks, files, approvals,
+announcements, directory, search and administration — built to the *Infinity Workspace
+Complete System Blueprint*.
+
+Employee email is deliberately **not** part of this system; a separate email application
+owns that. The workspace still sends its own transactional messages (activation
+invitations and security notices), which is what `NOTIFY_DRIVER` configures.
 
 This is a working full-stack application, not a prototype. Identity, authorization,
 audit and retention are enforced on the server; the browser is never trusted.
@@ -16,7 +20,7 @@ apps/
   api/         Node + TypeScript + Fastify + PostgreSQL
     migrations/  Versioned, checksum-guarded SQL migrations
     src/core/    Config, database, authorization, audit, outbox, crypto, realtime
-    src/domains/ Identity, mail, calendar, chat, tasks, files, approvals, search…
+    src/domains/ Identity, calendar, chat, tasks, files, approvals, announcements, search…
     src/http/    Server, routes, WebSocket gateway
     src/workers/ Outbox dispatcher and scheduled jobs
     test/        Unit + end-to-end / authorization-matrix tests
@@ -80,7 +84,7 @@ make. Each has a working adapter and a visible degraded mode until configured:
 
 | Area | What is needed |
 |---|---|
-| **Mail delivery** | A verified domain and a managed mail provider or SMTP relay, with SPF, DKIM and DMARC aligned. `MAIL_DRIVER=log` is refused in production. |
+| **Transactional email** | An SMTP relay or provider so activation invitations actually arrive, with SPF, DKIM and DMARC aligned on your sending domain. `NOTIFY_DRIVER=log` is refused in production. |
 | **Meetings** | LiveKit (or equivalent) credentials. Without them, meetings still schedule and join reports a clear reduced-mode state. |
 | **Malware scanning** | A ClamAV endpoint. Without it, uploads are recorded as `skipped` rather than silently assumed clean. |
 

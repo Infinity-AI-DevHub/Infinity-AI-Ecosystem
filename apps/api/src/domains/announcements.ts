@@ -126,6 +126,43 @@ export async function listForUser(actor: Actor, limit = 20) {
   );
 }
 
+/**
+ * A single announcement, scoped to the caller's audience.
+ *
+ * Deriving the detail view from the list would break deep links to anything outside the
+ * first page, and would briefly show "not found" straight after publishing. Fetching it
+ * directly also re-checks the audience, so a link forwarded to someone outside the
+ * target group reads as not found rather than leaking the content.
+ */
+export async function getForUser(actor: Actor, announcementId: string) {
+  const row = await one(
+    `SELECT a.id, a.title, a.body, a.priority, a.requires_ack, a.publish_at, a.expires_at,
+            u.display_name AS author_name,
+            r.read_at, r.acknowledged_at
+       FROM announcements a
+       LEFT JOIN users u ON u.id = a.author_id
+       LEFT JOIN announcement_reads r ON r.announcement_id = a.id AND r.user_id = $2
+      WHERE a.id = $3
+        AND a.company_id = $1
+        AND a.state = 'published'
+        AND a.publish_at <= now()
+        AND (a.expires_at IS NULL OR a.expires_at > now())
+        AND (
+          a.audience->>'scope' = 'company'
+          OR (a.audience->>'scope' = 'department'
+              AND $4::uuid IS NOT NULL
+              AND a.audience->'departmentIds' ? $4::text)
+          OR (a.audience->>'scope' = 'group'
+              AND EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(a.audience->'groupIds') g
+                 WHERE g.value = ANY($5::text[])))
+        )`,
+    [actor.companyId, actor.userId, announcementId, actor.departmentId, actor.groupIds.map(String)],
+  );
+  if (!row) throw notFound('Announcement not found');
+  return row;
+}
+
 export async function markRead(actor: Actor, announcementId: string, acknowledge: boolean): Promise<void> {
   const exists = await one('SELECT 1 FROM announcements WHERE id = $1 AND company_id = $2', [
     announcementId,

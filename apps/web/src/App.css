@@ -371,20 +371,9 @@ textarea:focus-visible {
   color: #29342e;
 }
 
-.mail-panel,
-.task-panel {
-  grid-column: span 6;
-}
-
-.panel:not(.mail-panel):not(.task-panel):not(.files-panel):not(.people-panel):not(.chat-panel) {
-  grid-column: span 3;
-}
-
-.chat-panel,
-.files-panel,
-.people-panel {
-  grid-column: span 3;
-}
+/* The prototype's six-column dashboard sized panels with explicit spans. That markup
+   no longer exists, and the spans leaked into the current layouts and forced every
+   panel across the full grid. Panels now size from their container. */
 
 .thread-list,
 .meeting-list {
@@ -2015,7 +2004,7 @@ textarea:focus-visible,
 .metric-card span { font-size: 12.5px; color: var(--iw-muted); }
 
 .dashboard-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
-.split-layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); align-items: start; }
+.split-layout { display: grid; gap: 16px; grid-template-columns: minmax(280px, 1fr) minmax(0, 1.5fr); align-items: start; }
 
 .meeting-list, .task-list, .announcement-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .meeting-list a, .task-list a {
@@ -2325,3 +2314,60 @@ textarea:focus-visible,
   .recovery-codes { grid-template-columns: 1fr; }
   .dialog { padding: 20px; }
 }
+
+/* ---------------------------------------------------------------- announcements */
+
+.announcement-rows { list-style: none; margin: 0; padding: 0; }
+.announcement-row {
+  display: flex; gap: 11px; align-items: flex-start; width: 100%; text-align: left;
+  padding: 12px; border: none; background: transparent; cursor: pointer;
+  border-bottom: 1px solid var(--iw-line); font: inherit; color: inherit;
+  /* Tags drop below the title rather than squeezing it in a narrow column. */
+  flex-wrap: wrap;
+}
+.announcement-row .status-tag { margin-top: 2px; }
+.announcement-row:hover { background: var(--iw-page); }
+.announcement-active { background: #eef1ee; }
+.announcement-unread strong { font-weight: 700; }
+.announcement-body { flex: 1; min-width: 0; }
+.announcement-body strong { display: block; font-size: 13.5px; }
+.announcement-body span { font-size: 12px; color: var(--iw-muted); }
+.priority-bar { width: 3px; align-self: stretch; border-radius: 2px; background: transparent; }
+.priority-bar.priority-important { background: var(--iw-warn); }
+.priority-bar.priority-critical { background: var(--iw-danger); }
+
+.announcement-detail h3 { margin: 0 0 6px; font-size: 18px; }
+.announcement-text { font-size: 14px; line-height: 1.65; margin: 14px 0; }
+.announcement-text p { margin: 0 0 12px; }
+.announcement-priority {
+  font-size: 12.5px; font-weight: 600; padding: 8px 12px; border-radius: 8px; margin: 12px 0;
+}
+.announcement-priority.priority-important { background: #fff4e5; color: var(--iw-warn); }
+.announcement-priority.priority-critical { background: #fdecea; color: var(--iw-danger); }
+.ack-block {
+  background: var(--iw-page); border: 1px solid var(--iw-line);
+  border-radius: 10px; padding: 14px; margin-top: 16px;
+}
+.ack-block p { margin: 0 0 10px; font-size: 13px; }
+.announcement-admin {
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-start;
+  margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--iw-line);
+}
+.announcement-admin .detail-list { flex-basis: 100%; }
+.status-important { background: #fff4e5; color: var(--iw-warn); }
+.status-critical { background: #fdecea; color: var(--iw-danger); }
+
+/* ---------------------------------------------------------------- admin additions */
+
+.domain-list { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 6px; }
+.domain-list code {
+  display: block; background: #eef1ee; padding: 7px 10px; border-radius: 6px; font-size: 12.5px;
+}
+.group-list li {
+  display: grid; gap: 3px; grid-template-columns: 1fr auto; align-items: center;
+}
+.group-list strong { grid-column: 1; }
+.group-list span:not(.group-row-end) { grid-column: 1; }
+.group-row-end { grid-column: 2; grid-row: 1 / 3; display: flex; gap: 8px; align-items: center; }
+.dialog-list { max-height: 320px; overflow-y: auto; }
+.toggle-active { background: #eef1ee; border-color: #c7cec7; font-weight: 600; }

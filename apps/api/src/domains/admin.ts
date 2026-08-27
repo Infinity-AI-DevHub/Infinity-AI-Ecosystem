@@ -199,19 +199,13 @@ export async function readAudit(
 /** Operational health for the admin console: queue depth, sockets, failures. */
 export async function operationsSnapshot(actor: Actor) {
   await authorize({ actor, capability: 'settings.read', resourceless: true });
-  const [queue, deadLetters, mailFailures, users, sessions] = await Promise.all([
+  const [queue, deadLetters, users, sessions] = await Promise.all([
     one<{ pending: number; oldest_seconds: number | null }>(
       `SELECT count(*)::int AS pending,
               EXTRACT(EPOCH FROM (now() - min(available_at)))::int AS oldest_seconds
          FROM outbox_events WHERE processed_at IS NULL`,
     ),
     one<{ count: number }>(`SELECT count(*)::int AS count FROM dead_letters WHERE created_at > now() - interval '7 days'`),
-    one<{ count: number }>(
-      `SELECT count(*)::int AS count FROM mail_messages
-        WHERE company_id = $1 AND delivery_state IN ('bounced','failed')
-          AND updated_at > now() - interval '24 hours'`,
-      [actor.companyId],
-    ),
     one<{ active: number; invited: number; suspended: number }>(
       `SELECT count(*) FILTER (WHERE status = 'active')::int AS active,
               count(*) FILTER (WHERE status = 'invited')::int AS invited,
@@ -228,12 +222,11 @@ export async function operationsSnapshot(actor: Actor) {
   return {
     queue: { pending: queue?.pending ?? 0, oldestSeconds: queue?.oldest_seconds ?? 0 },
     deadLetters: deadLetters?.count ?? 0,
-    mailFailures24h: mailFailures?.count ?? 0,
     users: users ?? { active: 0, invited: 0, suspended: 0 },
     activeSessions: sessions?.count ?? 0,
     realtime: realtimeStats(),
     providers: {
-      mail: config.mail.driver,
+      notifications: config.notifications.driver,
       storage: config.storage.driver,
       meetings: config.meetings.provider,
       malwareScanner: process.env.CLAMAV_HOST ? 'clamav' : 'not configured',

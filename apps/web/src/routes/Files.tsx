@@ -6,7 +6,7 @@
  * short-lived signed URLs requested at click time - never long-lived links in markup.
  */
 import { useRef, useState } from 'react';
-import { Download, FolderPlus, ShieldAlert, Trash2, Upload } from 'lucide-react';
+import { Download, FolderPlus, History, RotateCcw, ShieldAlert, Trash2, Upload } from 'lucide-react';
 import { api, API_URL, ApiError, NetworkError } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty } from '../components/States';
@@ -34,13 +34,17 @@ export default function Files() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [versionsFor, setVersionsFor] = useState<FileRecord | null>(null);
+  const [showRecycled, setShowRecycled] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const folders = useQuery<{ items: Folder[] }>('/files/folders', (signal) =>
     api.get('/files/folders', signal),
   );
 
-  const listKey = `/files?limit=100${folderId ? `&folderId=${folderId}` : ''}`;
+  const listKey = `/files?limit=100${folderId ? `&folderId=${folderId}` : ''}${
+    showRecycled ? '&recycled=true' : ''
+  }`;
   const files = useQuery<{ items: FileRecord[] }>(listKey, (signal) => api.get(listKey, signal));
 
   /**
@@ -97,14 +101,30 @@ export default function Files() {
     invalidates: ['/files'],
   });
 
+  const restore = useMutation(async (fileId: string) => api.post(`/files/${fileId}/restore`), {
+    invalidates: ['/files'],
+  });
+
   return (
     <div className="module-page">
       <header className="module-header">
         <div>
           <h2>Files</h2>
-          <p>Company documents with versions, scanning and a recycle bin.</p>
+          <p>
+            {showRecycled
+              ? 'Deleted files, recoverable until their retention window ends.'
+              : 'Company documents with versions, scanning and a recycle bin.'}
+          </p>
         </div>
         <div className="header-controls">
+          <button
+            type="button"
+            className={`ghost-button ${showRecycled ? 'toggle-active' : ''}`}
+            aria-pressed={showRecycled}
+            onClick={() => setShowRecycled((open) => !open)}
+          >
+            <RotateCcw size={15} aria-hidden="true" /> Recycle bin
+          </button>
           {can('file.create') ? (
             <>
               <button
@@ -171,8 +191,12 @@ export default function Files() {
             {(data) =>
               data.items.length === 0 ? (
                 <Empty
-                  title="No files here"
-                  description="Upload a document to get started."
+                  title={showRecycled ? 'The recycle bin is empty' : 'No files here'}
+                  description={
+                    showRecycled
+                      ? 'Deleted files appear here until their retention window ends.'
+                      : 'Upload a document to get started.'
+                  }
                 />
               ) : (
                 <div className="table-scroll">
@@ -223,7 +247,24 @@ export default function Files() {
                             >
                               <Download size={15} />
                             </button>
-                            {can('file.delete') ? (
+                            <button
+                              type="button"
+                              className="icon-button"
+                              aria-label={`Version history for ${file.name}`}
+                              onClick={() => setVersionsFor(file)}
+                            >
+                              <History size={15} />
+                            </button>
+                            {file.state === 'recycled' && can('file.restore') ? (
+                              <button
+                                type="button"
+                                className="icon-button"
+                                aria-label={`Restore ${file.name}`}
+                                onClick={() => void restore.mutate(file.id)}
+                              >
+                                <RotateCcw size={15} />
+                              </button>
+                            ) : can('file.delete') ? (
                               <button
                                 type="button"
                                 className="icon-button"
@@ -252,6 +293,10 @@ export default function Files() {
         </section>
       </div>
 
+      {versionsFor ? (
+        <VersionHistoryDialog file={versionsFor} onClose={() => setVersionsFor(null)} />
+      ) : null}
+
       {creatingFolder ? (
         <NewFolderDialog
           parentId={folderId}
@@ -262,6 +307,109 @@ export default function Files() {
           }}
         />
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Every stored version, with its checksum and scan verdict. Downloading an older
+ * version issues its own short-lived signed URL rather than reusing the current one.
+ */
+function VersionHistoryDialog({ file, onClose }: { file: FileRecord; onClose: () => void }) {
+  const versions = useQuery<{
+    items: {
+      version: number;
+      size_bytes: number;
+      checksum: string;
+      mime_type: string;
+      scan_state: string;
+      created_at: string;
+      uploaded_by_name: string | null;
+    }[];
+  }>(`/files/${file.id}/versions`, (signal) => api.get(`/files/${file.id}/versions`, signal));
+
+  const download = useMutation(async (version: number) => {
+    const result = await api.get<{ url: string }>(`/files/${file.id}/download?version=${version}`);
+    window.location.assign(result.url);
+    return result;
+  });
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <div
+        className="dialog dialog-wide"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="versions-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 id="versions-title">Version history — {file.name}</h3>
+
+        <AsyncSection query={versions}>
+          {(data) =>
+            data.items.length === 0 ? (
+              <Empty title="No versions recorded" />
+            ) : (
+              <div className="table-scroll">
+                <table className="data-table">
+                  <caption className="visually-hidden">Stored versions of {file.name}</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Version</th>
+                      <th scope="col">Uploaded by</th>
+                      <th scope="col">Size</th>
+                      <th scope="col">Scan</th>
+                      <th scope="col">When</th>
+                      <th scope="col"><span className="visually-hidden">Actions</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.items.map((version) => (
+                      <tr key={version.version}>
+                        <th scope="row">
+                          v{version.version}
+                          {version.version === file.currentVersion ? (
+                            <span className="status-tag">Current</span>
+                          ) : null}
+                        </th>
+                        <td>{version.uploaded_by_name ?? '—'}</td>
+                        <td>{formatBytes(Number(version.size_bytes))}</td>
+                        <td>
+                          {version.scan_state === 'infected' ? (
+                            <span className="thread-flag thread-flag-error">Quarantined</span>
+                          ) : version.scan_state === 'skipped' ? (
+                            <span className="thread-flag thread-flag-warn">Not scanned</span>
+                          ) : (
+                            titleCase(version.scan_state)
+                          )}
+                        </td>
+                        <td>
+                          <time dateTime={version.created_at}>{relativeTime(version.created_at)}</time>
+                        </td>
+                        <td className="table-actions">
+                          <button
+                            type="button"
+                            className="icon-button"
+                            aria-label={`Download version ${version.version}`}
+                            disabled={version.scan_state === 'infected' || download.pending}
+                            onClick={() => void download.mutate(version.version)}
+                          >
+                            <Download size={15} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          }
+        </AsyncSection>
+
+        <div className="dialog-actions">
+          <button type="button" className="ghost-button" onClick={onClose}>Close</button>
+        </div>
+      </div>
     </div>
   );
 }

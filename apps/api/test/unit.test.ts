@@ -32,7 +32,7 @@ import {
   type Actor,
 } from '../src/core/authz.js';
 import { redact } from '../src/core/audit.js';
-import { buildMime, assertNoHeaderInjection, verifyHmacWebhook } from '../src/adapters/mail.js';
+import { buildMime, assertNoHeaderInjection } from '../src/adapters/notifier.js';
 import { sniffMimeType } from '../src/adapters/scanner.js';
 
 function actor(overrides: Partial<Actor> = {}): Actor {
@@ -324,13 +324,6 @@ describe('MIME construction', () => {
       text: 'x',
     });
     assert.equal(raw.includes('=?UTF-8?B?'), true);
-  });
-});
-
-describe('webhook verification', () => {
-  it('rejects an unsigned or stale webhook', () => {
-    assert.equal(verifyHmacWebhook('{}', '', String(Date.now() / 1000)), false);
-    assert.equal(verifyHmacWebhook('{}', 'deadbeef', '1'), false);
   });
 });
 

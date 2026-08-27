@@ -64,10 +64,6 @@ original response with `Idempotent-Replay: true`. Required in production.
 `POST /users/:id/suspend` *(step-up)* · `POST /users/:id/reactivate` *(step-up)*
 `POST /users/:id/invitation` · `GET /departments`
 
-### Mail
-`GET /mail/mailboxes` · `GET /mail/messages` · `GET /mail/messages/:id`
-`POST /mail/messages` *(idempotent)* · `PATCH /mail/messages/:id` · `POST /mail/messages/:id/move`
-
 ### Calendar and meetings
 `GET|POST /calendar/events` · `GET|PATCH|DELETE /calendar/events/:id`
 `POST /calendar/events/:id/rsvp` · `POST /calendar/events/:id/join` · `GET /calendar/freebusy` · `GET /calendar/rooms`
@@ -82,7 +78,7 @@ original response with `Idempotent-Replay: true`. Required in production.
 `GET|PATCH /tasks/:id` · `POST /tasks/:id/comments`
 
 ### Files
-`GET /files` · `GET|POST /files/folders` · `POST /files/uploads` → `POST /files/uploads/:id/content`
+`GET /files` (`?recycled=true` for the recycle bin) · `GET|POST /files/folders` · `POST /files/uploads` → `POST /files/uploads/:id/content`
 `GET /files/:id/download` (short-lived signed URL) · `GET /files/:id/versions`
 `POST /files/:id/share` · `DELETE /files/:id` · `POST /files/:id/restore` · `POST /files/:id/legal-hold`
 
@@ -92,6 +88,7 @@ original response with `Idempotent-Replay: true`. Required in production.
 
 ### Announcements, search, administration
 `GET|POST /announcements` · `POST /announcements/:id/read` · `GET /announcements/:id/stats`
+`DELETE /announcements/:id` *(withdraw)*
 `GET /search?q=&types=&limit=`
 `GET|PATCH /admin/company` · `POST /admin/company/domains` *(step-up)*
 `GET|POST /admin/groups` · `PUT /admin/groups/:id/members` · `GET /admin/operations`
@@ -102,6 +99,7 @@ original response with `Idempotent-Replay: true`. Required in production.
 Channels are authorized server-side at subscribe time; naming one is not enough.
 Frames: `{ channel, type, data, at }`.
 
-### Webhooks
-`POST /webhooks/mail` — requires `X-Webhook-Signature` (HMAC-SHA256 over
-`timestamp.body`) and `X-Webhook-Timestamp` inside a 5-minute replay window.
+### Not present
+There are no mail endpoints. Employee email lives in a separate application; this system
+only sends its own transactional notifications, which have no inbound API surface and no
+provider webhook.

@@ -253,12 +253,19 @@ export async function receiveUpload(
   return file;
 }
 
-export async function listFiles(actor: Actor, opts: { folderId?: string | null; limit: number }) {
+export async function listFiles(
+  actor: Actor,
+  opts: { folderId?: string | null; limit: number; recycled?: boolean },
+) {
   return many<FileRow & { owner_name: string | null }>(
     `SELECT f.*, u.display_name AS owner_name
        FROM files f LEFT JOIN users u ON u.id = f.owner_id
       WHERE f.company_id = $1
-        AND f.state IN ('active','processing','quarantined','legal_hold')
+        -- The recycle bin is a separate view, not a filter over the active list.
+        AND (CASE WHEN $7::boolean
+                  THEN f.state = 'recycled'
+                  ELSE f.state IN ('active','processing','quarantined','legal_hold')
+             END)
         AND ($2::uuid IS NULL OR f.folder_id = $2)
         AND (
           f.owner_id = $3
@@ -279,6 +286,7 @@ export async function listFiles(actor: Actor, opts: { folderId?: string | null; 
       actor.groupIds,
       actor.accessLevel === 'admin' || actor.accessLevel === 'super_admin',
       opts.limit,
+      opts.recycled ?? false,
     ],
   ).then((rows) => rows.map(publicFile));
 }

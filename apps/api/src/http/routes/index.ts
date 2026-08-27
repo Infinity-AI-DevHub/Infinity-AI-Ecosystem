@@ -8,7 +8,6 @@ import { config } from '../../core/config.js';
 import { authRoutes } from './auth.js';
 import { meRoutes } from './me.js';
 import { userRoutes } from './users.js';
-import { mailRoutes } from './mail.js';
 import {
   announcementRoutes,
   approvalRoutes,
@@ -18,7 +17,7 @@ import {
   searchRoutes,
   taskRoutes,
 } from './collaboration.js';
-import { adminRoutes, objectRoutes, webhookRoutes } from './admin.js';
+import { adminRoutes, objectRoutes } from './admin.js';
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   /** Liveness: the process is up. Never touches the database. */
@@ -42,7 +41,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       await authRoutes(api);
       await meRoutes(api);
       await userRoutes(api);
-      await mailRoutes(api);
       await calendarRoutes(api);
       await chatRoutes(api);
       await taskRoutes(api);
@@ -55,7 +53,4 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     },
     { prefix: '/api/v1' },
   );
-
-  // Webhooks are registered in their own scope so the raw-body parser stays isolated.
-  await app.register(webhookRoutes, { prefix: '/api/v1' });
 }

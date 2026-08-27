@@ -15,7 +15,6 @@ import './App.css';
 
 // Modules load on demand so the initial sign-in payload stays small.
 const Command = lazy(() => import('./routes/Command'));
-const Mail = lazy(() => import('./routes/Mail'));
 const Meetings = lazy(() => import('./routes/Meetings'));
 const Chat = lazy(() => import('./routes/Chat'));
 const Tasks = lazy(() => import('./routes/Tasks'));
@@ -23,6 +22,7 @@ const Files = lazy(() => import('./routes/Files'));
 const People = lazy(() => import('./routes/People'));
 const Approvals = lazy(() => import('./routes/Approvals'));
 const Admin = lazy(() => import('./routes/Admin'));
+const Announcements = lazy(() => import('./routes/Announcements'));
 const Search = lazy(() => import('./routes/Search'));
 const Settings = lazy(() => import('./routes/Settings'));
 
@@ -56,8 +56,6 @@ function AppRoutes() {
                 <Routes>
                   <Route path="/" element={<Navigate to="/command" replace />} />
                   <Route path="/command" element={<Command />} />
-                  <Route path="/mail" element={<Mail />} />
-                  <Route path="/mail/:messageId" element={<Mail />} />
                   <Route path="/meetings" element={<Meetings />} />
                   <Route path="/meetings/:eventId" element={<Meetings />} />
                   <Route path="/chat" element={<Chat />} />
@@ -67,6 +65,8 @@ function AppRoutes() {
                   <Route path="/files" element={<Files />} />
                   <Route path="/people" element={<People />} />
                   <Route path="/people/:userId" element={<People />} />
+                  <Route path="/announcements" element={<Announcements />} />
+                  <Route path="/announcements/:announcementId" element={<Announcements />} />
                   <Route path="/approvals" element={<Approvals />} />
                   <Route path="/approvals/:requestId" element={<Approvals />} />
                   <Route path="/admin" element={<Admin />} />

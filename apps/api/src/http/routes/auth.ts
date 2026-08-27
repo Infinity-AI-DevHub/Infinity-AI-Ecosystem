@@ -80,9 +80,16 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post('/auth/mfa/confirm', async (request, reply) => {
-    const input = parse(z.object({ userId: z.string().uuid(), code: z.string().min(6).max(8) }), request.body);
+    const input = parse(
+      z.object({
+        userId: z.string().uuid(),
+        activationToken: z.string().min(10).max(200),
+        code: z.string().min(6).max(8),
+      }),
+      request.body,
+    );
     await enforce(`mfaconfirm:${input.userId}`, 10, 600);
-    await identity.confirmMfa(input.userId, input.code);
+    await identity.confirmMfa(input.userId, input.activationToken, input.code);
     return reply.code(204).send();
   });
 

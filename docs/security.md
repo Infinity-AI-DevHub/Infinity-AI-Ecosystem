@@ -47,12 +47,11 @@ Threats from the blueprint that are explicitly tested:
 
 | Threat | Control |
 |---|---|
-| Stored XSS in HTML email | Server-side allow-list sanitizer. The tokenizer is quote-aware, so markup smuggled inside an attribute value cannot desynchronize the parse and escape as live tags (the mutation-XSS bypass class). Event handlers, `style`, `srcset`, `javascript:` and `data:` URLs are all dropped. Unclosed tags are balanced so a fragment cannot escape its container. |
-| Tracking pixels | Remote images are neutralised to `data-blocked-src`; the reader opts in per message. |
-| Header injection | Newlines in any address or subject are rejected as a field-level validation error, and re-checked in the adapter before anything reaches the wire. |
+| Stored XSS in rendered HTML | Server-side allow-list sanitizer (`core/sanitize.ts`). The tokenizer is quote-aware, so markup smuggled inside an attribute value cannot desynchronize the parse and escape as live tags (the mutation-XSS bypass class). Event handlers, `style`, `srcset`, `javascript:` and `data:` URLs are all dropped. Unclosed tags are balanced so a fragment cannot escape its container. |
+| Header injection | Newlines in any address or subject of an outbound notification are rejected as a field-level validation error, and re-checked in the adapter before anything reaches the wire. |
 | Content-type confusion | Uploaded bytes are MIME-sniffed; the declared type is never trusted. Downloads are always served `Content-Disposition: attachment` with `X-Content-Type-Options: nosniff`. |
 | Malware | Files stay `processing` until scanned and become `quarantined` on a bad verdict. A scanner outage records `skipped` rather than silently passing the file. |
-| Dangerous attachments | Executable types are blocked on send and quarantined on receipt. |
+| Dangerous uploads | Executable types are refused; the check runs on the sniffed type, not the filename alone. |
 | Path traversal | Object keys are generated server-side; user filenames are sanitized and never form the storage path. |
 
 ## Transport and data
@@ -68,11 +67,15 @@ Threats from the blueprint that are explicitly tested:
 
 - Per-account and per-IP rate limits on sign-in, so neither a single-account attack nor
   credential stuffing across many accounts is cheap.
-- Per-endpoint limits on activation, MFA verification, general API traffic and outbound
-  mail volume — the last one bounds the damage from a compromised account.
-- Idempotency keys on retry-sensitive commands (account creation, sending mail, scheduling,
-  approval decisions) so a timeout retry cannot double-apply.
-- Provider webhooks require a valid HMAC signature and fall inside a replay window.
+- Per-endpoint limits on activation, MFA verification and general API traffic.
+- Idempotency keys on retry-sensitive commands (account creation, scheduling, approval
+  decisions) so a timeout retry cannot double-apply.
+- Outbound URLs from configuration are validated against private and link-local address
+  ranges, so a misconfigured provider endpoint cannot become an SSRF primitive.
+- Row-level security policies act as a database backstop beneath the application's own
+  tenant checks, for any role that does not own the tables.
+- State-changing requests additionally verify the `Origin`/`Referer` matches an allowed
+  origin, on top of the double-submit CSRF token.
 
 ## Audit and privacy
 
@@ -94,5 +97,6 @@ These need your infrastructure and are documented rather than hidden:
    verified. Automated tests cover the threat list; they do not replace a human assessment.
 2. **Key management** — `DATA_ENCRYPTION_KEY` is read from the environment. Move it to a
    managed KMS with a rotation schedule before production.
-3. **Provider hardening** — SPF, DKIM and DMARC alignment must be verified against your
-   real domain, and outbound bounce and complaint handling monitored.
+3. **Sending domain** — SPF, DKIM and DMARC must be aligned for the address in
+   `NOTIFY_FROM_ADDRESS`, or activation invitations will land in spam. Bounce handling is
+   now the provider's dashboard; the workspace no longer stores mail to reconcile against.

@@ -25,9 +25,14 @@ const REMOVE_WITH_CONTENT =
 const REMOVE_SELF_CLOSING =
   /<(script|style|iframe|object|embed|link|meta|base|form|svg|math)\b[^>]*\/?>/gi;
 
-function safeUrl(value: string): string | null {
+function safeLinkUrl(value: string): string | null {
   const trimmed = value.trim();
   return /^(https?:|mailto:)/i.test(trimmed) ? trimmed : null;
+}
+
+function safeImageUrl(value: string): string | null {
+  const trimmed = value.trim();
+  return /^https:/i.test(trimmed) ? trimmed : null;
 }
 
 function escapeAttr(value: string): string {
@@ -46,7 +51,7 @@ function sanitizeAttributes(tag: string, raw: string, blockRemoteImages: boolean
     if (name.startsWith('on') || name === 'style' || name === 'srcset') continue;
 
     if (tag === 'img' && name === 'src') {
-      const url = safeUrl(value);
+      const url = safeImageUrl(value);
       if (!url) continue;
       // Remote images leak read receipts, so the client asks before loading them.
       pieces.push(
@@ -58,7 +63,7 @@ function sanitizeAttributes(tag: string, raw: string, blockRemoteImages: boolean
     }
     if (!allowed?.has(name)) continue;
     if (name === 'href') {
-      const url = safeUrl(value);
+      const url = safeLinkUrl(value);
       if (!url) continue;
       pieces.push(` href="${escapeAttr(url)}" rel="noopener noreferrer nofollow" target="_blank"`);
       continue;

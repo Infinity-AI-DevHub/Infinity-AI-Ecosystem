@@ -112,11 +112,6 @@ async function enforceRetention(): Promise<void> {
     `DELETE FROM notifications WHERE created_at < now() - ($1 || ' days')::interval`,
     [config.retention.notificationDays],
   );
-  await pool.query(
-    `DELETE FROM mail_messages
-      WHERE retention_until IS NOT NULL AND retention_until < now()
-        AND delivery_state <> 'quarantined'`,
-  );
 }
 
 /** Expired sessions, used invitations, stale upload sessions and rate counters. */

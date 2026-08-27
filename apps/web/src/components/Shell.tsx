@@ -13,6 +13,7 @@ import {
   CheckSquare,
   Files as FilesIcon,
   Inbox,
+  Megaphone,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -39,11 +40,11 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { to: '/command', label: 'Command', icon: LayoutDashboard },
-  { to: '/mail', label: 'Mail', icon: Inbox, capability: 'mail.read' },
   { to: '/meetings', label: 'Meetings', icon: CalendarDays, capability: 'calendar.read' },
   { to: '/chat', label: 'Chat', icon: MessageSquareText, capability: 'room.join' },
   { to: '/tasks', label: 'Tasks', icon: CheckSquare, capability: 'task.update' },
   { to: '/files', label: 'Files', icon: FilesIcon, capability: 'file.read' },
+  { to: '/announcements', label: 'Announcements', icon: Megaphone },
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, capability: 'request.create' },
   { to: '/people', label: 'People', icon: Users, capability: 'user.read' },
   { to: '/admin', label: 'Admin', icon: SettingsIcon, capability: 'settings.read' },
@@ -215,7 +216,7 @@ export function Shell({ children }: { children: ReactNode }) {
               ref={searchRef}
               name="q"
               type="search"
-              placeholder="Search mail, files, people…  ( / )"
+              placeholder="Search files, people, tasks…  ( / )"
               autoComplete="off"
             />
           </form>

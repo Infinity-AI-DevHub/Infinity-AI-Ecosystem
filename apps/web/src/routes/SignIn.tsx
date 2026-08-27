@@ -13,11 +13,17 @@ import { FieldMessage } from '../components/States';
 
 type Stage = 'credentials' | 'mfa';
 
+function safeReturnPath(value: unknown): string {
+  if (typeof value !== 'string') return '/command';
+  if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return '/command';
+  return value;
+}
+
 export default function SignIn() {
   const { status, refresh } = useSession();
   const navigate = useNavigate();
   const location = useLocation();
-  const returnTo = (location.state as { from?: string } | null)?.from ?? '/command';
+  const returnTo = safeReturnPath((location.state as { from?: string } | null)?.from);
 
   const [stage, setStage] = useState<Stage>('credentials');
   const [email, setEmail] = useState('');

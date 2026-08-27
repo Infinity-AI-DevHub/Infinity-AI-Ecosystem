@@ -74,6 +74,8 @@ class Client {
     this.request('POST', url, body, headers);
   patch = (url: string, body?: unknown, headers?: Record<string, string>) =>
     this.request('PATCH', url, body, headers);
+  put = (url: string, body?: unknown, headers?: Record<string, string>) =>
+    this.request('PUT', url, body, headers);
   del = (url: string, headers?: Record<string, string>) => this.request('DELETE', url, undefined, headers);
 }
 
@@ -94,8 +96,8 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     process.env.NODE_ENV = 'test';
     process.env.DATABASE_URL = DATABASE_URL;
     process.env.DATA_ENCRYPTION_KEY ??= 'a'.repeat(64);
-    process.env.MAIL_DRIVER = 'log';
-    process.env.MAIL_DEFAULT_DOMAIN = 'e2e.test';
+    process.env.NOTIFY_DRIVER = 'log';
+    process.env.NOTIFY_DEFAULT_DOMAIN = 'e2e.test';
     process.env.REQUIRE_MFA_FOR_ADMINS = 'false';
     process.env.RATE_API_PER_MIN = '100000';
     process.env.RATE_LOGIN_PER_MIN = '10000';
@@ -134,9 +136,6 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
        VALUES ($1,$2,now(),true,$3,now())`,
       [adminId, await crypto.hashPassword(ADMIN_PASSWORD), crypto.encryptField(adminTotpSecret)],
     );
-    const mailDomain = await import('../src/domains/mail.js');
-    await mailDomain.ensureMailbox(companyId, adminId, ADMIN_EMAIL, 'E2E Administrator');
-    await db.query(`UPDATE mailboxes SET provision_state = 'ready' WHERE owner_id = $1`, [adminId]);
     await db.query(
       `INSERT INTO approval_definitions (company_id, key, name, routing)
        VALUES ($1,'expense','Expense claim', $2::jsonb)`,
@@ -557,95 +556,6 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(attempt.status, 409);
   });
 
-  // --------------------------------------------------------------- mail
-
-  it('queues outbound mail and stores it durably before delivery', async () => {
-    const sent = await admin.post(
-      '/api/v1/mail/messages',
-      {
-        to: [staffEmail],
-        subject: 'Welcome aboard',
-        bodyText: 'Please review the onboarding checklist.',
-      },
-      { 'idempotency-key': `mail-${Date.now()}` },
-    );
-    assert.equal(sent.status, 202);
-    assert.equal(sent.body.deliveryState, 'queued');
-
-    const row = await db.one<{ delivery_state: string; body_text: string }>(
-      'SELECT delivery_state, body_text FROM mail_messages WHERE id = $1',
-      [sent.body.id],
-    );
-    assert.equal(row!.delivery_state, 'queued');
-
-    // The dispatcher delivers it and records the outcome.
-    const { drain } = await import('../src/workers/dispatcher.js');
-    await drain();
-    const delivered = await db.one<{ delivery_state: string }>(
-      'SELECT delivery_state FROM mail_messages WHERE id = $1',
-      [sent.body.id],
-    );
-    assert.equal(delivered!.delivery_state, 'sent');
-  });
-
-  it('recreates a missing system folder instead of failing the send', async () => {
-    // Simulates a mailbox left partially provisioned by an interrupted provider call.
-    const mailbox = await db.one<{ id: string }>(
-      `SELECT id FROM mailboxes WHERE owner_id = $1`,
-      [adminId],
-    );
-    await db.query(`DELETE FROM mail_folders WHERE mailbox_id = $1 AND kind = 'sent'`, [mailbox!.id]);
-
-    const sent = await admin.post(
-      '/api/v1/mail/messages',
-      { to: [staffEmail], subject: 'After folder loss', bodyText: 'still works' },
-      { 'idempotency-key': `mail-heal-${Date.now()}` },
-    );
-    assert.equal(sent.status, 202);
-
-    const restored = await db.one<{ count: number }>(
-      `SELECT count(*)::int AS count FROM mail_folders WHERE mailbox_id = $1 AND kind = 'sent'`,
-      [mailbox!.id],
-    );
-    assert.equal(restored!.count, 1);
-  });
-
-  it('sanitizes HTML mail on the way in', async () => {
-    const sent = await admin.post(
-      '/api/v1/mail/messages',
-      {
-        to: [staffEmail],
-        subject: 'Formatted note',
-        bodyText: 'fallback',
-        bodyHtml: '<p onclick="alert(1)">Hello</p><script>steal()</script>',
-      },
-      { 'idempotency-key': `mail-html-${Date.now()}` },
-    );
-    assert.equal(sent.status, 202);
-    const row = await db.one<{ body_html_sanitized: string }>(
-      'SELECT body_html_sanitized FROM mail_messages WHERE id = $1',
-      [sent.body.id],
-    );
-    assert.equal(row!.body_html_sanitized.includes('onclick'), false);
-    assert.equal(row!.body_html_sanitized.includes('script'), false);
-    assert.equal(row!.body_html_sanitized.includes('Hello'), true);
-  });
-
-  it('refuses mail with header injection in the subject', async () => {
-    const attempt = await admin.post(
-      '/api/v1/mail/messages',
-      {
-        to: [staffEmail],
-        subject: 'Legit\r\nBcc: attacker@evil.test',
-        bodyText: 'x',
-      },
-      { 'idempotency-key': `mail-inject-${Date.now()}` },
-    );
-    // Malformed input must be a validation error, never an internal server error.
-    assert.equal(attempt.status, 422);
-    assert.equal(attempt.body.error.fields.some((f: Json) => f.field === 'subject'), true);
-  });
-
   // --------------------------------------------------------------- approvals
 
   it('routes an approval and enforces separation of duties', async () => {
@@ -691,6 +601,141 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
         requestId,
       ]),
     );
+  });
+
+  // --------------------------------------------------------------- announcements
+
+  it('publishes an announcement and records acknowledgement', async () => {
+    const created = await admin.post('/api/v1/announcements', {
+      title: 'Office closed Friday',
+      body: 'The building is closed for maintenance.',
+      priority: 'important',
+      audience: { scope: 'company' },
+      requiresAck: true,
+    });
+    assert.equal(created.status, 201);
+
+    // The targeted colleague sees it.
+    const listed = await staff.get('/api/v1/announcements');
+    assert.equal(listed.status, 200);
+    assert.equal(
+      listed.body.items.some((a: Json) => a.id === created.body.id),
+      true,
+    );
+
+    // Acknowledgement is a deliberate act and is recorded.
+    const acked = await staff.post(`/api/v1/announcements/${created.body.id}/read`, {
+      acknowledge: true,
+    });
+    assert.equal(acked.status, 204);
+
+    const stats = await admin.get(`/api/v1/announcements/${created.body.id}/stats`);
+    assert.equal(stats.status, 200);
+    assert.equal(stats.body.acks >= 1, true);
+
+    // Withdrawing removes it from everyone's list.
+    assert.equal((await admin.del(`/api/v1/announcements/${created.body.id}`)).status, 204);
+    const after = await staff.get('/api/v1/announcements');
+    assert.equal(
+      after.body.items.some((a: Json) => a.id === created.body.id),
+      false,
+    );
+  });
+
+  it('refuses announcement publication to someone without the capability', async () => {
+    const attempt = await staff.post('/api/v1/announcements', {
+      title: 'Unauthorised',
+      body: 'Should not publish',
+    });
+    assert.equal(attempt.status, 403);
+  });
+
+  // --------------------------------------------------------------- files
+
+  it('separates the recycle bin from the active file list', async () => {
+    const upload = await admin.post('/api/v1/files/uploads', {
+      filename: 'retention-note.txt',
+      mimeType: 'text/plain',
+      sizeBytes: 24,
+    });
+    assert.equal(upload.status, 201);
+    const fileId = upload.body.fileId as string;
+
+    // Finalise it directly so the record reaches an active state.
+    const fileDomain = await import('../src/domains/files.js');
+    const actorContext = await (await import('../src/domains/identity.js')).findUserById(adminId);
+    const { buildActor } = await import('../src/domains/identity.js');
+    const actor = await buildActor(actorContext!, { id: 'test', mfa_satisfied: true });
+    await fileDomain.receiveUpload(actor, upload.body.uploadId, Buffer.from('retention note content'));
+
+    const active = await admin.get('/api/v1/files?limit=100');
+    assert.equal(active.body.items.some((f: Json) => f.id === fileId), true);
+
+    assert.equal((await admin.del(`/api/v1/files/${fileId}`)).status, 204);
+
+    // Gone from the active list, present in the bin, and restorable.
+    const afterDelete = await admin.get('/api/v1/files?limit=100');
+    assert.equal(afterDelete.body.items.some((f: Json) => f.id === fileId), false);
+
+    const bin = await admin.get('/api/v1/files?limit=100&recycled=true');
+    assert.equal(bin.body.items.some((f: Json) => f.id === fileId), true);
+
+    assert.equal((await admin.post(`/api/v1/files/${fileId}/restore`)).status, 200);
+    const restored = await admin.get('/api/v1/files?limit=100');
+    assert.equal(restored.body.items.some((f: Json) => f.id === fileId), true);
+  });
+
+  it('records every stored version of a file', async () => {
+    const list = await admin.get('/api/v1/files?limit=100');
+    const file = list.body.items[0];
+    if (!file) return;
+    const versions = await admin.get(`/api/v1/files/${file.id}/versions`);
+    assert.equal(versions.status, 200);
+    assert.equal(versions.body.items.length >= 1, true);
+    assert.ok(versions.body.items[0].checksum);
+  });
+
+  // --------------------------------------------------------------- groups
+
+  it('creates a group and applies membership immediately', async () => {
+    const group = await admin.post('/api/v1/admin/groups', {
+      name: `finance-reviewers-${Date.now()}`,
+      description: 'Reviews finance requests',
+    });
+    assert.equal(group.status, 201);
+
+    const set = await admin.put(`/api/v1/admin/groups/${group.body.id}/members`, {
+      userIds: [staffId],
+    });
+    assert.equal(set.status, 204);
+
+    const listed = await admin.get('/api/v1/admin/groups');
+    const found = listed.body.items.find((g: Json) => g.id === group.body.id);
+    assert.equal(found.member_count, 1);
+
+    // The member's own capability context now includes the group.
+    const capabilities = await staff.get('/api/v1/me/capabilities');
+    assert.equal(capabilities.body.groupIds.includes(group.body.id), true);
+  });
+
+  // --------------------------------------------------------------- chat direct
+
+  it('returns the same direct conversation rather than duplicating it', async () => {
+    const first = await admin.post('/api/v1/chat/direct', { userId: staffId });
+    const second = await admin.post('/api/v1/chat/direct', { userId: staffId });
+    assert.equal(first.status, 201);
+    assert.equal(second.body.id, first.body.id);
+  });
+
+  // --------------------------------------------------------------- mail is gone
+
+  it('no longer exposes any mail endpoints', async () => {
+    // The module was removed in favour of a separate email application; the routes
+    // must be genuinely absent, not merely hidden in the interface.
+    for (const path of ['/api/v1/mail/mailboxes', '/api/v1/mail/messages', '/api/v1/webhooks/mail']) {
+      const response = await admin.get(path);
+      assert.equal(response.status, 404, `${path} should not exist`);
+    }
   });
 
   // --------------------------------------------------------------- search
@@ -771,7 +816,8 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal((await staff.get('/api/v1/me')).status, 401);
 
     // A direct call to a module endpoint is refused too.
-    assert.equal((await staff.get('/api/v1/mail/messages')).status, 401);
+    assert.equal((await staff.get('/api/v1/chat/rooms')).status, 401);
+    assert.equal((await staff.get('/api/v1/tasks')).status, 401);
 
     // Re-authentication is refused with a support-oriented message.
     const relogin = new Client(app);

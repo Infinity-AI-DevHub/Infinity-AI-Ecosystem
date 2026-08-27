@@ -69,7 +69,7 @@ export default function Activate() {
     setPending(true);
     setError(null);
     try {
-      await api.post('/auth/mfa/confirm', { userId: enrolment.user.id, code });
+      await api.post('/auth/mfa/confirm', { userId: enrolment.user.id, activationToken: token, code });
       setConfirmed(true);
     } catch (err) {
       setError(err instanceof ApiError || err instanceof NetworkError ? err : new NetworkError());

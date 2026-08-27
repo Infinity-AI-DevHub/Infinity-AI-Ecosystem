@@ -16,27 +16,28 @@ Fastify API  ──────────────┐
    │                       │  emits domain events in the same transaction
    ├── domains/            ▼
    │     identity      outbox_events (PostgreSQL)
-   │     mail                │
-   │     calendar            │  claimed with SKIP LOCKED
-   │     chat                ▼
-   │     tasks          Worker: dispatcher + scheduler
-   │     files               │
-   │     approvals           ├── mailbox provisioning, mail delivery
-   │     search              ├── notification fan-out
-   │     admin               ├── search indexing
-   │                         └── reminders, retention, escalation
+   │     calendar           │
+   │     chat               │  claimed with SKIP LOCKED
+   │     tasks              ▼
+   │     files         Worker: dispatcher + scheduler
+   │     approvals          │
+   │     announcements      ├── activation invitations
+   │     search             ├── notification fan-out
+   │     admin              ├── search indexing
+   │                        └── reminders, retention, escalation
    ▼
 PostgreSQL          Object storage (S3-compatible or local)
-                    Mail provider · Meeting provider · Malware scanner
+                    Notification sender · Meeting provider · Malware scanner
 ```
 
 ## Why the outbox
 
-A state change and the work it triggers must not be able to diverge. Sending mail, for
-example, writes the message row and an `outbox_events` row in one transaction. If the
-provider is down, the user's mail still exists and the delivery is retried with backoff;
-it cannot be silently lost. Handlers are written to be idempotent because an event can be
-delivered more than once after a crash.
+A state change and the work it triggers must not be able to diverge. Creating an account,
+for example, writes the user row, the invitation and an `outbox_events` row in one
+transaction. If the notification provider is down, the account and its invitation still
+exist and delivery is retried with backoff; the invitation cannot be silently lost.
+Handlers are written to be idempotent because an event can be delivered more than once
+after a crash.
 
 ## Authorization
 
@@ -81,12 +82,16 @@ reconnecting client catches up exactly, with no gaps or duplicates.
 
 ## Provider boundaries
 
-Mail delivery, meeting media and malware scanning sit behind adapter interfaces
+Transactional email, meeting media and malware scanning sit behind adapter interfaces
 (`src/adapters/`). The blueprint is explicit that building mail hosting or WebRTC media
-infrastructure from scratch is the wrong trade, so the workspace owns the experience,
-authorization, retention and audit trail, while a managed provider owns reputation,
-transport and abuse handling. Every adapter has a degraded mode that is visible in the
-interface rather than silently failing.
+infrastructure from scratch is the wrong trade. Employee mailboxes now live in a separate
+application entirely, and what remains here is the workspace's own outbound notifications.
+Every adapter has a degraded mode that is visible in the interface rather than silently
+failing.
+
+Removing the mail module was also a privacy improvement: the workspace is no longer a
+second copy of everyone's correspondence, which shrinks both the breach blast radius and
+the retention obligation.
 
 ## Frontend
 

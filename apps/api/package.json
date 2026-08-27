@@ -14,7 +14,7 @@
     "migrate": "npm run build && node dist/src/cli/migrate.js",
     "seed": "npm run build && node dist/src/cli/seed.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test dist/test/",
+    "test": "npm run build && node --test dist/test/*.js",
     "test:unit": "npm run build && node --test dist/test/unit.test.js"
   },
   "dependencies": {
@@ -22,8 +22,8 @@
     "@fastify/cors": "^10.0.2",
     "@fastify/helmet": "^13.0.1",
     "@fastify/multipart": "^9.0.3",
-    "@fastify/static": "^8.0.4",
     "@fastify/websocket": "^11.0.2",
+    "dotenv": "^17.4.2",
     "fastify": "^5.2.1",
     "pg": "^8.13.1",
     "pino": "^9.6.0",

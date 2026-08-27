@@ -5,7 +5,7 @@
  * cannot blank the page.
  */
 import { Link } from 'react-router-dom';
-import { CalendarDays, CheckSquare, Inbox, Megaphone, ShieldCheck, HardDrive } from 'lucide-react';
+import { CalendarDays, CheckSquare, Megaphone, ShieldCheck, HardDrive } from 'lucide-react';
 import { api, type Widget } from '../lib/api';
 import { useQuery } from '../lib/query';
 import { Loading, ErrorState } from '../components/States';
@@ -13,7 +13,6 @@ import { useSession } from '../lib/session';
 import { formatBytes, formatTime, relativeTime, titleCase } from '../lib/format';
 
 type Dashboard = {
-  mail: Widget<{ unread: number }>;
   meetings: Widget<
     { id: string; title: string; starts_at: string; ends_at: string; timezone: string; has_video: boolean; rsvp: string }[]
   >;
@@ -61,18 +60,6 @@ export default function Command() {
       </header>
 
       <section className="metric-row" aria-label="Summary">
-        <Link to="/mail" className="metric-card">
-          <Inbox size={18} aria-hidden="true" />
-          <WidgetBody widget={data.mail}>
-            {(mail) => (
-              <>
-                <strong>{mail.unread}</strong>
-                <span>Unread messages</span>
-              </>
-            )}
-          </WidgetBody>
-        </Link>
-
         <Link to="/approvals" className="metric-card">
           <ShieldCheck size={18} aria-hidden="true" />
           <WidgetBody widget={data.approvals}>
@@ -185,6 +172,7 @@ export default function Command() {
               <Megaphone size={16} aria-hidden="true" />
               <h3 id="announcements-heading">Announcements</h3>
             </div>
+            <Link to="/announcements" className="ghost-button">See all</Link>
           </header>
           <WidgetBody widget={data.announcements}>
             {(announcements) =>
@@ -194,7 +182,9 @@ export default function Command() {
                 <ul className="announcement-list">
                   {announcements.map((announcement) => (
                     <li key={announcement.id} className={`priority-${announcement.priority}`}>
-                      <strong>{announcement.title}</strong>
+                      <Link to={`/announcements/${announcement.id}`}>
+                        <strong>{announcement.title}</strong>
+                      </Link>
                       <p>{announcement.body.slice(0, 220)}</p>
                       <span>
                         {announcement.author_name ?? 'Workspace'} ·{' '}
