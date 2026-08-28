@@ -991,6 +991,85 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(invalid.body.error.fields.length > 0, true);
   });
 
+  it('shows an employment history without showing what people earn', async () => {
+    // Compensation is the one thing here sensitive between colleagues rather than only to
+    // outsiders, so it is gated separately from the record it sits in - plenty of people
+    // need an employment history without seeing a salary.
+    const subject = await admin.post(
+      '/api/v1/users',
+      { email: `hire.${Date.now()}@e2e.test`, displayName: 'New Hire', accessLevel: 'staff' },
+      { 'idempotency-key': `hire-${Date.now()}` },
+    );
+    assert.equal(subject.status, 201);
+    const subjectId = subject.body.user.id as string;
+
+    const first = await admin.post(`/api/v1/hr/employment/${subjectId}`, {
+      jobTitle: 'Engineer',
+      effectiveFrom: '2025-01-06',
+      salary: 62000,
+      changeReason: 'Joined',
+    });
+    assert.equal(first.status, 201);
+
+    const promotion = await admin.post(`/api/v1/hr/employment/${subjectId}`, {
+      jobTitle: 'Senior Engineer',
+      effectiveFrom: '2026-04-01',
+      salary: 74000,
+      changeReason: 'Promotion',
+    });
+    assert.equal(promotion.status, 201);
+
+    // History rather than current state: the earlier record is closed, not overwritten,
+    // because "what were they on in March" is a question payroll and audits both ask.
+    const history = await admin.get(`/api/v1/hr/employment/${subjectId}`);
+    const rows = history.body.items as { job_title: string; effective_to: string | null; salary?: number }[];
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]!.job_title, 'Senior Engineer');
+    assert.equal(rows[0]!.effective_to, null);
+    assert.notEqual(rows[1]!.effective_to, null);
+    assert.equal(rows[0]!.salary, 74000);
+
+    // Back-dating over terms someone was already paid under is a correction, not an edit,
+    // and is refused rather than silently rewriting the history.
+    const backdated = await admin.post(`/api/v1/hr/employment/${subjectId}`, {
+      jobTitle: 'Backdated',
+      effectiveFrom: '2025-06-01',
+      salary: 1,
+    });
+    assert.equal(backdated.status, 409);
+
+    // An auditor reads the record and not the pay. The field is absent rather than null,
+    // so a reader cannot mistake "withheld" for "nothing recorded".
+    const auditorEmail = `auditor.${Date.now()}@e2e.test`;
+    const auditor = await admin.post(
+      '/api/v1/users',
+      { email: auditorEmail, displayName: 'Auditor', accessLevel: 'auditor' },
+      { 'idempotency-key': `auditor-${Date.now()}` },
+    );
+    assert.equal(auditor.status, 201);
+    const auditorClient = new Client(app);
+    await auditorClient.post('/api/v1/auth/activate', {
+      token: new URL(auditor.body.invitation.url).searchParams.get('token')!,
+      password: 'Auditor-Passphrase-2026!',
+    });
+    await auditorClient.post('/api/v1/auth/login', {
+      email: auditorEmail,
+      password: 'Auditor-Passphrase-2026!',
+    });
+
+    const seen = await auditorClient.get(`/api/v1/hr/employment/${subjectId}`);
+    assert.equal(seen.status, 200);
+    const auditorRows = seen.body.items as Record<string, unknown>[];
+    assert.equal(auditorRows[0]!.job_title, 'Senior Engineer');
+    assert.equal(auditorRows[0]!.salaryVisible, false);
+    assert.equal(Object.hasOwn(auditorRows[0]!, 'salary'), false);
+
+    // And the amount never reaches the audit trail, which is read far more widely than
+    // the record itself.
+    const trail = await admin.get('/api/v1/admin/audit?limit=50');
+    assert.equal(JSON.stringify(trail.body).includes('74000'), false);
+  });
+
   it('keeps approving a claim and paying it in different hands', async () => {
     // The commonest expense fraud is approving your own reimbursement and then recording
     // the payment. Both halves must be refused, and the check has to actually fire - the
