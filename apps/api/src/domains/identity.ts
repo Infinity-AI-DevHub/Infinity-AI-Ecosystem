@@ -977,3 +977,145 @@ export function publicUser(user: UserRow) {
 }
 
 export { randomUUID };
+
+// ---------------------------------------------------------------- password recovery
+
+/**
+ * Password recovery.
+ *
+ * This platform is the company's only system: there is no identity provider behind it
+ * and no second place to sign in from. An account that cannot authenticate therefore has
+ * no route back in except this one, which is why recovery is part of the product rather
+ * than an operational script. Re-issuing an activation invitation does not cover it -
+ * that refuses accounts which are already active, which is everyone who has ever used
+ * the product.
+ */
+const RESET_TTL_MINUTES = 60;
+
+export type ResetIssue = { token: string; url: string; userId: string };
+
+/**
+ * Starts a reset for the address, if it belongs to a live account.
+ *
+ * Returns null when it does not. Callers must answer identically either way: whether an
+ * address has an account here is exactly the fact an attacker wants, and the sign-in
+ * path already refuses to leak it.
+ */
+export async function requestPasswordReset(
+  email: string,
+  ctx: RequestContext,
+): Promise<ResetIssue | null> {
+  const normalized = email.toLowerCase().trim();
+  const company = await companyForEmail(normalized);
+  const user = company ? await findUserByEmail(company.id, normalized) : undefined;
+  // Invited accounts are deliberately excluded: they have no password to reset, and an
+  // activation invitation is the correct instrument for them.
+  if (!user || user.status !== 'active') return null;
+
+  const token = generateToken();
+  await transaction(async (tx) => {
+    // Only the newest link may work. Without this, every previously mailed link stays
+    // live for its full hour, so one intercepted message keeps its value even after the
+    // person notices and requests another.
+    await tx.query(
+      `UPDATE password_resets SET invalidated_at = NOW(3)
+        WHERE user_id = $1 AND consumed_at IS NULL AND invalidated_at IS NULL`,
+      [user.id],
+    );
+    await tx.query(
+      `INSERT INTO password_resets (id, company_id, user_id, token_hash, requested_ip, expires_at)
+       VALUES ($1,$2,$3,$4,$5, DATE_ADD(NOW(3), INTERVAL $6 MINUTE))`,
+      [newId(), user.company_id, user.id, hashToken(token), ctx.ip, RESET_TTL_MINUTES],
+    );
+    await recordAudit(
+      {
+        companyId: user.company_id,
+        actorId: user.id,
+        actorEmail: user.email,
+        action: 'auth.password_reset_requested',
+        resourceType: 'user',
+        resourceId: user.id,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        correlationId: ctx.correlationId,
+      },
+      tx,
+    );
+    await emit(
+      {
+        companyId: user.company_id,
+        type: 'user.password_reset_requested',
+        actorId: user.id,
+        correlationId: ctx.correlationId,
+        payload: {
+          userId: user.id,
+          email: user.email,
+          url: `${config.publicUrl}/reset?token=${token}`,
+          expiresInMinutes: RESET_TTL_MINUTES,
+        },
+      },
+      tx,
+    );
+  });
+
+  return { token, url: `${config.publicUrl}/reset?token=${token}`, userId: user.id };
+}
+
+/** Consumes a single-use reset token and sets a new password. */
+export async function completePasswordReset(
+  token: string,
+  newPassword: string,
+  ctx: RequestContext,
+): Promise<void> {
+  const reset = await one<{ id: string; user_id: string }>(
+    `SELECT id, user_id FROM password_resets
+      WHERE token_hash = $1 AND consumed_at IS NULL AND invalidated_at IS NULL
+        AND expires_at > NOW(3)`,
+    [hashToken(token)],
+  );
+  if (!reset) throw badRequest('This reset link is invalid or has expired');
+
+  const user = await findUserById(reset.user_id);
+  if (!user) throw notFound('Account not found');
+  if (user.status !== 'active') throw forbidden('This account is not available');
+
+  await assertPasswordAcceptable(newPassword, user.email);
+  const passwordHash = await hashPassword(newPassword);
+
+  await transaction(async (tx) => {
+    // Single-use, enforced by the UPDATE matching only while unconsumed, so two
+    // simultaneous submissions of the same link cannot both set a password.
+    const claimed = await tx.query(
+      'UPDATE password_resets SET consumed_at = NOW(3) WHERE id = $1 AND consumed_at IS NULL',
+      [reset.id],
+    );
+    if (claimed.rowCount === 0) throw badRequest('This reset link has already been used');
+
+    await tx.query(
+      `UPDATE identities
+          SET password_hash = $2, password_set_at = NOW(3),
+              failed_attempts = 0, locked_until = NULL, updated_at = NOW(3)
+        WHERE user_id = $1`,
+      [user.id, passwordHash],
+    );
+    // A reset is the remedy for a suspected compromise, so every existing session and
+    // token goes with it. The lockout from failed attempts is cleared above for the same
+    // reason: the person proved control of the mailbox, and leaving them locked out
+    // would defeat the recovery they just completed.
+    await revokeAllAccess(user.id, 'password_reset', tx);
+    await recordAudit(
+      {
+        companyId: user.company_id,
+        actorId: user.id,
+        actorEmail: user.email,
+        action: 'auth.password_reset_completed',
+        resourceType: 'user',
+        resourceId: user.id,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        correlationId: ctx.correlationId,
+      },
+      tx,
+    );
+  });
+}

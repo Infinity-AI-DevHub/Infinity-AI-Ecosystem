@@ -35,6 +35,36 @@ function systemSender(): string {
  * provider may be slow or briefly unavailable; a failure retries with backoff rather
  * than silently stranding the invitation.
  */
+/**
+ * The reset link only ever exists in this message. It is not returned to the caller that
+ * requested it, because that caller is anonymous - answering with the token would hand
+ * anyone a password reset for any address they can name.
+ */
+const onPasswordResetRequested: Handler = async (event) => {
+  const { email, url, expiresInMinutes } = event.payload as {
+    email: string;
+    url: string;
+    expiresInMinutes: number;
+  };
+
+  await notifier.send({
+    from: { address: systemSender(), name: 'Infinity Workspace' },
+    to: [email],
+    subject: 'Reset your Infinity Workspace password',
+    text: [
+      'A password reset was requested for this address.',
+      '',
+      url,
+      '',
+      `This link expires in ${expiresInMinutes} minutes and can be used once.`,
+      'Completing it signs you out on every device.',
+      '',
+      'If you did not request this, you can ignore this message - your current password',
+      'still works and nothing has changed. Tell your administrator if it keeps arriving.',
+    ].join('\n'),
+  });
+};
+
 const onUserInvited: Handler = async (event) => {
   const { userId, email, displayName, invitationToken } = event.payload as {
     userId: string;
@@ -412,6 +442,7 @@ export const handlers: Record<string, Handler> = {
   'user.updated': onAccessChanged,
   'user.suspended': onAccessChanged,
   'user.reactivated': onAccessChanged,
+  'user.password_reset_requested': onPasswordResetRequested,
   'event.scheduled': onEventScheduled,
   'event.updated': onEventChanged,
   'event.cancelled': onEventChanged,

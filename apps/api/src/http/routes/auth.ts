@@ -26,6 +26,12 @@ const activateSchema = z.object({
   password: z.string().min(1).max(512),
 });
 
+const forgotSchema = z.object({ email: z.string().email().max(320) });
+const resetSchema = z.object({
+  token: z.string().min(10).max(200),
+  password: z.string().min(1).max(512),
+});
+
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/auth/login', async (request, reply) => {
     const input = parse(loginSchema, request.body);
@@ -48,6 +54,34 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     await enforce(`activate:ip:${request.ip}`, 10, 600);
     const result = await identity.activateAccount(input.token, input.password, request.requestContext);
     return reply.code(201).send({ user: identity.publicUser(result.user) });
+  });
+
+  /**
+   * Start a reset. The reply is identical whether or not the address has an account:
+   * the one thing an anonymous caller must not be able to learn here is who works here.
+   * The link itself travels only in the message to the address on file.
+   */
+  app.post('/auth/password/forgot', async (request, reply) => {
+    const input = parse(forgotSchema, request.body);
+    // Per-address so one account cannot be mail-bombed, per-IP so one source cannot
+    // sweep a list of guessed addresses looking for a difference in timing or effect.
+    await enforce(`forgot:email:${hashToken(input.email)}`, 3, 900);
+    await enforce(`forgot:ip:${request.ip}`, 15, 900);
+    await identity.requestPasswordReset(input.email, request.requestContext);
+    return reply.code(202).send({
+      status: 'accepted',
+      message: 'If that address has an account, a reset link is on its way.',
+    });
+  });
+
+  app.post('/auth/password/reset', async (request, reply) => {
+    const input = parse(resetSchema, request.body);
+    await enforce(`reset:ip:${request.ip}`, 10, 600);
+    await identity.completePasswordReset(input.token, input.password, request.requestContext);
+    // Every session was revoked with the reset, so there is nothing to return but the
+    // instruction to sign in again.
+    clearSessionCookie(reply);
+    return reply.code(204).send();
   });
 
   app.post('/auth/logout', async (request, reply) => {

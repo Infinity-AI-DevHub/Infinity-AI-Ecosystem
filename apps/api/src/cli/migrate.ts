@@ -104,8 +104,16 @@ export function splitStatements(sql: string): string[] {
       i += 5;
       continue;
     }
-    // A bare `IF` opens a block; `IF(` is the scalar function and opens nothing.
-    if (keyword('IF') && !/^IF\s*\(/i.test(rest())) {
+    // A bare `IF` opens a procedural block, but two other `IF`s open nothing: `IF(` is
+    // the scalar function, and `IF [NOT] EXISTS` is a DDL clause. Counting the latter
+    // left the depth permanently above zero, so no statement ever terminated and the
+    // whole file was sent to the server as one - which is how the first migration to
+    // say `CREATE TABLE IF NOT EXISTS` failed on its opening comment.
+    if (
+      keyword('IF') &&
+      !/^IF\s*\(/i.test(rest()) &&
+      !/^IF\s+(NOT\s+)?EXISTS\b/i.test(rest())
+    ) {
       depth += 1;
       current += 'IF';
       i += 2;

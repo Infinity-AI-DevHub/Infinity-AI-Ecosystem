@@ -11,6 +11,7 @@ import { Loading } from './components/States';
 import { Shell } from './components/Shell';
 import SignIn from './routes/SignIn';
 import Activate from './routes/Activate';
+import ResetPassword from './routes/ResetPassword';
 import './App.css';
 
 // Modules load on demand so the initial sign-in payload stays small.
@@ -47,6 +48,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/sign-in" element={<SignIn />} />
       <Route path="/activate" element={<Activate />} />
+      <Route path="/reset" element={<ResetPassword />} />
       <Route
         path="/*"
         element={

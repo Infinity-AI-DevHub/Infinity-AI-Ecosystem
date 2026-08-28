@@ -5,7 +5,7 @@
  * persistent store, and announces errors to assistive technology.
  */
 import { useState } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { KeyRound } from 'lucide-react';
 import { api, ApiError, NetworkError } from '../lib/api';
 import { useSession } from '../lib/session';
@@ -100,7 +100,10 @@ export default function SignIn() {
             </div>
 
             <div className="field">
-              <label htmlFor="password">Password</label>
+              <div className="label-row">
+                <label htmlFor="password">Password</label>
+                <Link className="field-link" to="/reset">Forgot password?</Link>
+              </div>
               <input
                 id="password"
                 name="password"

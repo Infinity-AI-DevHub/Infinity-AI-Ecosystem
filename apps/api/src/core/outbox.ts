@@ -11,6 +11,8 @@ export type DomainEventType =
   | 'user.updated'
   | 'user.suspended'
   | 'user.reactivated'
+  | 'user.password_reset_requested'
+  | 'user.offboarded'
   | 'session.revoked'
   | 'event.scheduled'
   | 'event.updated'

@@ -103,6 +103,7 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
   let app: FastifyInstance;
   let db: typeof import('../src/core/db.js');
   let crypto: typeof import('../src/core/crypto.js');
+  let identity: typeof import('../src/domains/identity.js');
   let companyId: string;
   let adminId: string;
   let admin: Client;
@@ -122,6 +123,7 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
 
     db = await import('../src/core/db.js');
     crypto = await import('../src/core/crypto.js');
+    identity = await import('../src/domains/identity.js');
     const { migrate } = await import('../src/cli/migrate.js');
     await migrate();
 
@@ -987,6 +989,51 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(invalid.status, 422);
     assert.equal(invalid.body.error.code, 'unprocessable');
     assert.equal(invalid.body.error.fields.length > 0, true);
+  });
+
+  it('recovers a forgotten password without revealing who has an account', async () => {
+    // This is the company's only system: there is no identity provider to fall back on,
+    // so recovery has to work. It also must not become an employee directory for anyone
+    // who can reach the sign-in page, which is why both answers are identical.
+    const caller = new Client(app);
+    const known = await caller.post('/api/v1/auth/password/forgot', { email: staffEmail });
+    const unknown = await caller.post('/api/v1/auth/password/forgot', {
+      email: `nobody-${Date.now()}@e2e.test`,
+    });
+    assert.equal(known.status, 202);
+    assert.equal(unknown.status, 202);
+    assert.deepEqual(known.body, unknown.body);
+
+    // The token never crosses the API boundary; it exists only in the message. The test
+    // reads it the way the mail worker would.
+    const issued = await identity.requestPasswordReset(staffEmail, {
+      ip: '127.0.0.1',
+      userAgent: 'e2e',
+      correlationId: 'e2e-reset',
+    });
+    assert.ok(issued);
+
+    const replacement = 'Recovered-By-The-Suite-2026!';
+    await identity.completePasswordReset(issued!.token, replacement, {
+      ip: '127.0.0.1',
+      userAgent: 'e2e',
+      correlationId: 'e2e-reset',
+    });
+
+    // Single use, and the old credential is genuinely gone.
+    await assert.rejects(() =>
+      identity.completePasswordReset(issued!.token, 'Another-Passphrase-2026!', {
+        ip: '127.0.0.1',
+        userAgent: 'e2e',
+        correlationId: 'e2e-reset',
+      }),
+    );
+
+    const withNew = await caller.post('/api/v1/auth/login', {
+      email: staffEmail,
+      password: replacement,
+    });
+    assert.equal(withNew.status, 200);
   });
 
   it('treats a wrong current password as a field error, not a dead session', async () => {

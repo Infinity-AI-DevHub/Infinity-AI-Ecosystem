@@ -1390,3 +1390,20 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   .request-list, .person-list, .announcement-rows { margin-inline: calc(var(--sp-4) * -1); }
   .request-row, .person-row, .announcement-row { padding-inline: var(--sp-4); }
 }
+
+/* A label paired with an inline action - "Forgot password?" beside the password field,
+   where someone actually looks for it rather than stranded below the form. */
+.label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+.label-row label { margin-bottom: 0; }
+.field-link {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--fg-accent);
+}
+.field-link:hover { text-decoration: underline; }
