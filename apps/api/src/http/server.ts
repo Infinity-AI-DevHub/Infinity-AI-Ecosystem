@@ -11,9 +11,10 @@ import websocket from '@fastify/websocket';
 import { ZodError } from 'zod';
 import { config } from '../core/config.js';
 import { logger } from '../core/logger.js';
-import { AppError, internal } from '../core/errors.js';
+import { AppError, forbidden, internal } from '../core/errors.js';
 import { enforce } from '../core/ratelimit.js';
 import { assertCsrf, clientIp, correlationIdOf, resolveActor } from './context.js';
+import { guestMayReach } from './guest-surface.js';
 import { registerRoutes } from './routes/index.js';
 import { registerWebsocket } from './websocket.js';
 
@@ -85,6 +86,14 @@ export async function buildServer(): Promise<FastifyInstance> {
       ? `api:user:${actor.userId}`
       : `api:ip:${request.ip}`;
     await enforce(bucket, config.limits.apiPerMinute, 60);
+
+    // Guests are external people. They are denied every route that is not named on the
+    // guest surface, so a company-wide listing that scopes by company alone - which is
+    // correct for an employee - cannot leak to a client contact who holds a row in the
+    // same company. See guest-surface.ts for what is open and why.
+    if (actor?.accessLevel === 'guest' && !guestMayReach(request.url)) {
+      throw forbidden('This is not available to guest accounts');
+    }
 
     await assertCsrf(request);
   });

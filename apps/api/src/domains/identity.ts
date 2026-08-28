@@ -131,10 +131,31 @@ export async function findUserById(id: string): Promise<UserRow | undefined> {
 export async function companyForEmail(email: string): Promise<{ id: string; status: string } | undefined> {
   const domain = email.split('@')[1];
   if (!domain) return undefined;
-  return one<{ id: string; status: string }>(
+  const byDomain = await one<{ id: string; status: string }>(
     'SELECT id, status FROM companies WHERE JSON_CONTAINS(verified_domains, JSON_QUOTE($1)) LIMIT 1',
     [domain.toLowerCase()],
   );
+  if (byDomain) return byDomain;
+
+  /**
+   * Guests are the deliberate exception. Their address belongs to the client or vendor
+   * they work for, so it will never match a verified domain - that is the whole point of
+   * them being external. Their company is resolved through the guest account itself.
+   *
+   * Restricted to exactly one match on purpose: email is unique per company, not
+   * globally, so the same client contact could hold guest accounts at two companies in a
+   * multi-tenant deployment. Guessing which one they meant would sign them into the
+   * wrong workspace, so an ambiguous address simply fails to resolve.
+   */
+  const guestCompanies = await many<{ id: string; status: string }>(
+    `SELECT DISTINCT c.id, c.status
+       FROM users u
+       JOIN companies c ON c.id = u.company_id
+      WHERE u.email = $1 AND u.access_level = 'guest'
+      LIMIT 2`,
+    [email.toLowerCase()],
+  );
+  return guestCompanies.length === 1 ? guestCompanies[0] : undefined;
 }
 
 // ----------------------------------------------------------------- account creation
@@ -530,6 +551,26 @@ export async function resolveSession(sessionToken: string): Promise<{ session: S
     await pool.query('UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1', [session.id]);
     return null;
   }
+
+  /**
+   * Guest access ends on a date, and that date has to be enforced on every request
+   * rather than by a nightly job. A finished engagement whose cleanup did not run is
+   * otherwise a live door into the company for however long it takes someone to notice.
+   */
+  if (user.access_level === 'guest') {
+    const membership = await one<{ expired: number }>(
+      `SELECT (access_expires_at IS NOT NULL AND access_expires_at <= NOW(3)) AS expired
+         FROM external_memberships WHERE user_id = $1`,
+      [user.id],
+    );
+    // No membership row means the guest is not attached to any organisation, which
+    // should be impossible; refuse rather than guess.
+    if (!membership || membership.expired) {
+      await pool.query('UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1', [session.id]);
+      return null;
+    }
+  }
+
   // Touch last_seen without blocking the request path.
   pool
     .query('UPDATE sessions SET last_seen_at = NOW(3) WHERE id = $1', [session.id])
@@ -934,6 +975,11 @@ export async function listUsers(
   const rows = await many<UserRow>(
     `SELECT * FROM users
       WHERE company_id = $1
+        -- Guests are external people, not colleagues. They must not surface in the
+        -- employee directory, the people pickers that feed off it, or the mention and
+        -- assignee lists built from those - a client contact appearing as a colleague is
+        -- both a leak of the relationship and an invitation to assign them work.
+        AND access_level <> 'guest'
         AND ($2 IS NULL OR status = $2)
         AND ($3 IS NULL OR department_id = $3)
         -- The utf8mb4_0900_ai_ci collation is already case-insensitive, so LIKE gives

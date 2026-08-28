@@ -472,3 +472,43 @@ export function publicFile(row: FileRow & { owner_name?: string | null }) {
 }
 
 export { randomUUID };
+
+/**
+ * Signed download for a share link, where there is no actor to authorize.
+ *
+ * The authorization already happened: a valid, unexpired, unrevoked share link was
+ * resolved and consumed before this is reached. What must not be skipped is the safety
+ * check - a quarantined or unscanned file is exactly what should never leave the company
+ * through an anonymous link, so those refusals are repeated here rather than assumed.
+ */
+export async function signedDownloadForShare(fileId: string) {
+  const file = await one<{ id: string; name: string; state: string }>(
+    'SELECT id, name, state FROM files WHERE id = $1',
+    [fileId],
+  );
+  if (!file) throw notFound('File not found');
+  if (file.state !== 'active') throw forbidden('This file is not available');
+
+  const version = await one<{ object_key: string; scan_state: string }>(
+    `SELECT object_key, scan_state FROM file_versions
+      WHERE file_id = $1 ORDER BY version DESC LIMIT 1`,
+    [fileId],
+  );
+  if (!version) throw notFound('File content not found');
+  if (version.scan_state === 'infected') throw forbidden('This version is quarantined');
+  // Unlike an internal download, an unscanned file is refused rather than allowed
+  // through: nobody outside the company should be the one to discover it was malware.
+  if (version.scan_state === 'pending') {
+    throw conflict('This file is still being checked; try again shortly');
+  }
+
+  return {
+    url: await storage.signedDownloadUrl(
+      version.object_key,
+      config.storage.signedUrlTtlSeconds,
+      file.name,
+    ),
+    expiresInSeconds: config.storage.signedUrlTtlSeconds,
+    filename: file.name,
+  };
+}

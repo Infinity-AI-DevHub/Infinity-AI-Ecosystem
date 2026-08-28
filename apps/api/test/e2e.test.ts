@@ -991,6 +991,74 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(invalid.body.error.fields.length > 0, true);
   });
 
+  it('confines a guest to what was explicitly granted, and nothing else', async () => {
+    // Client work is central here, so guests are real accounts belonging to real people
+    // at other companies. The property that matters is negative: a guest holds a row in
+    // this company, and must still reach none of it by default.
+    const org = await admin.post('/api/v1/external/organizations', {
+      name: `Northwind ${Date.now()}`,
+      kind: 'client',
+    });
+    assert.equal(org.status, 201);
+
+    const guestEmail = `contact.${Date.now()}@northwind-external.test`;
+    const invited = await admin.post(
+      '/api/v1/external/guests',
+      { organizationId: org.body.id, email: guestEmail, displayName: 'Dana Cross' },
+      { 'idempotency-key': `guest-${Date.now()}` },
+    );
+    assert.equal(invited.status, 201);
+
+    // A colleague's address must never be turned into a guest: that would demote a real
+    // employee to the guest role and strip everything they can reach.
+    const internal = await admin.post(
+      '/api/v1/external/guests',
+      { organizationId: org.body.id, email: ADMIN_EMAIL, displayName: 'Impersonator' },
+      { 'idempotency-key': `guest-internal-${Date.now()}` },
+    );
+    assert.equal(internal.status, 422);
+
+    const guest = new Client(app);
+    const token = new URL(invited.body.invitationUrl).searchParams.get('token')!;
+    assert.equal(
+      (await guest.post('/api/v1/auth/activate', { token, password: 'Guest-Passphrase-2026!' }))
+        .status,
+      201,
+    );
+    // Their address belongs to the client, so it will never match a verified domain -
+    // sign-in has to resolve the company through the guest account itself.
+    assert.equal(
+      (await guest.post('/api/v1/auth/login', {
+        email: guestEmail,
+        password: 'Guest-Passphrase-2026!',
+      })).status,
+      200,
+    );
+
+    // Everything company-wide is closed. Several of these listings scope by company
+    // alone, which is correct for an employee and wrong for an external contact, so the
+    // guest surface denies them at the boundary rather than trusting each one.
+    for (const path of [
+      '/api/v1/users',
+      '/api/v1/announcements',
+      '/api/v1/search?q=a',
+      '/api/v1/tasks',
+      '/api/v1/chat/rooms',
+      '/api/v1/admin/audit',
+      '/api/v1/external/organizations',
+    ]) {
+      const denied = await guest.get(path);
+      assert.equal(denied.status, 403, `${path} should be closed to guests, got ${denied.status}`);
+    }
+
+    // And they are not a colleague: the directory must not list them.
+    const directory = await admin.get('/api/v1/users?limit=100');
+    assert.equal(
+      (directory.body.items as { email: string }[]).some((u) => u.email === guestEmail),
+      false,
+    );
+  });
+
   it('moves a departing person\'s work to a successor instead of orphaning it', async () => {
     // Suspension left projects, open tasks and direct reports pointing at someone who
     // would never sign in again, and any approval waiting on them stalled forever. On a
