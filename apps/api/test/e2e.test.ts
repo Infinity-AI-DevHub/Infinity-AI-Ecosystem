@@ -991,6 +991,181 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(invalid.body.error.fields.length > 0, true);
   });
 
+  it('counts only working days, and reserves them before the decision', async () => {
+    // Leave rides on the approvals engine, so the company needs a route for it. The
+    // fallback matters here: the administrator raising this has no manager.
+    await db.query(
+      `INSERT IGNORE INTO approval_definitions (id, company_id, \`key\`, name, form_schema, routing)
+       VALUES ($1,$2,'leave','Leave request', JSON_ARRAY(), $3)`,
+      [
+        randomUUID(),
+        companyId,
+        JSON.stringify([
+          {
+            step: 1,
+            approver: { type: 'manager', fallback: { type: 'access_level', value: 'admin' } },
+            dueHours: 72,
+          },
+        ]),
+      ],
+    );
+
+    const type = await admin.post('/api/v1/leave/types', {
+      key: `annual-${Date.now()}`,
+      name: 'Annual leave (suite)',
+      defaultAnnualDays: 25,
+    });
+    assert.equal(type.status, 201);
+
+    // A public holiday inside the range must not be charged to the person's entitlement.
+    await db.pool.query(
+      'INSERT IGNORE INTO company_holidays (id, company_id, holiday_date, name) VALUES ($1,$2,$3,$4)',
+      [randomUUID(), companyId, '2026-09-07', 'Suite holiday'],
+    );
+
+    const before = await admin.get('/api/v1/leave/balances');
+    const startingRemaining = Number(
+      (before.body.items as { leave_type_id: string; remaining_days: string }[]).find(
+        (b) => b.leave_type_id === type.body.id,
+      )!.remaining_days,
+    );
+
+    // Thu 3rd to Wed 9th: two days, a weekend, a holiday, then two more.
+    const booked = await admin.post(
+      '/api/v1/leave/requests',
+      { leaveTypeId: type.body.id, startDate: '2026-09-03', endDate: '2026-09-09' },
+      { 'idempotency-key': `leave-${Date.now()}` },
+    );
+    assert.equal(booked.status, 201);
+    assert.equal(Number(booked.body.working_days), 4);
+
+    // Reserved immediately, which is what stops the same week being booked twice while
+    // the first request is still waiting for a decision.
+    const after = await admin.get('/api/v1/leave/balances');
+    const balance = (after.body.items as { leave_type_id: string; pending_days: string; remaining_days: string }[]).find(
+      (b) => b.leave_type_id === type.body.id,
+    )!;
+    assert.equal(Number(balance.pending_days), 4);
+    assert.equal(Number(balance.remaining_days), startingRemaining - 4);
+
+    const overlapping = await admin.post(
+      '/api/v1/leave/requests',
+      { leaveTypeId: type.body.id, startDate: '2026-09-08', endDate: '2026-09-10' },
+      { 'idempotency-key': `leave-overlap-${Date.now()}` },
+    );
+    assert.equal(overlapping.status, 409);
+
+    // A weekend is not leave, so a weekend-only range is not a request.
+    const weekend = await admin.post(
+      '/api/v1/leave/requests',
+      { leaveTypeId: type.body.id, startDate: '2026-09-05', endDate: '2026-09-06' },
+      { 'idempotency-key': `leave-weekend-${Date.now()}` },
+    );
+    assert.equal(weekend.status, 422);
+
+    // Cancelling gives the days back.
+    const cancelled = await admin.post(`/api/v1/leave/requests/${booked.body.id}/cancel`, {
+      reason: 'Plans changed',
+    });
+    assert.equal(cancelled.status, 204);
+    const released = await admin.get('/api/v1/leave/balances');
+    assert.equal(
+      Number(
+        (released.body.items as { leave_type_id: string; remaining_days: string }[]).find(
+          (b) => b.leave_type_id === type.body.id,
+        )!.remaining_days,
+      ),
+      startingRemaining,
+    );
+  });
+
+  it('routes approvals to a stand-in while the approver is away', async () => {
+    // Unroutable requests refuse outright rather than stranding, so without delegation an
+    // approver on holiday blocks everything routed to them. This is the release valve.
+    const coverEmail = `cover.${Date.now()}@e2e.test`;
+    const cover = await admin.post(
+      '/api/v1/users',
+      { email: coverEmail, displayName: 'Standing In', accessLevel: 'manager' },
+      { 'idempotency-key': `cover-${coverEmail}` },
+    );
+    assert.equal(cover.status, 201);
+    const coverToken = new URL(cover.body.invitation.url).searchParams.get('token')!;
+    await new Client(app).post('/api/v1/auth/activate', {
+      token: coverToken,
+      password: 'Standing-In-Passphrase-2026!',
+    });
+
+    // A route naming one specific approver, so the test is about delegation rather than
+    // about how a manager chain happens to resolve.
+    const away = await admin.post(
+      '/api/v1/users',
+      { email: `away.${Date.now()}@e2e.test`, displayName: 'Away Approver', accessLevel: 'manager' },
+      { 'idempotency-key': `away-${Date.now()}` },
+    );
+    assert.equal(away.status, 201);
+    const awayToken = new URL(away.body.invitation.url).searchParams.get('token')!;
+    await new Client(app).post('/api/v1/auth/activate', {
+      token: awayToken,
+      password: 'Away-Approver-Passphrase-2026!',
+    });
+    const originalApprover = away.body.user.id as string;
+
+    const definitionKey = `deleg_probe_${Date.now()}`;
+    await db.query(
+      `INSERT INTO approval_definitions (id, company_id, \`key\`, name, form_schema, routing)
+       VALUES ($1,$2,$3,'Delegation probe', JSON_ARRAY(), $4)`,
+      [
+        randomUUID(),
+        companyId,
+        definitionKey,
+        JSON.stringify([
+          { step: 1, approver: { type: 'user', value: originalApprover }, dueHours: 48 },
+        ]),
+      ],
+    );
+
+    const raise = async (title: string) =>
+      admin.post(
+        '/api/v1/approvals',
+        { definitionKey, title, amount: 10 },
+        { 'idempotency-key': `deleg-${title}-${Date.now()}` },
+      );
+
+    const beforeDelegation = await raise('before-cover');
+    assert.equal(beforeDelegation.status, 201);
+    assert.equal(
+      (await admin.get(`/api/v1/approvals/${beforeDelegation.body.id}`)).body.steps[0].approver_id,
+      originalApprover,
+    );
+
+    const delegation = await admin.post('/api/v1/delegations', {
+      fromUserId: originalApprover,
+      toUserId: cover.body.user.id,
+      startsAt: new Date(Date.now() - 3_600_000).toISOString(),
+      endsAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+      reason: 'Annual leave',
+      reassignExisting: true,
+    });
+    assert.equal(delegation.status, 201);
+
+    const duringCover = await raise('during-cover');
+    assert.equal(
+      (await admin.get(`/api/v1/approvals/${duringCover.body.id}`)).body.steps[0].approver_id,
+      cover.body.user.id,
+    );
+
+    // Withdrawing cover puts the route back where the rule says it should be.
+    assert.equal(
+      (await admin.del(`/api/v1/delegations/${delegation.body.delegation.id}`)).status,
+      204,
+    );
+    const afterCover = await raise('after-cover');
+    assert.equal(
+      (await admin.get(`/api/v1/approvals/${afterCover.body.id}`)).body.steps[0].approver_id,
+      originalApprover,
+    );
+  });
+
   it('confines a guest to what was explicitly granted, and nothing else', async () => {
     // Client work is central here, so guests are real accounts belonging to real people
     // at other companies. The property that matters is negative: a guest holds a row in

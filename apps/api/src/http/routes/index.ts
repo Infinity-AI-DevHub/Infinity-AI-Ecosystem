@@ -19,6 +19,7 @@ import {
 } from './collaboration.js';
 import { adminRoutes, objectRoutes } from './admin.js';
 import { externalRoutes, publicShareRoutes } from './external.js';
+import { leaveRoutes } from './leave.js';
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   /** Liveness: the process is up. Never touches the database. */
@@ -52,6 +53,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       await adminRoutes(api);
       await objectRoutes(api);
       await externalRoutes(api);
+      await leaveRoutes(api);
       // Anonymous by design: the token in the URL is the whole credential. Registered
       // last and named separately so the authenticated surface above stays obvious.
       await publicShareRoutes(api);

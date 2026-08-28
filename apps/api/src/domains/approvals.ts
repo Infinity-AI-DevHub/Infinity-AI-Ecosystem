@@ -120,15 +120,58 @@ async function resolveSpec(
  * Resolves a routing rule into approver IDs, applying the fallback when the primary
  * spec yields nobody.
  */
+/**
+ * Substitutes anyone with an open delegation for the person covering them.
+ *
+ * Applied after resolution rather than inside it, so the routing rule keeps meaning what
+ * it says - "the requester's manager" still resolves to the manager - and the delegation
+ * is a separate, visible redirection on top. That distinction matters when someone later
+ * asks why a decision was made by a person the route never names.
+ *
+ * A delegate who is themselves away is followed onward, capped so that two people who
+ * have delegated to each other cannot spin. If the chain cannot settle, the original
+ * approver is kept: a stalled queue is recoverable, and an approval silently routed
+ * somewhere unintended is not.
+ */
+async function applyDelegations(companyId: string, approverIds: string[]): Promise<string[]> {
+  const resolved: string[] = [];
+  for (const approverId of approverIds) {
+    let current = approverId;
+    const seen = new Set<string>([current]);
+    for (let hop = 0; hop < 3; hop += 1) {
+      const delegation = await one<{ to_user_id: string }>(
+        `SELECT d.to_user_id
+           FROM approval_delegations d
+           JOIN users u ON u.id = d.to_user_id
+          WHERE d.company_id = $1
+            AND d.from_user_id = $2
+            AND d.revoked_at IS NULL
+            AND d.starts_at <= NOW(3)
+            AND d.ends_at > NOW(3)
+            AND u.status = 'active'
+          ORDER BY d.created_at DESC
+          LIMIT 1`,
+        [companyId, current],
+      );
+      if (!delegation || seen.has(delegation.to_user_id)) break;
+      current = delegation.to_user_id;
+      seen.add(current);
+    }
+    if (!resolved.includes(current)) resolved.push(current);
+  }
+  return resolved;
+}
+
 async function resolveApprovers(
   companyId: string,
   requester: { id: string; manager_id: string | null; department_id: string | null },
   rule: RoutingRule,
 ): Promise<string[]> {
   const primary = await resolveSpec(companyId, requester, rule.approver);
-  if (primary.length > 0) return primary;
+  if (primary.length > 0) return applyDelegations(companyId, primary);
   if (!rule.approver.fallback) return [];
-  return resolveSpec(companyId, requester, rule.approver.fallback);
+  const fallback = await resolveSpec(companyId, requester, rule.approver.fallback);
+  return applyDelegations(companyId, fallback);
 }
 
 function ruleApplies(rule: RoutingRule, amount: number | null, departmentId: string | null): boolean {

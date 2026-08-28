@@ -13,6 +13,7 @@ import { notifier } from '../adapters/notifier.js';
 import * as notifications from '../domains/notifications.js';
 import * as searchIndex from '../domains/search.js';
 import * as tasks from '../domains/tasks.js';
+import * as leave from '../domains/leave.js';
 import * as files from '../domains/files.js';
 import { publish, publishToUser } from '../core/realtime.js';
 
@@ -63,6 +64,26 @@ const onPasswordResetRequested: Handler = async (event) => {
       'still works and nothing has changed. Tell your administrator if it keeps arriving.',
     ].join('\n'),
   });
+};
+
+/**
+ * Settles a leave request once its approval finishes.
+ *
+ * Safe to run here rather than inline with the decision because the days were reserved
+ * against the balance when the leave was booked. Until this runs they are still counted,
+ * so a delayed settlement can under-report what has been taken but can never let someone
+ * over-book.
+ */
+const onApprovalSettled: Handler = async (event) => {
+  const { requestId, status } = event.payload as { requestId: string; status: string };
+  if (status !== 'approved' && status !== 'rejected') return;
+
+  const leaveRequest = await one<{ id: string }>(
+    'SELECT id FROM leave_requests WHERE approval_request_id = $1',
+    [requestId],
+  );
+  if (!leaveRequest) return;
+  await leave.settleDecision(leaveRequest.id, status);
 };
 
 const onUserInvited: Handler = async (event) => {
@@ -455,7 +476,13 @@ export const handlers: Record<string, Handler> = {
   'file.recycled': onFileEvent,
   'approval.requested': onApprovalRequested,
   'approval.decided': onApprovalProgressed,
-  'approval.completed': onApprovalProgressed,
+  // Two things happen when an approval finishes: people are told, and any leave behind
+  // it is settled. Chained rather than merged so notification failures and balance
+  // settlement stay separately diagnosable in the dead-letter queue.
+  'approval.completed': async (event) => {
+    await onApprovalProgressed(event);
+    await onApprovalSettled(event);
+  },
   'announcement.published': onAnnouncementPublished,
 };
 
