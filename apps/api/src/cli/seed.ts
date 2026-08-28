@@ -42,7 +42,13 @@ const APPROVAL_DEFINITIONS = [
       { field: 'justification', label: 'Business justification', type: 'textarea', required: true },
     ],
     routing: [
-      { step: 1, approver: { type: 'manager' }, dueHours: 48 },
+      // Someone at the top of the reporting line has no manager, so the step falls back
+      // to an administrator rather than making the request impossible to raise.
+      {
+        step: 1,
+        approver: { type: 'manager', fallback: { type: 'access_level', value: 'admin' } },
+        dueHours: 48,
+      },
       { step: 2, minAmount: 1000, approver: { type: 'access_level', value: 'admin' }, dueHours: 72 },
     ],
   },
@@ -54,7 +60,13 @@ const APPROVAL_DEFINITIONS = [
       { field: 'endDate', label: 'Last day', type: 'date', required: true },
       { field: 'type', label: 'Type', type: 'select', options: ['Annual', 'Sick', 'Unpaid', 'Parental'] },
     ],
-    routing: [{ step: 1, approver: { type: 'manager' }, dueHours: 72 }],
+    routing: [
+      {
+        step: 1,
+        approver: { type: 'manager', fallback: { type: 'access_level', value: 'admin' } },
+        dueHours: 72,
+      },
+    ],
   },
   {
     key: 'purchase',
@@ -65,7 +77,11 @@ const APPROVAL_DEFINITIONS = [
       { field: 'justification', label: 'Justification', type: 'textarea', required: true },
     ],
     routing: [
-      { step: 1, approver: { type: 'manager' }, dueHours: 48 },
+      {
+        step: 1,
+        approver: { type: 'manager', fallback: { type: 'access_level', value: 'admin' } },
+        dueHours: 48,
+      },
       { step: 2, minAmount: 5000, approver: { type: 'access_level', value: 'admin' }, dueHours: 72 },
     ],
   },

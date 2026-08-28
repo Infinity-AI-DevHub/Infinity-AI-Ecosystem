@@ -15,7 +15,8 @@
     "seed": "npm run build && node dist/src/cli/seed.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test dist/test/*.js",
-    "test:unit": "npm run build && node --test dist/test/unit.test.js"
+    "test:unit": "npm run build && node --test dist/test/unit.test.js",
+    "test:e2e": "npm run build && node --test dist/test/e2e.test.js"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

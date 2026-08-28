@@ -22,6 +22,20 @@ export type DefinitionRow = {
   active: boolean;
 };
 
+export type ApproverSpec = {
+  type: 'manager' | 'user' | 'access_level';
+  value?: string;
+  /**
+   * Used when the primary spec resolves to nobody.
+   *
+   * The common case is a `manager` step for someone at the top of the reporting line:
+   * a chief executive has no manager, and without a fallback they could never raise a
+   * request at all. The fallback keeps the control (someone still approves) while
+   * making the route resolvable for everyone.
+   */
+  fallback?: { type: 'user' | 'access_level'; value?: string };
+};
+
 /**
  * A routing rule matches on amount and department, then names the approvers for a step.
  * `approver` is resolved at request time: 'manager' walks the reporting line.
@@ -32,7 +46,13 @@ export type RoutingRule = {
   minAmount?: number;
   maxAmount?: number;
   departmentIds?: string[];
-  approver: { type: 'manager' | 'user' | 'access_level'; value?: string };
+  approver: ApproverSpec;
+  /**
+   * When true the step is skipped if it resolves to nobody, provided some other step
+   * still does. Approvals never silently proceed unapproved: if no step resolves the
+   * request is refused outright.
+   */
+  optional?: boolean;
   dueHours?: number;
 };
 
@@ -60,35 +80,55 @@ export async function listDefinitions(actor: Actor) {
   );
 }
 
-/** Resolves a routing rule into concrete approver user IDs. */
-async function resolveApprovers(
+/** Resolves one approver spec into concrete, currently-active user IDs. */
+async function resolveSpec(
   companyId: string,
   requester: { id: string; manager_id: string | null; department_id: string | null },
-  rule: RoutingRule,
+  spec: { type: string; value?: string },
 ): Promise<string[]> {
-  switch (rule.approver.type) {
+  switch (spec.type) {
     case 'manager': {
       if (!requester.manager_id) return [];
-      return [requester.manager_id];
-    }
-    case 'user': {
-      if (!rule.approver.value) return [];
+      // A manager who has since been suspended cannot hold up the queue.
       const row = await one<{ id: string }>(
         `SELECT id FROM users WHERE id = $1 AND company_id = $2 AND status = 'active'`,
-        [rule.approver.value, companyId],
+        [requester.manager_id, companyId],
+      );
+      return row ? [row.id] : [];
+    }
+    case 'user': {
+      if (!spec.value) return [];
+      const row = await one<{ id: string }>(
+        `SELECT id FROM users WHERE id = $1 AND company_id = $2 AND status = 'active'`,
+        [spec.value, companyId],
       );
       return row ? [row.id] : [];
     }
     case 'access_level': {
       const rows = await many<{ id: string }>(
         `SELECT id FROM users WHERE company_id = $1 AND access_level = $2 AND status = 'active'`,
-        [companyId, rule.approver.value ?? 'admin'],
+        [companyId, spec.value ?? 'admin'],
       );
       return rows.map((r) => r.id);
     }
     default:
       return [];
   }
+}
+
+/**
+ * Resolves a routing rule into approver IDs, applying the fallback when the primary
+ * spec yields nobody.
+ */
+async function resolveApprovers(
+  companyId: string,
+  requester: { id: string; manager_id: string | null; department_id: string | null },
+  rule: RoutingRule,
+): Promise<string[]> {
+  const primary = await resolveSpec(companyId, requester, rule.approver);
+  if (primary.length > 0) return primary;
+  if (!rule.approver.fallback) return [];
+  return resolveSpec(companyId, requester, rule.approver.fallback);
 }
 
 function ruleApplies(rule: RoutingRule, amount: number | null, departmentId: string | null): boolean {
@@ -127,24 +167,45 @@ export async function createRequest(
     ]);
   }
 
-  // Every step must resolve to at least one approver who is not the requester.
+  // Separation of duties is applied here as well as at decision time: a step that would
+  // resolve only to the requester is not a real approval, so it is treated as unresolved.
   const resolved: { rule: RoutingRule; approvers: string[] }[] = [];
+  const skipped: RoutingRule[] = [];
   for (const rule of rules.sort((a, b) => a.step - b.step)) {
     const approvers = (await resolveApprovers(actor.companyId, requester, rule)).filter(
       (id) => id !== actor.userId,
     );
-    if (approvers.length === 0) {
-      throw unprocessable('This request cannot be routed', [
-        {
-          field: 'definitionKey',
-          message:
-            rule.approver.type === 'manager'
-              ? 'No manager is assigned to you; ask an administrator to set one'
-              : 'No eligible approver is configured for this step',
-        },
-      ]);
+    if (approvers.length > 0) {
+      resolved.push({ rule, approvers });
+      continue;
     }
-    resolved.push({ rule, approvers });
+    if (rule.optional) {
+      skipped.push(rule);
+      continue;
+    }
+    throw unprocessable('This request cannot be routed', [
+      {
+        field: 'definitionKey',
+        message:
+          rule.approver.type === 'manager'
+            ? 'No manager is assigned to you, and this request type has no fallback approver. ' +
+              'Ask an administrator to set your manager or configure a fallback.'
+            : 'No eligible approver is configured for this step',
+      },
+    ]);
+  }
+
+  // Every step being skippable would mean nobody approves. That is never acceptable.
+  if (resolved.length === 0) {
+    throw unprocessable('This request cannot be routed', [
+      {
+        field: 'definitionKey',
+        message:
+          skipped.length > 0
+            ? 'No approver could be resolved for any step of this request type'
+            : 'This request type has no approval steps configured',
+      },
+    ]);
   }
 
   const firstRule = resolved[0]!.rule;

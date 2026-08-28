@@ -16,6 +16,25 @@ import type { FastifyInstance } from 'fastify';
 const DATABASE_URL = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL ?? '';
 const enabled = DATABASE_URL.length > 0;
 
+/**
+ * A suite that quietly skips itself is worse than one that fails: `npm test` reports
+ * green while every integration path goes unchecked. Outside a developer's machine the
+ * absence of a database is a broken pipeline, not a reason to pass, so refuse to start.
+ * Set SKIP_E2E=1 to opt out deliberately.
+ */
+if (!enabled && process.env.CI === 'true' && process.env.SKIP_E2E !== '1') {
+  throw new Error(
+    'End-to-end tests require TEST_DATABASE_URL (or DATABASE_URL). ' +
+      'Set it, or set SKIP_E2E=1 to skip these tests on purpose.',
+  );
+}
+if (!enabled) {
+  console.warn(
+    '\n  ! End-to-end tests skipped: TEST_DATABASE_URL is not set. ' +
+      'Unit tests alone do not cover HTTP, authorization or persistence.\n',
+  );
+}
+
 type Json = Record<string, any>;
 
 /** Minimal cookie-aware client so CSRF and session behaviour are exercised for real. */
@@ -567,6 +586,74 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
   });
 
   // --------------------------------------------------------------- approvals
+
+  it('routes a request for someone with no manager, via the fallback approver', async () => {
+    // The administrator sits at the top of the reporting line and has no manager. Every
+    // seeded route starts with a manager step, which previously made the request
+    // impossible to raise at all rather than merely routing it elsewhere.
+    //
+    // This uses its own definition so it cannot disturb the shared 'expense' route that
+    // later tests depend on.
+    await db.query(
+      `INSERT INTO approval_definitions (id, company_id, \`key\`, name, form_schema, routing)
+       VALUES ($1,$2,'fallback_probe','Fallback probe', JSON_ARRAY(), CAST($3 AS JSON))`,
+      [
+        randomUUID(),
+        companyId,
+        JSON.stringify([
+          {
+            step: 1,
+            approver: { type: 'manager', fallback: { type: 'access_level', value: 'admin' } },
+            dueHours: 48,
+          },
+        ]),
+      ],
+    );
+
+    // An admin-level colleague exists to receive the fallback, and is not the requester.
+    const fallbackId = randomUUID();
+    await db.query(
+      `INSERT INTO users
+         (id, company_id, email, email_display, display_name, access_level, status, activated_at, modules)
+       VALUES ($1,$2,$3,$3,'Fallback Approver','admin','active',NOW(3), JSON_ARRAY())`,
+      [fallbackId, companyId, `fallback.${Date.now()}@e2e.test`],
+    );
+
+    const raised = await admin.post(
+      '/api/v1/approvals',
+      { definitionKey: 'fallback_probe', title: 'Chief executive travel', amount: 300 },
+      { 'idempotency-key': `fallback-${Date.now()}` },
+    );
+    assert.equal(raised.status, 201);
+
+    const detail = await admin.get(`/api/v1/approvals/${raised.body.id}`);
+    const approvers = detail.body.steps.map((step: Json) => step.approver_id);
+    assert.equal(approvers.includes(fallbackId), true, 'fallback approver should be routed');
+    // Separation of duties still holds: the requester is never an approver.
+    assert.equal(approvers.includes(adminId), false);
+  });
+
+  it('refuses a request when no step can resolve an approver', async () => {
+    // A route resolving to nobody must be refused outright rather than quietly creating
+    // a request that is already fully approved.
+    await db.query(
+      `INSERT INTO approval_definitions (id, company_id, \`key\`, name, form_schema, routing)
+       VALUES ($1,$2,'unroutable_probe','Unroutable probe', JSON_ARRAY(), CAST($3 AS JSON))`,
+      [
+        randomUUID(),
+        companyId,
+        JSON.stringify([
+          { step: 1, approver: { type: 'access_level', value: 'nonexistent_role' }, optional: true },
+        ]),
+      ],
+    );
+    const attempt = await admin.post(
+      '/api/v1/approvals',
+      { definitionKey: 'unroutable_probe', title: 'Unroutable', amount: 10 },
+      { 'idempotency-key': `unroutable-${Date.now()}` },
+    );
+    assert.equal(attempt.status, 422);
+  });
 
   it('routes an approval and enforces separation of duties', async () => {
     // The requester reports to the administrator, who becomes the approver.
