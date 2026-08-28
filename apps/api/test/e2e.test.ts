@@ -991,6 +991,69 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(invalid.body.error.fields.length > 0, true);
   });
 
+  it('keeps approving a claim and paying it in different hands', async () => {
+    // The commonest expense fraud is approving your own reimbursement and then recording
+    // the payment. Both halves must be refused, and the check has to actually fire - the
+    // first version of it queried a column for a value that never occurs, so it silently
+    // matched nothing and read as though it worked.
+    // Claims submit against the 'expense' definition, and the suite's copy routes to a
+    // manager with no fallback - which the administrator raising this does not have.
+    await db.query(
+      "UPDATE approval_definitions SET routing = $2 WHERE company_id = $1 AND `key` = 'expense'",
+      [
+        companyId,
+        JSON.stringify([
+          {
+            step: 1,
+            approver: { type: 'manager', fallback: { type: 'access_level', value: 'admin' } },
+            dueHours: 48,
+          },
+        ]),
+      ],
+    );
+
+    const claim = await admin.post(
+      '/api/v1/expenses/claims',
+      {
+        title: 'Duties probe',
+        items: [{ spentOn: '2026-08-10', amount: 100, merchant: 'Rail' }],
+      },
+      { 'idempotency-key': `claim-${Date.now()}` },
+    );
+    assert.equal(claim.status, 201);
+    // The total is computed from the lines, never accepted from the caller.
+    assert.equal(Number(claim.body.total_amount), 100);
+
+    const submitted = await admin.post(
+      `/api/v1/expenses/claims/${claim.body.id}/submit`,
+      {},
+      { 'idempotency-key': `submit-${Date.now()}` },
+    );
+    assert.equal(submitted.status, 200);
+
+    // Approve it as the admin, who is also the claimant here.
+    const approvalId = submitted.body.approval_request_id as string;
+    await admin.post(
+      `/api/v1/approvals/${approvalId}/decisions`,
+      { decision: 'approved', comment: 'probe' },
+      { 'idempotency-key': `decide-${Date.now()}` },
+    );
+    await db.pool.query("UPDATE expense_claims SET status = 'approved' WHERE id = $1", [
+      claim.body.id,
+    ]);
+
+    const selfPay = await admin.post(
+      `/api/v1/expenses/claims/${claim.body.id}/reimburse`,
+      { paymentReference: 'SELF' },
+      { 'idempotency-key': `pay-${Date.now()}` },
+    );
+    assert.equal(selfPay.status >= 400, true, 'the claimant must not be able to pay themselves');
+    assert.equal(
+      (await admin.get(`/api/v1/expenses/claims/${claim.body.id}`)).body.status,
+      'approved',
+    );
+  });
+
   it('sanitizes page content and refuses a save that would overwrite someone', async () => {
     const space = await admin.post('/api/v1/docs/spaces', {
       name: `Handbook ${Date.now()}`,

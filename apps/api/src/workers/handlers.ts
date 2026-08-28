@@ -14,6 +14,7 @@ import * as notifications from '../domains/notifications.js';
 import * as searchIndex from '../domains/search.js';
 import * as tasks from '../domains/tasks.js';
 import * as leave from '../domains/leave.js';
+import * as finance from '../domains/finance.js';
 import * as files from '../domains/files.js';
 import { publish, publishToUser } from '../core/realtime.js';
 
@@ -82,8 +83,16 @@ const onApprovalSettled: Handler = async (event) => {
     'SELECT id FROM leave_requests WHERE approval_request_id = $1',
     [requestId],
   );
-  if (!leaveRequest) return;
-  await leave.settleDecision(leaveRequest.id, status);
+  if (leaveRequest) {
+    await leave.settleDecision(leaveRequest.id, status);
+    return;
+  }
+
+  const claim = await one<{ id: string }>(
+    'SELECT id FROM expense_claims WHERE approval_request_id = $1',
+    [requestId],
+  );
+  if (claim) await finance.settleClaimDecision(claim.id, status);
 };
 
 const onUserInvited: Handler = async (event) => {
