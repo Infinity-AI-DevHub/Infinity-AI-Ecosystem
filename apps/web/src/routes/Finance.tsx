@@ -6,8 +6,8 @@
  * gated on its own capability, so most people see one and finance sees four.
  */
 import { useMemo, useState } from 'react';
-import { Laptop, Plus, Receipt, Trash2, Wallet } from 'lucide-react';
-import { api, idempotencyKey } from '../lib/api';
+import { Laptop, Paperclip, Plus, Receipt, Trash2, Wallet } from 'lucide-react';
+import { api, API_URL, idempotencyKey } from '../lib/api';
 import { useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatCurrency, formatDate, initials, relativeTime, titleCase } from '../lib/format';
@@ -193,8 +193,8 @@ function ClaimDialog({ onClose }: { onClose: () => void }) {
 
   const [title, setTitle] = useState('');
   const [budgetId, setBudgetId] = useState('');
-  const [lines, setLines] = useState([
-    { categoryId: '', spentOn: '', merchant: '', description: '', amount: '', taxAmount: '' },
+  const [lines, setLines] = useState<Line[]>([
+    { categoryId: '', spentOn: '', merchant: '', description: '', amount: '', taxAmount: '', receiptFileId: null, receiptName: null },
   ]);
   const key = useMemo(() => idempotencyKey(), []);
 
@@ -212,6 +212,7 @@ function ClaimDialog({ onClose }: { onClose: () => void }) {
             description: line.description || null,
             amount: Number(line.amount || 0),
             taxAmount: Number(line.taxAmount || 0),
+            receiptFileId: line.receiptFileId,
           })),
         },
         { idempotencyKey: key },
@@ -280,6 +281,13 @@ function ClaimDialog({ onClose }: { onClose: () => void }) {
                 <input id={`line-tax-${index}`} type="number" min="0" step="0.01" value={line.taxAmount}
                   onChange={(e) => setLines(lines.map((l, i) => i === index ? { ...l, taxAmount: e.target.value } : l))} />
               </div>
+              <ReceiptControl
+                index={index}
+                line={line}
+                onUploaded={(fileId, fileName) =>
+                  setLines(lines.map((l, i) => i === index ? { ...l, receiptFileId: fileId, receiptName: fileName } : l))
+                }
+              />
               {lines.length > 1 ? (
                 <button type="button" className="icon-button" aria-label={`Remove line ${index + 1}`}
                   onClick={() => setLines(lines.filter((_, i) => i !== index))}>
@@ -290,7 +298,7 @@ function ClaimDialog({ onClose }: { onClose: () => void }) {
           ))}
 
           <button type="button" className="ghost-button"
-            onClick={() => setLines([...lines, { categoryId: '', spentOn: '', merchant: '', description: '', amount: '', taxAmount: '' }])}>
+            onClick={() => setLines([...lines, { categoryId: '', spentOn: '', merchant: '', description: '', amount: '', taxAmount: '', receiptFileId: null, receiptName: null }])}>
             <Plus size={14} aria-hidden="true" /> Add line
           </button>
 
@@ -798,5 +806,103 @@ function Vendors() {
         </div>
       ) : null}
     </>
+  );
+}
+
+type Line = {
+  categoryId: string;
+  spentOn: string;
+  merchant: string;
+  description: string;
+  amount: string;
+  taxAmount: string;
+  receiptFileId: string | null;
+  receiptName: string | null;
+};
+
+/**
+ * Attaches a receipt to one line of a claim.
+ *
+ * The receipt goes through the ordinary file pipeline rather than a side channel, so it
+ * is scanned for malware, versioned and retained like anything else - a photograph of a
+ * receipt is still an upload from a phone, and the fact that finance asked for it does
+ * not make it safe.
+ *
+ * Categories can require a receipt above a threshold, and that rule is enforced on the
+ * server when the claim is saved. Without somewhere to attach one, that rule was a wall
+ * with no door.
+ */
+function ReceiptControl({
+  index,
+  line,
+  onUploaded,
+}: {
+  index: number;
+  line: Line;
+  onUploaded: (fileId: string, fileName: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const upload = async (file: File) => {
+    setError(null);
+    setBusy(true);
+    try {
+      const session = await api.post<{ uploadId: string }>('/files/uploads', {
+        filename: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        sizeBytes: file.size,
+        folderId: null,
+      });
+
+      const form = new FormData();
+      form.append('file', file, file.name);
+      const csrf = document.cookie.match(/(?:^|; )iw_csrf=([^;]*)/)?.[1];
+      const response = await fetch(`${API_URL}/api/v1/files/uploads/${session.uploadId}/content`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: csrf ? { 'x-csrf-token': decodeURIComponent(csrf) } : {},
+        body: form,
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        // A quarantine verdict is a normal outcome to report, not a crash.
+        throw new Error(payload?.error?.message ?? 'That receipt could not be attached');
+      }
+      const stored = (await response.json()) as { id: string; name: string };
+      onUploaded(stored.id, stored.name);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That receipt could not be attached');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="field receipt-field">
+      <label htmlFor={`line-receipt-${index}`}>Receipt</label>
+      {line.receiptFileId ? (
+        <span className="receipt-attached" title={line.receiptName ?? undefined}>
+          <Paperclip size={13} aria-hidden="true" />
+          {line.receiptName}
+        </span>
+      ) : (
+        <>
+          <input
+            id={`line-receipt-${index}`}
+            type="file"
+            className="receipt-input"
+            accept="image/*,application/pdf"
+            disabled={busy}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void upload(file);
+            }}
+          />
+          {busy ? <span className="task-meta">Uploading…</span> : null}
+        </>
+      )}
+      {error ? <p className="field-error" role="alert">{error}</p> : null}
+    </div>
   );
 }

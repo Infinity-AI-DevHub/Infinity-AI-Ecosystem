@@ -1817,7 +1817,7 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 .claim-line {
   display: grid;
   gap: var(--sp-2);
-  grid-template-columns: 140px 1fr 1fr 110px 100px auto;
+  grid-template-columns: 130px 1fr 1fr 100px 90px 150px auto;
   align-items: end;
   min-width: 0;
   padding: var(--sp-3);
@@ -1875,3 +1875,37 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   background: rgba(0, 0, 0, 0.05);
   font-weight: var(--weight-semi);
 }
+
+.receipt-field { min-width: 0; }
+.receipt-input {
+  width: 100%;
+  font-size: var(--text-2xs);
+  padding: var(--sp-1);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  cursor: pointer;
+}
+.receipt-input::file-selector-button {
+  margin-right: var(--sp-2);
+  padding: 2px var(--sp-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-xs);
+  background: var(--bg-sunken);
+  font: inherit;
+  font-size: var(--text-2xs);
+  cursor: pointer;
+}
+.receipt-attached {
+  display: flex; align-items: center; gap: var(--sp-1);
+  min-width: 0;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  background: var(--ok-50);
+  border: 1px solid var(--ok-200);
+  color: var(--ok-700);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.receipt-attached svg { flex-shrink: 0; }
