@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { CheckCircle2 } from 'lucide-react';
 import { api, ApiError, NetworkError, type User } from '../lib/api';
-import { FieldMessage } from '../components/States';
+import { FieldMessage, FormError } from '../components/States';
 
 type Activation = { user: User };
 
@@ -89,18 +89,7 @@ export default function Activate() {
           contain your email address.
         </p>
 
-        {error ? (
-          <div className="auth-error" role="alert">
-            <p>{error.message}</p>
-            {error instanceof ApiError && error.fields.length > 0 ? (
-              <ul>
-                {error.fields.map((field) => (
-                  <li key={`${field.field}-${field.message}`}>{field.message}</li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
+        <FormError error={error} />
 
         <form onSubmit={submit} noValidate>
           <div className="field">

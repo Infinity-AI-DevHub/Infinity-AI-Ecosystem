@@ -989,6 +989,26 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(invalid.body.error.fields.length > 0, true);
   });
 
+  it('treats a wrong current password as a field error, not a dead session', async () => {
+    // A 401 here made the client's global "your session is gone" handler fire, so a
+    // single typo signed the person out mid-form with nothing on screen to explain it.
+    // The session is valid; only the field is wrong, and it must be reported as such.
+    const wrong = await admin.post('/api/v1/auth/password', {
+      currentPassword: 'this-is-not-the-password',
+      newPassword: 'A-Perfectly-Fine-Passphrase-1!',
+    });
+    assert.equal(wrong.status, 422);
+    assert.equal(wrong.body.error.code, 'unprocessable');
+    assert.equal(
+      wrong.body.error.fields.some((field: Json) => field.field === 'currentPassword'),
+      true,
+    );
+
+    // The session must still be usable straight afterwards.
+    const stillSignedIn = await admin.get('/api/v1/me');
+    assert.equal(stillSignedIn.status, 200);
+  });
+
   it('never leaks internal detail or stack traces in an error body', async () => {
     const response = await admin.get('/api/v1/search?q=');
     const serialized = JSON.stringify(response.body);

@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { Activity, Building2, Database, Download, Plus, ScrollText, Users2 } from 'lucide-react';
 import { api, API_URL, type Paged } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
-import { AsyncSection, Empty, ErrorState, Loading } from '../components/States';
+import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { formatDateTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 
@@ -407,9 +407,7 @@ function CompanySettings({ company, onSaved }: { company: Company; onSaved: () =
           </div>
         </header>
 
-        {rename.error ? (
-          <div className="auth-error" role="alert"><p>{rename.error.message}</p></div>
-        ) : null}
+        <FormError error={rename.error} />
         {saved ? <p className="save-confirmation" role="status">Saved.</p> : null}
 
         <form
@@ -481,18 +479,7 @@ function CompanySettings({ company, onSaved }: { company: Company; onSaved: () =
 
         {isSuperAdmin ? (
           <>
-            {addDomain.error ? (
-              <div className="auth-error" role="alert">
-                <p>{addDomain.error.message}</p>
-                {'fields' in addDomain.error && addDomain.error.fields.length > 0 ? (
-                  <ul>
-                    {addDomain.error.fields.map((field) => (
-                      <li key={field.field}>{field.message}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            ) : null}
+            <FormError error={addDomain.error} />
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -541,9 +528,7 @@ function CreateGroupDialog({ onClose, onCreated }: { onClose: () => void; onCrea
         onClick={(event) => event.stopPropagation()}
       >
         <h3 id="group-title">New access group</h3>
-        {create.error ? (
-          <div className="auth-error" role="alert"><p>{create.error.message}</p></div>
-        ) : null}
+        <FormError error={create.error} />
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -619,9 +604,7 @@ function GroupMembersDialog({
           reach.
         </p>
 
-        {save.error ? (
-          <div className="auth-error" role="alert"><p>{save.error.message}</p></div>
-        ) : null}
+        <FormError error={save.error} />
 
         <AsyncSection query={people}>
           {(data) => (

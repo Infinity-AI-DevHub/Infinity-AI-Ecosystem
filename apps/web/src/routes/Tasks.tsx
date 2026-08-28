@@ -10,7 +10,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { FolderPlus, Plus } from 'lucide-react';
 import { api } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
-import { AsyncSection, Empty, ErrorState, Loading } from '../components/States';
+import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { relativeTime, titleCase } from '../lib/format';
 
 type Project = {
@@ -387,9 +387,7 @@ function CreateTaskDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <h3 id="new-task-title">New task</h3>
-        {create.error ? (
-          <div className="auth-error" role="alert"><p>{create.error.message}</p></div>
-        ) : null}
+        <FormError error={create.error} />
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -497,18 +495,7 @@ function CreateProjectDialog({
       >
         <h3 id="project-title">New project</h3>
 
-        {create.error ? (
-          <div className="auth-error" role="alert">
-            <p>{create.error.message}</p>
-            {'fields' in create.error && create.error.fields.length > 0 ? (
-              <ul>
-                {create.error.fields.map((field) => (
-                  <li key={field.field}>{field.message}</li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
+        <FormError error={create.error} />
 
         <form
           onSubmit={(event) => {

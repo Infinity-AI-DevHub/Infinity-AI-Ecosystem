@@ -11,7 +11,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Hash, MessageSquarePlus, Plus, Send, UserPlus } from 'lucide-react';
 import { api } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
-import { AsyncSection, Empty, ErrorState, Loading } from '../components/States';
+import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { realtime } from '../lib/realtime';
 import { initials, relativeTime } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -305,9 +305,7 @@ function CreateChannelDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <h3 id="channel-title">New channel</h3>
-        {create.error ? (
-          <div className="auth-error" role="alert"><p>{create.error.message}</p></div>
-        ) : null}
+        <FormError error={create.error} />
 
         <form
           onSubmit={(event) => {
@@ -431,9 +429,7 @@ function DirectMessageDialog({
       >
         <h3 id="direct-title">Message someone</h3>
 
-        {open.error ? (
-          <div className="auth-error" role="alert"><p>{open.error.message}</p></div>
-        ) : null}
+        <FormError error={open.error} />
 
         <div className="field">
           <label htmlFor="direct-search">Search colleagues</label>

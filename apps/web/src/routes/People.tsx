@@ -10,7 +10,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Copy, ShieldOff, ShieldCheck, UserPlus } from 'lucide-react';
 import { api, idempotencyKey, type Paged, type User } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
-import { AsyncSection, Empty } from '../components/States';
+import { AsyncSection, Empty, FormError } from '../components/States';
 import { initials, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 
@@ -294,18 +294,7 @@ function InviteDialog({
           They will receive a single-use activation link and choose their own password.
         </p>
 
-        {create.error ? (
-          <div className="auth-error" role="alert">
-            <p>{create.error.message}</p>
-            {'fields' in create.error && create.error.fields.length > 0 ? (
-              <ul>
-                {create.error.fields.map((field) => (
-                  <li key={`${field.field}-${field.message}`}>{field.message}</li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
+        <FormError error={create.error} />
 
         <form
           onSubmit={(event) => {

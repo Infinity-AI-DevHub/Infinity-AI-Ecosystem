@@ -9,6 +9,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { KeyRound } from 'lucide-react';
 import { api, ApiError, NetworkError } from '../lib/api';
 import { useSession } from '../lib/session';
+import { clearNotice, readNotice } from '../lib/notice';
 import { FieldMessage } from '../components/States';
 
 function safeReturnPath(value: unknown): string {
@@ -22,6 +23,7 @@ export default function SignIn() {
   const navigate = useNavigate();
   const location = useLocation();
   const returnTo = safeReturnPath((location.state as { from?: string } | null)?.from);
+  const notice = readNotice();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -41,6 +43,7 @@ export default function SignIn() {
       });
       // The password is discarded as soon as it is no longer needed.
       setPassword('');
+      clearNotice();
       await refresh();
       navigate(returnTo, { replace: true });
     } catch (err) {
@@ -60,6 +63,12 @@ export default function SignIn() {
             <span>Sign in to your company workspace</span>
           </div>
         </div>
+
+        {notice ? (
+          <div className="auth-success" role="status">
+            <div><p>{notice}</p></div>
+          </div>
+        ) : null}
 
         {error ? (
           <div className="auth-error" role="alert">

@@ -9,9 +9,10 @@ import { useNavigate } from 'react-router-dom';
 import { LogOut, Monitor } from 'lucide-react';
 import { api, type User } from '../lib/api';
 import { useMutation, useQuery } from '../lib/query';
-import { AsyncSection } from '../components/States';
+import { AsyncSection, FormError } from '../components/States';
 import { formatDateTime, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
+import { setNotice } from '../lib/notice';
 
 type SessionRecord = {
   id: string;
@@ -55,7 +56,10 @@ export default function Settings() {
     async () => api.post('/auth/password', { currentPassword, newPassword }),
     {
       onSuccess: () => {
-        // Every session is now invalid, including this one.
+        // Every session is now invalid, including this one. Say so on the way out: a
+        // sign-in screen that appears without explanation is indistinguishable from a
+        // session that timed out, and leaves the person unsure the change even took.
+        setNotice('Your password was changed. Sign in again with your new password.');
         navigate('/sign-in', { replace: true });
       },
     },
@@ -77,9 +81,7 @@ export default function Settings() {
       <div className="settings-grid">
         <section className="panel" aria-labelledby="profile-heading">
           <h3 id="profile-heading">Profile</h3>
-          {saveProfile.error ? (
-            <div className="auth-error" role="alert"><p>{saveProfile.error.message}</p></div>
-          ) : null}
+          <FormError error={saveProfile.error} />
           {saved ? <p className="save-confirmation" role="status">Profile saved.</p> : null}
 
           <form
@@ -137,18 +139,7 @@ export default function Settings() {
             </div>
           </dl>
 
-          {changePassword.error ? (
-            <div className="auth-error" role="alert">
-              <p>{changePassword.error.message}</p>
-              {'fields' in changePassword.error && changePassword.error.fields.length > 0 ? (
-                <ul>
-                  {changePassword.error.fields.map((field) => (
-                    <li key={`${field.field}-${field.message}`}>{field.message}</li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          ) : null}
+          <FormError error={changePassword.error} />
 
           <form
             onSubmit={(event) => {

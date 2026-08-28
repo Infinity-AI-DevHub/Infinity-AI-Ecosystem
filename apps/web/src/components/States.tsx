@@ -153,3 +153,33 @@ export function AsyncSection<T>({
   }
   return <>{children(query.data)}</>;
 }
+
+/**
+ * Summary of a failed write, above the form that caused it.
+ *
+ * Six modules each carried their own copy of this block, which is how they drifted: the
+ * server often repeats the summary message as the sole field error, and every copy
+ * printed it twice ("Current password is not correct" - twice, in a row). Field messages
+ * that merely restate the summary are dropped here, once, for all of them.
+ */
+export function FormError({ error }: { error: ApiError | NetworkError | null }) {
+  if (!error) return null;
+
+  const fields =
+    'fields' in error
+      ? error.fields.filter((field) => field.message.trim() !== error.message.trim())
+      : [];
+
+  return (
+    <div className="auth-error" role="alert">
+      <p>{error.message}</p>
+      {fields.length > 0 ? (
+        <ul>
+          {fields.map((field) => (
+            <li key={`${field.field}-${field.message}`}>{field.message}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}

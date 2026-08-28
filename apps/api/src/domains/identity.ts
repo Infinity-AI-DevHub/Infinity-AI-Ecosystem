@@ -885,7 +885,13 @@ export async function changeOwnPassword(
     [userId],
   );
   if (!(await verifyPassword(currentPassword, identity?.password_hash ?? null))) {
-    throw unauthenticated('Current password is not correct');
+    // Deliberately not 401. The caller's session is perfectly valid - they mistyped one
+    // field. Answering with 401 makes the client's global "session is gone" handler fire
+    // and signs the person out mid-form, with no message explaining why. This is a field
+    // validation failure and is reported as one.
+    throw unprocessable('Current password is not correct', [
+      { field: 'currentPassword', message: 'Current password is not correct' },
+    ]);
   }
   await assertPasswordAcceptable(newPassword, user.email);
   const hash = await hashPassword(newPassword);

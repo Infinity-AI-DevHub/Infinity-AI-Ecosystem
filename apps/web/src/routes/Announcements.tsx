@@ -10,7 +10,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { BarChart3, Check, Megaphone, Plus, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
-import { AsyncSection, Empty, ErrorState, Loading } from '../components/States';
+import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { formatDateTime, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 
@@ -337,11 +337,7 @@ function ComposeAnnouncement({
       >
         <h3 id="announcement-title">New announcement</h3>
 
-        {create.error ? (
-          <div className="auth-error" role="alert">
-            <p>{create.error.message}</p>
-          </div>
-        ) : null}
+        <FormError error={create.error} />
 
         <form
           onSubmit={(event) => {

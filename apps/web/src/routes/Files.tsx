@@ -9,7 +9,7 @@ import { useRef, useState } from 'react';
 import { Download, FolderPlus, History, RotateCcw, ShieldAlert, Trash2, Upload } from 'lucide-react';
 import { api, API_URL, ApiError, NetworkError } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
-import { AsyncSection, Empty } from '../components/States';
+import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatBytes, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 
@@ -446,9 +446,7 @@ function NewFolderDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <h3 id="folder-title">New folder</h3>
-        {create.error ? (
-          <div className="auth-error" role="alert"><p>{create.error.message}</p></div>
-        ) : null}
+        <FormError error={create.error} />
         <form
           onSubmit={(event) => {
             event.preventDefault();

@@ -9,7 +9,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { CalendarPlus, Check, Video, X } from 'lucide-react';
 import { api, idempotencyKey } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
-import { AsyncSection, DegradedNotice, Empty, ErrorState, Loading } from '../components/States';
+import { AsyncSection, DegradedNotice, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { durationBetween, formatDate, formatTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 
@@ -313,11 +313,7 @@ function ScheduleDialog({
       >
         <h3 id="schedule-title">Schedule a meeting</h3>
 
-        {create.error ? (
-          <div className="auth-error" role="alert">
-            <p>{create.error.message}</p>
-          </div>
-        ) : null}
+        <FormError error={create.error} />
 
         <form
           onSubmit={(event) => {

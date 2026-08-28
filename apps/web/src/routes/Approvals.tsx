@@ -9,7 +9,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Check, FilePlus2, RotateCcw, X } from 'lucide-react';
 import { api, idempotencyKey } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
-import { AsyncSection, Empty, ErrorState, Loading } from '../components/States';
+import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { formatCurrency, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 
@@ -167,6 +167,7 @@ export default function Approvals() {
 
 function RequestDetailView({ detail }: { detail: ReturnType<typeof useQuery<RequestDetail>> }) {
   const request = detail.data!;
+  const { session } = useSession();
   const [comment, setComment] = useState('');
   // One key per mounted request, so a retried click is recognised as the same decision.
   const key = useMemo(() => idempotencyKey(), [request.id]);
@@ -187,8 +188,18 @@ function RequestDetailView({ detail }: { detail: ReturnType<typeof useQuery<Requ
     },
   );
 
+  /**
+   * The active step alone is not enough: every step is active for somebody, so testing
+   * only the step state offered Approve and Reject to anyone who could read a request.
+   * The server refuses those, but presenting an action that can only ever fail is its
+   * own defect - and on an approval screen it invites a reviewer to believe they hold a
+   * decision that is in fact someone else's.
+   */
   const awaitingMe = request.steps.some(
-    (step) => step.step_number === request.current_step && step.state === 'active',
+    (step) =>
+      step.step_number === request.current_step &&
+      step.state === 'active' &&
+      step.approver_id === session?.user?.id,
   );
 
   return (
@@ -236,9 +247,7 @@ function RequestDetailView({ detail }: { detail: ReturnType<typeof useQuery<Requ
       {request.status === 'pending' && awaitingMe ? (
         <section className="decision-block">
           <h4>Your decision</h4>
-          {decide.error ? (
-            <div className="auth-error" role="alert"><p>{decide.error.message}</p></div>
-          ) : null}
+          <FormError error={decide.error} />
           <label className="visually-hidden" htmlFor="decision-comment">Comment</label>
           <textarea
             id="decision-comment"
@@ -325,18 +334,7 @@ function RaiseDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <h3 id="raise-title">Raise a request</h3>
-        {create.error ? (
-          <div className="auth-error" role="alert">
-            <p>{create.error.message}</p>
-            {create.error && 'fields' in create.error && create.error.fields.length > 0 ? (
-              <ul>
-                {create.error.fields.map((field) => (
-                  <li key={field.field}>{field.message}</li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
+        <FormError error={create.error} />
 
         <form
           onSubmit={(event) => {
