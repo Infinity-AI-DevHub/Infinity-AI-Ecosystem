@@ -20,6 +20,7 @@ import {
 import { adminRoutes, objectRoutes } from './admin.js';
 import { externalRoutes, publicShareRoutes } from './external.js';
 import { leaveRoutes } from './leave.js';
+import { documentRoutes } from './documents.js';
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   /** Liveness: the process is up. Never touches the database. */
@@ -54,6 +55,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       await objectRoutes(api);
       await externalRoutes(api);
       await leaveRoutes(api);
+      await documentRoutes(api);
       // Anonymous by design: the token in the URL is the whole credential. Registered
       // last and named separately so the authenticated surface above stays obvious.
       await publicShareRoutes(api);

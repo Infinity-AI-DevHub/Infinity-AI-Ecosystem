@@ -9,7 +9,7 @@ import { many, newId, pool, type Queryable } from '../core/db.js';
 import { escapeHtml } from '../core/validation.js';
 import type { Actor } from '../core/authz.js';
 
-export type DocType = 'chat' | 'file' | 'person' | 'task' | 'meeting' | 'announcement';
+export type DocType = 'chat' | 'file' | 'person' | 'task' | 'meeting' | 'announcement' | 'doc';
 
 export type IndexInput = {
   companyId: string;

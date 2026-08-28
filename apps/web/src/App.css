@@ -1642,3 +1642,146 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   vertical-align: middle;
   margin-right: var(--sp-2);
 }
+
+/* ==========================================================================
+   Documents
+   ========================================================================== */
+
+/* Three panes: spaces, the pages in one, and the page itself. A wiki is read far more
+   than written, so the reading pane gets the room. */
+.docs-layout {
+  display: grid;
+  gap: var(--sp-4);
+  grid-template-columns: 220px 280px minmax(0, 1fr);
+  align-items: start;
+}
+.docs-spaces, .docs-index { min-width: 0; }
+.docs-reader { min-width: 0; }
+
+.space-list, .page-list { display: grid; gap: 2px; }
+/* Grid and flex children default to min-width:auto, so a long excerpt sets the item's
+   minimum to its own content width and the row escapes its container. This has now bitten
+   session rows, the task board, the entitlement table and these lists, so it is worth
+   stating as a rule: any list item holding text that might not fit needs the automatic
+   minimum removed, and the truncation applied to the text inside it. */
+.space-list > li, .page-list > li { min-width: 0; }
+.space-button, .page-button {
+  display: flex; width: 100%; gap: var(--sp-3); align-items: flex-start;
+  padding: var(--sp-2) var(--sp-3);
+  border: none; border-radius: var(--r-md);
+  background: transparent;
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+.space-button:hover, .page-button:hover { background: var(--bg-hover); }
+.space-active, .page-active { background: var(--bg-selected); box-shadow: inset 2px 0 0 var(--a-600); }
+.space-swatch { width: 3px; align-self: stretch; min-height: 26px; border-radius: var(--r-full); flex-shrink: 0; }
+.space-label { min-width: 0; }
+.space-label strong, .page-button strong {
+  display: block; font-size: var(--text-sm); font-weight: var(--weight-medium);
+}
+.space-label span, .page-button span:not(.status-tag) {
+  display: block; font-size: var(--text-xs); color: var(--fg-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.page-button { flex-direction: column; gap: 2px; }
+
+.doc-meta {
+  margin: var(--sp-2) 0 var(--sp-5);
+  font-size: var(--text-xs);
+  color: var(--fg-tertiary);
+}
+
+/* Prose, not application chrome: wider line height and real vertical rhythm, because
+   this is the one place in the product people read paragraphs rather than scan rows. */
+.doc-body {
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+  color: var(--fg-primary);
+  max-width: 72ch;
+  overflow-wrap: anywhere;
+}
+.doc-body > * + * { margin-top: var(--sp-4); }
+.doc-body h1, .doc-body h2, .doc-body h3, .doc-body h4 {
+  margin-top: var(--sp-6);
+  letter-spacing: var(--tracking-tight);
+}
+.doc-body h1 { font-size: var(--text-2xl); }
+.doc-body h2 { font-size: var(--text-xl); }
+.doc-body h3 { font-size: var(--text-lg); }
+.doc-body h4 { font-size: var(--text-md); }
+.doc-body ul, .doc-body ol { padding-left: var(--sp-6); }
+.doc-body ul { list-style: disc; }
+.doc-body ol { list-style: decimal; }
+.doc-body li + li { margin-top: var(--sp-2); }
+.doc-body a { color: var(--fg-accent); text-decoration: underline; text-underline-offset: 2px; }
+.doc-body blockquote {
+  padding-left: var(--sp-4);
+  border-left: 2px solid var(--border-strong);
+  color: var(--fg-secondary);
+}
+.doc-body pre {
+  padding: var(--sp-4);
+  border-radius: var(--r-md);
+  background: var(--n-900);
+  color: var(--n-50);
+  overflow-x: auto;
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+.doc-body code {
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-subtle);
+}
+.doc-body pre code { padding: 0; background: none; border: none; }
+.doc-body table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.doc-body th, .doc-body td {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-default);
+  text-align: left;
+}
+.doc-body th { background: var(--bg-sunken); font-weight: var(--weight-semi); }
+.doc-body img { max-width: 100%; height: auto; border-radius: var(--r-md); }
+
+.doc-source {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.doc-history {
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-5);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+}
+.version-list { display: grid; gap: var(--sp-2); }
+.version-list li {
+  display: flex; align-items: center; gap: var(--sp-3); min-width: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+}
+.version-list > li > div { flex: 1; min-width: 0; }
+.version-number {
+  font-size: var(--text-2xs); font-weight: var(--weight-bold);
+  font-variant-numeric: tabular-nums; color: var(--fg-tertiary);
+  min-width: 28px;
+}
+.version-list strong { display: block; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.version-list span:not(.version-number):not(.status-tag) { font-size: var(--text-xs); color: var(--fg-tertiary); }
+
+@media (max-width: 1280px) {
+  .docs-layout { grid-template-columns: 200px 240px minmax(0, 1fr); }
+}
+@media (max-width: 1024px) {
+  .docs-layout { grid-template-columns: 220px minmax(0, 1fr); }
+  .docs-reader { grid-column: 1 / -1; }
+}
+@media (max-width: 860px) {
+  .docs-layout { grid-template-columns: minmax(0, 1fr); }
+}

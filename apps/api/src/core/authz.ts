@@ -51,7 +51,9 @@ export type ResourceType =
   | 'file'
   | 'folder'
   | 'approval_request'
-  | 'announcement';
+  | 'announcement'
+  | 'doc_space'
+  | 'doc_page';
 
 const capabilityCache = new Map<string, { value: Set<string>; expires: number }>();
 const CAPABILITY_TTL_MS = 30_000;

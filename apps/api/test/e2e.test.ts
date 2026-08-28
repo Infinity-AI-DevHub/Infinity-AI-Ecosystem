@@ -991,6 +991,65 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(invalid.body.error.fields.length > 0, true);
   });
 
+  it('sanitizes page content and refuses a save that would overwrite someone', async () => {
+    const space = await admin.post('/api/v1/docs/spaces', {
+      name: `Handbook ${Date.now()}`,
+      visibility: 'company',
+    });
+    assert.equal(space.status, 201);
+
+    // A page is written by a colleague, but "has an account" is not "is trustworthy":
+    // stored markup in a company handbook is read by everyone.
+    const page = await admin.post('/api/v1/docs/pages', {
+      spaceId: space.body.id,
+      title: 'Deploying to production',
+      body: '<h2>Steps</h2><p>ok</p><script>alert(1)</script>'
+        + '<img src=x onerror="alert(2)"><a href="javascript:alert(3)">click</a>',
+      publish: true,
+    });
+    assert.equal(page.status, 201);
+    assert.equal(page.body.body.includes('<script'), false);
+    assert.equal(/onerror/i.test(page.body.body), false);
+    assert.equal(/javascript:/i.test(page.body.body), false);
+    // The safe structure survives; only the dangerous parts are removed.
+    assert.equal(page.body.body.includes('<h2>'), true);
+
+    // Two people editing the same page is the normal case for a wiki, so a save must say
+    // which version it replaces, and a stale one is refused rather than merged.
+    const noPrecondition = await admin.patch(`/api/v1/docs/pages/${page.body.id}`, {
+      body: '<p>blind write</p>',
+    });
+    assert.equal(noPrecondition.status, 400);
+
+    const first = await admin.patch(
+      `/api/v1/docs/pages/${page.body.id}`,
+      { body: '<p>first writer</p>', changeNote: 'First' },
+      { 'if-match': `"${page.body.version}"` },
+    );
+    assert.equal(first.status, 200);
+
+    const stale = await admin.patch(
+      `/api/v1/docs/pages/${page.body.id}`,
+      { body: '<p>second writer, working from the old copy</p>' },
+      { 'if-match': `"${page.body.version}"` },
+    );
+    assert.equal(stale.status, 412);
+
+    // The first writer's work is intact - the refusal protected it.
+    const current = await admin.get(`/api/v1/docs/pages/${page.body.id}`);
+    assert.equal(current.body.body.includes('first writer'), true);
+
+    // History is append-only, so a restore adds a version rather than rewinding.
+    const history = await admin.get(`/api/v1/docs/pages/${page.body.id}/history`);
+    assert.equal((history.body.items as unknown[]).length >= 2, true);
+    const restored = await admin.post(
+      `/api/v1/docs/pages/${page.body.id}/versions/1/restore`,
+      {},
+    );
+    assert.equal(restored.status, 200);
+    assert.equal(restored.body.version > current.body.version, true);
+  });
+
   it('counts only working days, and reserves them before the decision', async () => {
     // Leave rides on the approvals engine, so the company needs a route for it. The
     // fallback matters here: the administrator raising this has no manager.
