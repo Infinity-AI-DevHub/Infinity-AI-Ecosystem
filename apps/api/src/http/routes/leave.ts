@@ -111,6 +111,41 @@ export async function leaveRoutes(app: FastifyInstance): Promise<void> {
     return { items: await leave.whoIsAway(actor, query.from, query.to) };
   });
 
+  app.get('/leave/holidays', async (request) => {
+    const actor = requireActor(request);
+    const query = parse(
+      z.object({ year: z.coerce.number().int().min(2000).max(2100).optional() }),
+      request.query,
+    );
+    return { items: await leave.listHolidays(actor, query.year) };
+  });
+
+  app.post('/leave/holidays', async (request, reply) => {
+    const actor = requireActor(request);
+    const input = parse(
+      z.object({ date: dateString, name: z.string().min(1).max(120) }),
+      request.body,
+    );
+    reply.code(201);
+    return leave.addHoliday(actor, input);
+  });
+
+  app.delete('/leave/holidays/:id', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
+    await leave.removeHoliday(actor, id);
+    return reply.code(204).send();
+  });
+
+  app.get('/leave/overview', async (request) => {
+    const actor = requireActor(request);
+    const query = parse(
+      z.object({ year: z.coerce.number().int().min(2000).max(2100) }),
+      request.query,
+    );
+    return { items: await leave.balanceOverview(actor, query.year) };
+  });
+
   // ---------------------------------------------------------------- delegation
 
   app.get('/delegations', async (request) => {

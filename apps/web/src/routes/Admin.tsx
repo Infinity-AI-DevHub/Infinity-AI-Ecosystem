@@ -6,11 +6,11 @@
  * refused.
  */
 import { useState } from 'react';
-import { Activity, Building2, Database, Download, Plus, ScrollText, Users2 } from 'lucide-react';
+import { Activity, Building2, Database, Download, Plus, ScrollText, Trash2, Users2 } from 'lucide-react';
 import { api, API_URL, type Paged } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
-import { formatDateTime, titleCase } from '../lib/format';
+import { formatDate, formatDateTime, initials, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 
 type Operations = {
@@ -49,7 +49,7 @@ type Company = {
 
 type Person = { id: string; displayName: string; email: string };
 
-type Tab = 'operations' | 'audit' | 'groups' | 'company';
+type Tab = 'operations' | 'audit' | 'groups' | 'company' | 'leave';
 
 export default function Admin() {
   const { can } = useSession();
@@ -95,6 +95,7 @@ export default function Admin() {
             ['audit', 'Audit trail', can('audit.read')],
             ['groups', 'Groups', can('user.read')],
             ['company', 'Company', can('settings.read')],
+            ['leave', 'Leave', can('leave.manage')],
           ] as [Tab, string, boolean][]
         )
           .filter(([, , allowed]) => allowed)
@@ -333,6 +334,8 @@ export default function Admin() {
           </AsyncSection>
         </section>
       ) : null}
+
+      {tab === 'leave' ? <LeaveAdmin /> : null}
 
       {tab === 'company' ? (
         company.loading ? (
@@ -654,3 +657,236 @@ function GroupMembersDialog({
     </div>
   );
 }
+
+/**
+ * Leave configuration: types, the holiday calendar, and everyone's entitlement.
+ *
+ * The holiday calendar is here rather than buried in settings because a wrong list does
+ * not fail loudly - it silently charges every employee a day of their own entitlement
+ * for a day the office was shut, and nobody notices until someone counts.
+ */
+function LeaveAdmin() {
+  const year = new Date().getUTCFullYear();
+  const [holidayDate, setHolidayDate] = useState('');
+  const [holidayName, setHolidayName] = useState('');
+
+  const types = useQuery<{ items: LeaveTypeRow[] }>('/leave/types', (signal) =>
+    api.get('/leave/types', signal),
+  );
+  const holidaysKey = `/leave/holidays?year=${year}`;
+  const holidays = useQuery<{ items: HolidayRow[] }>(holidaysKey, (signal) =>
+    api.get(holidaysKey, signal),
+  );
+  const overviewKey = `/leave/overview?year=${year}`;
+  const overview = useQuery<{ items: OverviewRow[] }>(overviewKey, (signal) =>
+    api.get(overviewKey, signal),
+  );
+
+  const addHoliday = useMutation(
+    async () => api.post('/leave/holidays', { date: holidayDate, name: holidayName }),
+    {
+      invalidates: ['/leave/holidays'],
+      onSuccess: () => {
+        setHolidayDate('');
+        setHolidayName('');
+      },
+    },
+  );
+  const removeHoliday = useMutation(async (id: string) => api.delete(`/leave/holidays/${id}`), {
+    invalidates: ['/leave/holidays'],
+  });
+  const setEntitlement = useMutation(
+    async (input: { userId: string; leaveTypeId: string; entitledDays: number }) =>
+      api.put('/leave/balances', { ...input, year }),
+    { invalidates: ['/leave/overview'] },
+  );
+
+  // One row per person, with a column per leave type - which is how an administrator
+  // reads entitlement, rather than one row per person-and-type.
+  const byPerson = new Map<string, { name: string; colour: string; rows: OverviewRow[] }>();
+  for (const row of overview.data?.items ?? []) {
+    const entry = byPerson.get(row.user_id) ?? {
+      name: row.display_name,
+      colour: row.avatar_color,
+      rows: [],
+    };
+    entry.rows.push(row);
+    byPerson.set(row.user_id, entry);
+  }
+
+  return (
+    <>
+      <div className="operations-grid">
+      <section className="panel" aria-labelledby="leave-types-heading">
+        <h3 id="leave-types-heading">Leave types</h3>
+        <AsyncSection query={types}>
+          {(data) => (
+            <ul className="leave-type-list">
+              {data.items.map((type) => (
+                <li key={type.id}>
+                  <span className="leave-bar" style={{ background: type.colour }} aria-hidden="true" />
+                  <div>
+                    <strong>{type.name}</strong>
+                    <span>
+                      {type.paid ? 'Paid' : 'Unpaid'}
+                      {type.deducts_balance ? ' · deducts balance' : ' · no balance'}
+                      {type.requires_approval ? ' · needs approval' : ' · recorded immediately'}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </AsyncSection>
+      </section>
+
+      <section className="panel" aria-labelledby="holidays-heading">
+        <h3 id="holidays-heading">Public holidays in {year}</h3>
+        <p className="field-hint">
+          Days here are never counted as leave. A missing holiday quietly costs everyone a
+          day of their own entitlement.
+        </p>
+
+        <FormError error={addHoliday.error} />
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void addHoliday.mutate();
+          }}
+        >
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="holiday-date">Date</label>
+              <input id="holiday-date" type="date" value={holidayDate} onChange={(e) => setHolidayDate(e.target.value)} required />
+            </div>
+            <div className="field">
+              <label htmlFor="holiday-name">Name</label>
+              <input id="holiday-name" value={holidayName} onChange={(e) => setHolidayName(e.target.value)} placeholder="Christmas Day" required />
+            </div>
+          </div>
+          <button type="submit" className="ghost-button" disabled={addHoliday.pending || !holidayDate || !holidayName}>
+            {addHoliday.pending ? 'Adding…' : 'Add holiday'}
+          </button>
+        </form>
+
+        <h4>Calendar</h4>
+        <AsyncSection query={holidays}>
+          {(data) =>
+            data.items.length === 0 ? (
+              <p className="panel-empty">No holidays set for {year}.</p>
+            ) : (
+              <ul className="holiday-list">
+                {data.items.map((holiday) => (
+                  <li key={holiday.id}>
+                    <time dateTime={String(holiday.holiday_date)}>
+                      {formatDate(holiday.holiday_date)}
+                    </time>
+                    <strong>{holiday.name}</strong>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label={`Remove ${holiday.name}`}
+                      onClick={() => void removeHoliday.mutate(holiday.id)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )
+          }
+        </AsyncSection>
+      </section>
+
+      </div>
+
+      <section className="panel entitlement-panel" aria-labelledby="entitlement-heading">
+        <h3 id="entitlement-heading">Entitlement for {year}</h3>
+        <p className="field-hint">Days each person is entitled to. Changing this does not alter what they have already taken.</p>
+        <FormError error={setEntitlement.error} />
+        <AsyncSection query={overview}>
+          {() =>
+            byPerson.size === 0 ? (
+              <p className="panel-empty">No active people to configure.</p>
+            ) : (
+              <div className="table-scroll">
+                <table className="data-table entitlement-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Person</th>
+                      {(types.data?.items ?? [])
+                        .filter((t) => t.deducts_balance)
+                        .map((t) => (
+                          <th key={t.id} scope="col">{t.name}</th>
+                        ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...byPerson.entries()].map(([userId, person]) => (
+                      <tr key={userId}>
+                        <th scope="row">
+                          <span className="avatar" style={{ background: person.colour }} aria-hidden="true">
+                            {initials(person.name)}
+                          </span>
+                          {person.name}
+                        </th>
+                        {person.rows.map((row) => (
+                          <td key={row.leave_type_id}>
+                            <label className="visually-hidden" htmlFor={`ent-${userId}-${row.leave_type_id}`}>
+                              {row.type_name} entitlement for {person.name}
+                            </label>
+                            <input
+                              id={`ent-${userId}-${row.leave_type_id}`}
+                              className="entitlement-input"
+                              type="number"
+                              min={0}
+                              max={365}
+                              step={0.5}
+                              defaultValue={Number(row.entitled_days)}
+                              onBlur={(event) => {
+                                const value = Number(event.target.value);
+                                if (value === Number(row.entitled_days)) return;
+                                void setEntitlement.mutate({
+                                  userId,
+                                  leaveTypeId: row.leave_type_id,
+                                  entitledDays: value,
+                                });
+                              }}
+                            />
+                            <span className="entitlement-used">
+                              {Number(row.taken_days)} used
+                            </span>
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          }
+        </AsyncSection>
+      </section>
+    </>
+  );
+}
+
+type LeaveTypeRow = {
+  id: string;
+  name: string;
+  colour: string;
+  paid: boolean;
+  deducts_balance: boolean;
+  requires_approval: boolean;
+};
+type HolidayRow = { id: string; holiday_date: string; name: string };
+type OverviewRow = {
+  user_id: string;
+  display_name: string;
+  avatar_color: string;
+  leave_type_id: string;
+  type_name: string;
+  colour: string;
+  entitled_days: string;
+  taken_days: string;
+};

@@ -696,3 +696,86 @@ export async function reassignActiveSteps(
   });
   return result;
 }
+
+// ------------------------------------------------------------------ holidays
+
+export type Holiday = { id: string; holiday_date: Date; name: string };
+
+export async function listHolidays(actor: Actor, year?: number): Promise<Holiday[]> {
+  return many<Holiday>(
+    `SELECT id, holiday_date, name FROM company_holidays
+      WHERE company_id = $1 AND ($2 IS NULL OR YEAR(holiday_date) = $2)
+      ORDER BY holiday_date`,
+    [actor.companyId, year ?? null],
+  );
+}
+
+/**
+ * Adds a public holiday.
+ *
+ * These are company data rather than a library because they differ by country and by
+ * year, and because a wrong list does not fail loudly - it silently charges everyone a
+ * day of their entitlement for a day the office was shut.
+ */
+export async function addHoliday(
+  actor: Actor,
+  input: { date: string; name: string },
+): Promise<Holiday> {
+  await authorize({ actor, capability: 'leave.manage', resourceless: true });
+  const existing = await one<{ id: string }>(
+    'SELECT id FROM company_holidays WHERE company_id = $1 AND holiday_date = $2',
+    [actor.companyId, input.date],
+  );
+  if (existing) throw conflict('That date is already a holiday');
+
+  const id = newId();
+  return transaction(async (tx) => {
+    await tx.query(
+      'INSERT INTO company_holidays (id, company_id, holiday_date, name) VALUES ($1,$2,$3,$4)',
+      [id, actor.companyId, input.date, input.name.trim()],
+    );
+    await auditFromActor(actor, 'leave.holiday_add', {
+      resourceType: 'company',
+      resourceId: actor.companyId,
+      metadata: { date: input.date, name: input.name },
+    }, tx);
+    return (await reload<Holiday>(tx, 'company_holidays', id))!;
+  });
+}
+
+export async function removeHoliday(actor: Actor, id: string): Promise<void> {
+  await authorize({ actor, capability: 'leave.manage', resourceless: true });
+  await transaction(async (tx) => {
+    const removed = await tx.query(
+      'DELETE FROM company_holidays WHERE id = $1 AND company_id = $2',
+      [id, actor.companyId],
+    );
+    if (removed.rowCount === 0) throw notFound('Holiday not found');
+    await auditFromActor(actor, 'leave.holiday_remove', {
+      resourceType: 'company',
+      resourceId: actor.companyId,
+      metadata: { holidayId: id },
+    }, tx);
+  });
+}
+
+/** Everyone's balances for a year, for the administrator setting entitlements. */
+export async function balanceOverview(actor: Actor, year: number): Promise<unknown[]> {
+  await authorize({ actor, capability: 'leave.manage', resourceless: true });
+  return many(
+    `SELECT u.id AS user_id, u.display_name, u.avatar_color,
+            t.id AS leave_type_id, t.name AS type_name, t.colour,
+            COALESCE(b.entitled_days, 0) AS entitled_days,
+            COALESCE(b.carried_days, 0) AS carried_days,
+            COALESCE(b.taken_days, 0) AS taken_days,
+            COALESCE(b.pending_days, 0) AS pending_days
+       FROM users u
+       CROSS JOIN leave_types t
+       LEFT JOIN leave_balances b
+              ON b.user_id = u.id AND b.leave_type_id = t.id AND b.year = $2
+      WHERE u.company_id = $1 AND u.status = 'active' AND u.access_level <> 'guest'
+        AND t.company_id = $1 AND t.active AND t.deducts_balance
+      ORDER BY u.display_name, t.name`,
+    [actor.companyId, year],
+  );
+}
