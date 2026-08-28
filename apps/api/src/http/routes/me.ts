@@ -15,16 +15,15 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
   app.get('/me', async (request) => {
     const actor = requireActor(request);
     const user = await identity.findUserById(actor.userId);
-    const company = await one<{ id: string; name: string; verified_domains: string[] }>(
-      'SELECT id, name, verified_domains FROM companies WHERE id = $1',
-      [actor.companyId],
-    );
-    return {
-      user: user ? identity.publicUser(user) : null,
-      company,
-      mfaEnabled: actor.mfaEnabled,
-      mfaSatisfied: actor.mfaSatisfied,
-    };
+    const company = await one<{
+      id: string;
+      name: string;
+      legal_name: string | null;
+      verified_domains: unknown;
+    }>('SELECT id, name, legal_name, verified_domains FROM companies WHERE id = $1', [
+      actor.companyId,
+    ]);
+    return { user: user ? identity.publicUser(user) : null, company };
   });
 
   app.get('/me/capabilities', async (request) => {

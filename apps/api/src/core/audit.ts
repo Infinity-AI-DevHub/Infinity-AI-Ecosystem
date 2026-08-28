@@ -30,6 +30,8 @@ const SENSITIVE_KEYS = new Set([
   'token_hash',
   'tokenHash',
   'secret',
+  // Retained although multi-factor authentication was removed: a redaction list is a
+  // safety net, and an over-broad one costs nothing while a gap costs a leaked secret.
   'mfa_secret_enc',
   'mfaSecret',
   'recovery_codes',

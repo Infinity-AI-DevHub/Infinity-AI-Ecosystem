@@ -1,6 +1,6 @@
 /**
  * Authentication endpoints (blueprint 08).
- * Login and MFA verification are rate limited per account and per IP.
+ * Login is rate limited per account and per IP.
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -21,12 +21,13 @@ const loginSchema = z.object({
   password: z.string().min(1).max(512),
 });
 
-const mfaSchema = z.object({
-  challengeToken: z.string().min(10).max(200),
-  code: z.string().min(6).max(20),
+const activateSchema = z.object({
+  token: z.string().min(10).max(200),
+  password: z.string().min(1).max(512),
 });
 
-const activateSchema = z.object({
+const forgotSchema = z.object({ email: z.string().email().max(320) });
+const resetSchema = z.object({
   token: z.string().min(10).max(200),
   password: z.string().min(1).max(512),
 });
@@ -40,9 +41,6 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     await enforce(`login:ip:${request.ip}`, config.limits.loginPerMinute * 3, 60);
 
     const outcome = await identity.authenticate(input.email, input.password, request.requestContext);
-    if (outcome.status === 'mfa_required') {
-      return reply.code(200).send({ status: 'mfa_required', challengeToken: outcome.challengeToken });
-    }
     setSessionCookie(reply, outcome.sessionToken, outcome.csrfToken);
     return reply.code(200).send({
       status: 'authenticated',
@@ -51,38 +49,38 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post('/auth/mfa/verify', async (request, reply) => {
-    const input = parse(mfaSchema, request.body);
-    await enforce(`mfa:${hashToken(input.challengeToken)}`, 8, 300);
-    const result = await identity.verifyMfaChallenge(
-      input.challengeToken,
-      input.code,
-      request.requestContext,
-    );
-    setSessionCookie(reply, result.sessionToken, result.csrfToken);
-    return reply.code(200).send({
-      status: 'authenticated',
-      csrfToken: result.csrfToken,
-      user: identity.publicUser(result.user),
-    });
-  });
-
   app.post('/auth/activate', async (request, reply) => {
     const input = parse(activateSchema, request.body);
     await enforce(`activate:ip:${request.ip}`, 10, 600);
     const result = await identity.activateAccount(input.token, input.password, request.requestContext);
-    // Recovery codes and the MFA secret are shown exactly once, at enrolment.
-    return reply.code(201).send({
-      user: identity.publicUser(result.user),
-      mfa: { secret: result.mfaSecret, uri: result.mfaUri },
-      recoveryCodes: result.recoveryCodes,
+    return reply.code(201).send({ user: identity.publicUser(result.user) });
+  });
+
+  /**
+   * Start a reset. The reply is identical whether or not the address has an account:
+   * the one thing an anonymous caller must not be able to learn here is who works here.
+   * The link itself travels only in the message to the address on file.
+   */
+  app.post('/auth/password/forgot', async (request, reply) => {
+    const input = parse(forgotSchema, request.body);
+    // Per-address so one account cannot be mail-bombed, per-IP so one source cannot
+    // sweep a list of guessed addresses looking for a difference in timing or effect.
+    await enforce(`forgot:email:${hashToken(input.email)}`, 3, 900);
+    await enforce(`forgot:ip:${request.ip}`, 15, 900);
+    await identity.requestPasswordReset(input.email, request.requestContext);
+    return reply.code(202).send({
+      status: 'accepted',
+      message: 'If that address has an account, a reset link is on its way.',
     });
   });
 
-  app.post('/auth/mfa/confirm', async (request, reply) => {
-    const input = parse(z.object({ userId: z.string().uuid(), code: z.string().min(6).max(8) }), request.body);
-    await enforce(`mfaconfirm:${input.userId}`, 10, 600);
-    await identity.confirmMfa(input.userId, input.code);
+  app.post('/auth/password/reset', async (request, reply) => {
+    const input = parse(resetSchema, request.body);
+    await enforce(`reset:ip:${request.ip}`, 10, 600);
+    await identity.completePasswordReset(input.token, input.password, request.requestContext);
+    // Every session was revoked with the reset, so there is nothing to return but the
+    // instruction to sign in again.
+    clearSessionCookie(reply);
     return reply.code(204).send();
   });
 

@@ -1,0 +1,113 @@
+# Local development stack. Production uses managed equivalents (blueprint 13).
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: ecosystem
+    # The server runs in UTC; the application also pins each connection, so the two
+    # agree no matter how the host is configured.
+    command: >-
+      --default-time-zone=+00:00
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_0900_ai_ci
+    # 3307 avoids colliding with a locally installed MySQL (MAMP uses 8889).
+    ports: ['3307:3306']
+    volumes: ['mysqldata:/var/lib/mysql']
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-proot']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # S3-compatible object storage. Buckets stay private; access is via signed URLs only.
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: infinity
+      MINIO_ROOT_PASSWORD: infinity_dev_only
+    ports: ['9000:9000', '9001:9001']
+    volumes: ['miniodata:/data']
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Malware scanning for uploaded files.
+  clamav:
+    image: clamav/clamav:stable
+    ports: ['3310:3310']
+    healthcheck:
+      test: ['CMD', 'clamdcheck.sh']
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  # ---------------------------------------------------------------- application
+  # Migrations run as their own service so they complete before anything serves
+  # traffic, and so a deploy fails loudly on a bad migration rather than leaving
+  # instances racing each other to apply it.
+  migrate:
+    build:
+      context: ./apps/api
+    command: ['node', 'dist/src/cli/migrate.js']
+    environment: &api_env
+      # This stack is http-only on localhost, and the application refuses to start in
+      # production over http - correctly. Production runs the same images behind TLS
+      # with NODE_ENV=production and secrets from a secret store.
+      NODE_ENV: development
+      DATABASE_URL: mysql://root:root@mysql:3306/ecosystem
+      PUBLIC_URL: http://localhost:8080
+      API_URL: http://localhost:4000
+      STORAGE_DRIVER: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: infinity-files
+      S3_ACCESS_KEY_ID: infinity
+      S3_SECRET_ACCESS_KEY: infinity_dev_only
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: '3310'
+      # Development-only value. Production supplies this from a secret store; the
+      # application refuses to start if it is missing or under 32 characters. It also
+      # signs object download URLs, so rotating it invalidates any still in flight.
+      DATA_ENCRYPTION_KEY: dev_only_encryption_key_32_chars_min_0123456789
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ./apps/api
+    environment: *api_env
+    ports: ['4000:4000']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+
+  # The workers share the API image and configuration; only the entrypoint differs.
+  worker:
+    build:
+      context: ./apps/api
+    command: ['node', '--enable-source-maps', 'dist/src/workers/index.js']
+    environment: *api_env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: ./apps/web
+      args:
+        VITE_API_URL: http://localhost:4000
+    ports: ['8080:8080']
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  mysqldata:
+  miniodata:

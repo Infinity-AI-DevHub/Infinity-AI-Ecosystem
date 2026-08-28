@@ -3,7 +3,7 @@
  * the blueprint forbids custom cryptography and custom password hashing.
  *
  * Passwords: scrypt (memory-hard, RFC 7914) with a per-password random salt.
- * MFA secrets: AES-256-GCM at rest, keyed from DATA_ENCRYPTION_KEY.
+ * Field encryption: AES-256-GCM at rest, keyed from DATA_ENCRYPTION_KEY.
  * Tokens: 256-bit random values; only their SHA-256 digest is stored.
  */
 import {
@@ -12,7 +12,6 @@ import {
   createHash,
   createHmac,
   randomBytes,
-  randomInt,
   scrypt as scryptCb,
   timingSafeEqual,
 } from 'node:crypto';
@@ -120,82 +119,6 @@ export function decryptField(payload: string): string {
     decipher.update(Buffer.from(dataB64, 'base64url')),
     decipher.final(),
   ]).toString('utf8');
-}
-
-// --------------------------------------------------------------- TOTP (RFC 6238)
-
-const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-
-export function generateTotpSecret(): string {
-  const buf = randomBytes(20);
-  let bits = '';
-  for (const byte of buf) bits += byte.toString(2).padStart(8, '0');
-  let out = '';
-  for (let i = 0; i + 5 <= bits.length; i += 5) {
-    out += BASE32[parseInt(bits.slice(i, i + 5), 2)];
-  }
-  return out;
-}
-
-function base32Decode(input: string): Buffer {
-  const clean = input.toUpperCase().replace(/=+$/, '').replace(/\s/g, '');
-  let bits = '';
-  for (const ch of clean) {
-    const idx = BASE32.indexOf(ch);
-    if (idx === -1) throw new Error('Invalid base32 character in TOTP secret');
-    bits += idx.toString(2).padStart(5, '0');
-  }
-  const bytes: number[] = [];
-  for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2));
-  return Buffer.from(bytes);
-}
-
-export function totpCode(secret: string, counter: number): string {
-  const key = base32Decode(secret);
-  const buf = Buffer.alloc(8);
-  buf.writeBigUInt64BE(BigInt(counter));
-  const digest = createHmac('sha1', key).update(buf).digest();
-  const offset = digest[digest.length - 1]! & 0x0f;
-  const value =
-    ((digest[offset]! & 0x7f) << 24) |
-    ((digest[offset + 1]! & 0xff) << 16) |
-    ((digest[offset + 2]! & 0xff) << 8) |
-    (digest[offset + 3]! & 0xff);
-  return String(value % 1_000_000).padStart(6, '0');
-}
-
-/** Accepts the current step plus one step of clock drift in each direction. */
-export function verifyTotp(secret: string, code: string, atMs = Date.now()): boolean {
-  const normalized = code.replace(/\D/g, '');
-  if (normalized.length !== 6) return false;
-  const counter = Math.floor(atMs / 1000 / 30);
-  for (const drift of [0, -1, 1]) {
-    if (safeEqual(totpCode(secret, counter + drift), normalized)) return true;
-  }
-  return false;
-}
-
-export function totpUri(secret: string, account: string, issuer: string): string {
-  const label = encodeURIComponent(`${issuer}:${account}`);
-  const params = new URLSearchParams({ secret, issuer, algorithm: 'SHA1', digits: '6', period: '30' });
-  return `otpauth://totp/${label}?${params.toString()}`;
-}
-
-// --------------------------------------------------------------- recovery codes
-
-export function generateRecoveryCodes(count = 10): string[] {
-  const codes: string[] = [];
-  for (let i = 0; i < count; i += 1) {
-    const raw = randomBytes(5).toString('hex').toUpperCase();
-    codes.push(`${raw.slice(0, 5)}-${raw.slice(5)}`);
-  }
-  return codes;
-}
-
-export function randomDigits(length: number): string {
-  let out = '';
-  for (let i = 0; i < length; i += 1) out += String(randomInt(0, 10));
-  return out;
 }
 
 export function sha256(input: string | Buffer): string {

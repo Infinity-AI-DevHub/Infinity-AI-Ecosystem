@@ -1,21 +1,24 @@
 /**
- * Mail provider adapter (blueprint 09).
+ * Transactional notification sender.
  *
- * Infinity Workspace owns the experience, authorization, sync metadata, retention and
- * audit trail. Actual internet delivery - SMTP reputation, DKIM signing, spam and abuse
- * handling - belongs to a managed provider. This interface keeps that vendor replaceable.
+ * The workspace does not host mailboxes - a separate email application owns that.
+ * What remains here is the system's own outbound messages: activation invitations,
+ * security notices and notification digests. Without this an invited person could never
+ * receive their activation link, so it is not optional.
+ *
+ * Internet delivery - SMTP reputation, DKIM signing, bounce and abuse handling -
+ * belongs to a managed provider. This interface keeps that vendor replaceable.
  *
  * Drivers:
  *   log      - development only; records the message and reports success
  *   smtp     - direct SMTP submission to a relay that handles reputation
- *   provider - HTTP API of a managed mail provider
+ *   provider - HTTP API of a managed provider
  */
 import { createConnection, type Socket } from 'node:net';
 import { connect as tlsConnect, type TLSSocket } from 'node:tls';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { config } from '../core/config.js';
 import { logger } from '../core/logger.js';
-import { hmacSignature } from '../core/crypto.js';
 import { serviceUnavailable } from '../core/errors.js';
 
 export type OutboundAttachment = {
@@ -43,12 +46,9 @@ export type SendResult = {
   rejected: string[];
 };
 
-export interface MailDriver {
+export interface NotifierDriver {
   readonly name: string;
   send(message: OutboundMessage): Promise<SendResult>;
-  /** Creates the provider-side mailbox for a new employee, when the provider owns mailboxes. */
-  provisionMailbox(address: string, displayName: string): Promise<{ providerId: string }>;
-  verifyWebhook(rawBody: string, signature: string, timestamp: string): boolean;
 }
 
 // -------------------------------------------------------------- MIME construction
@@ -69,7 +69,7 @@ export function assertNoHeaderInjection(value: string, field: string): void {
 }
 
 export function buildMime(message: OutboundMessage): { raw: string; messageId: string } {
-  const messageId = message.messageId ?? `<${randomUUID()}@${config.mail.defaultDomain}>`;
+  const messageId = message.messageId ?? `<${randomUUID()}@${config.notifications.defaultDomain}>`;
   const boundary = `iw_${randomUUID().replaceAll('-', '')}`;
   const altBoundary = `iwa_${randomUUID().replaceAll('-', '')}`;
 
@@ -145,29 +145,21 @@ export function buildMime(message: OutboundMessage): { raw: string; messageId: s
 
 // -------------------------------------------------------------- drivers
 
-class LogMailDriver implements MailDriver {
+class LogNotifier implements NotifierDriver {
   readonly name = 'log';
 
   async send(message: OutboundMessage): Promise<SendResult> {
     const { messageId } = buildMime(message);
     logger.info(
       { to: message.to, subject: message.subject, messageId },
-      'mail driver "log": message accepted (not delivered)',
+      'notifier "log": message accepted (not delivered)',
     );
     return { providerMessageId: messageId, accepted: message.to, rejected: [] };
-  }
-
-  async provisionMailbox(address: string): Promise<{ providerId: string }> {
-    return { providerId: `log:${address}` };
-  }
-
-  verifyWebhook(): boolean {
-    return !config.isProd;
   }
 }
 
 /** Minimal ESMTP submission client: EHLO, STARTTLS, AUTH LOGIN, MAIL/RCPT/DATA. */
-class SmtpMailDriver implements MailDriver {
+class SmtpNotifier implements NotifierDriver {
   readonly name = 'smtp';
 
   async send(message: OutboundMessage): Promise<SendResult> {
@@ -176,36 +168,27 @@ class SmtpMailDriver implements MailDriver {
     await smtpSubmit(message.from.address, recipients, raw);
     return { providerMessageId: messageId, accepted: recipients, rejected: [] };
   }
-
-  async provisionMailbox(address: string): Promise<{ providerId: string }> {
-    // A relay does not own mailboxes; the workspace stores the mail itself.
-    return { providerId: `smtp:${address}` };
-  }
-
-  verifyWebhook(rawBody: string, signature: string, timestamp: string): boolean {
-    return verifyHmacWebhook(rawBody, signature, timestamp);
-  }
 }
 
-class ProviderMailDriver implements MailDriver {
+class ProviderNotifier implements NotifierDriver {
   readonly name = 'provider';
 
   private async call<T>(path: string, body: unknown): Promise<T> {
-    if (!config.mail.providerApiUrl || !config.mail.providerApiKey) {
-      throw serviceUnavailable('Mail provider is not configured');
+    if (!config.notifications.providerApiUrl || !config.notifications.providerApiKey) {
+      throw serviceUnavailable('Notification provider is not configured');
     }
-    const res = await fetch(`${config.mail.providerApiUrl.replace(/\/$/, '')}${path}`, {
+    const res = await fetch(`${config.notifications.providerApiUrl.replace(/\/$/, '')}${path}`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        authorization: `Bearer ${config.mail.providerApiKey}`,
+        authorization: `Bearer ${config.notifications.providerApiKey}`,
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
-      throw serviceUnavailable(`Mail provider error ${res.status}: ${detail.slice(0, 200)}`);
+      throw serviceUnavailable(`Notification provider error ${res.status}: ${detail.slice(0, 200)}`);
     }
     return (await res.json()) as T;
   }
@@ -223,39 +206,11 @@ class ProviderMailDriver implements MailDriver {
     };
   }
 
-  async provisionMailbox(address: string, displayName: string): Promise<{ providerId: string }> {
-    const result = await this.call<{ id: string }>('/mailboxes', { address, displayName });
-    return { providerId: result.id };
-  }
-
-  verifyWebhook(rawBody: string, signature: string, timestamp: string): boolean {
-    return verifyHmacWebhook(rawBody, signature, timestamp);
-  }
-}
-
-/**
- * Provider webhooks are signed and replay-windowed (blueprint 09: "webhook signatures,
- * replay windows and idempotency are mandatory").
- */
-export function verifyHmacWebhook(
-  rawBody: string,
-  signature: string,
-  timestamp: string,
-  toleranceSeconds = 300,
-): boolean {
-  if (!config.mail.webhookSecret || !signature || !timestamp) return false;
-  const ts = Number(timestamp);
-  if (!Number.isFinite(ts)) return false;
-  if (Math.abs(Date.now() / 1000 - ts) > toleranceSeconds) return false;
-  const expected = hmacSignature(config.mail.webhookSecret, `${timestamp}.${rawBody}`);
-  const a = Buffer.from(expected);
-  const b = Buffer.from(signature);
-  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 async function smtpSubmit(from: string, recipients: string[], raw: string): Promise<void> {
-  const host = config.mail.smtpHost;
-  const port = config.mail.smtpPort;
+  const host = config.notifications.smtpHost;
+  const port = config.notifications.smtpPort;
   if (!host) throw serviceUnavailable('SMTP host is not configured');
 
   let socket: Socket | TLSSocket = await new Promise((resolve, reject) => {
@@ -291,7 +246,7 @@ async function smtpSubmit(from: string, recipients: string[], raw: string): Prom
 
   try {
     await waitFor(220);
-    const greeting = await send(`EHLO ${config.mail.defaultDomain}`, 250);
+    const greeting = await send(`EHLO ${config.notifications.defaultDomain}`, 250);
 
     if (greeting.includes('STARTTLS')) {
       await send('STARTTLS', 220);
@@ -299,15 +254,15 @@ async function smtpSubmit(from: string, recipients: string[], raw: string): Prom
         const secure = tlsConnect({ socket: socket as Socket, servername: host }, () => resolve(secure));
         secure.once('error', reject);
       });
-      await send(`EHLO ${config.mail.defaultDomain}`, 250);
+      await send(`EHLO ${config.notifications.defaultDomain}`, 250);
     } else if (config.isProd) {
       throw new Error('SMTP relay does not offer STARTTLS; refusing to send in production');
     }
 
-    if (config.mail.smtpUser) {
+    if (config.notifications.smtpUser) {
       await send('AUTH LOGIN', 334);
-      await send(Buffer.from(config.mail.smtpUser).toString('base64'), 334);
-      await send(Buffer.from(config.mail.smtpPassword).toString('base64'), 235);
+      await send(Buffer.from(config.notifications.smtpUser).toString('base64'), 334);
+      await send(Buffer.from(config.notifications.smtpPassword).toString('base64'), 235);
     }
 
     await send(`MAIL FROM:<${from}>`, 250);
@@ -323,18 +278,19 @@ async function smtpSubmit(from: string, recipients: string[], raw: string): Prom
   }
 }
 
-function selectDriver(): MailDriver {
-  switch (config.mail.driver) {
+function selectDriver(): NotifierDriver {
+  switch (config.notifications.driver) {
     case 'smtp':
-      return new SmtpMailDriver();
+      return new SmtpNotifier();
     case 'provider':
-      return new ProviderMailDriver();
+      return new ProviderNotifier();
     default:
+      // A silent no-op sender in production would mean invitations never arrive.
       if (config.isProd) {
-        throw new Error('MAIL_DRIVER=log is not permitted in production');
+        throw new Error('NOTIFY_DRIVER=log is not permitted in production');
       }
-      return new LogMailDriver();
+      return new LogNotifier();
   }
 }
 
-export const mailDriver: MailDriver = selectDriver();
+export const notifier: NotifierDriver = selectDriver();

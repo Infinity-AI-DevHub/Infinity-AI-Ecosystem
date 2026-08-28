@@ -4,25 +4,23 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { paginationSchema, parse } from '../../core/validation.js';
-import { requireStepUp } from '../../core/authz.js';
 import { requireActor } from '../context.js';
 import * as admin from '../../domains/admin.js';
-import * as mail from '../../domains/mail.js';
 import { config } from '../../core/config.js';
-import { mailDriver } from '../../adapters/mail.js';
 import { storage, verifyLocalObjectSignature } from '../../adapters/storage.js';
 import { forbidden, notFound } from '../../core/errors.js';
-import { pool } from '../../core/db.js';
-import { enforce } from '../../core/ratelimit.js';
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.get('/admin/company', async (request) => admin.companySettings(requireActor(request)));
 
   app.patch('/admin/company', async (request) => {
     const actor = requireActor(request);
-    requireStepUp(actor, 'settings.update');
     const input = parse(
-      z.object({ name: z.string().min(1).max(200).optional(), settings: z.record(z.unknown()).optional() }),
+      z.object({
+        name: z.string().min(1).max(200).optional(),
+        legalName: z.string().max(200).nullable().optional(),
+        settings: z.record(z.unknown()).optional(),
+      }),
       request.body,
     );
     return admin.updateSettings(actor, input);
@@ -30,7 +28,6 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/admin/company/domains', async (request, reply) => {
     const actor = requireActor(request);
-    requireStepUp(actor, 'domain.manage');
     const input = parse(z.object({ domain: z.string().min(3).max(253) }), request.body);
     reply.code(201);
     return admin.addVerifiedDomain(actor, input.domain);
@@ -76,7 +73,6 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/audit/export', async (request, reply) => {
     const actor = requireActor(request);
-    requireStepUp(actor, 'audit.export');
     const query = parse(
       z.object({ from: z.string().datetime(), to: z.string().datetime() }),
       request.query,
@@ -122,84 +118,5 @@ export async function objectRoutes(app: FastifyInstance): Promise<void> {
   });
 }
 
-/**
- * Provider webhooks (blueprint 09). Signature verification and a replay window are
- * mandatory; the endpoint is public but never trusts its body without them.
- */
-export async function webhookRoutes(app: FastifyInstance): Promise<void> {
-  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
-    // The raw body is kept so the HMAC can be computed over exactly what was sent.
-    done(null, { raw: body as string, parsed: safeJson(body as string) });
-  });
-
-  app.post('/webhooks/mail', async (request, reply) => {
-    await enforce(`webhook:mail:${request.ip}`, 600, 60);
-    const payload = request.body as { raw: string; parsed: Record<string, unknown> } | undefined;
-    const signature = String(request.headers['x-webhook-signature'] ?? '');
-    const timestamp = String(request.headers['x-webhook-timestamp'] ?? '');
-
-    if (!payload || !mailDriver.verifyWebhook(payload.raw, signature, timestamp)) {
-      request.log.warn({ ip: request.ip }, 'rejected mail webhook with invalid signature');
-      throw forbidden('Invalid webhook signature');
-    }
-
-    const event = payload.parsed as {
-      type?: string;
-      messageId?: string;
-      providerMessageId?: string;
-      detail?: string;
-      message?: Record<string, unknown>;
-    };
-
-    switch (event.type) {
-      case 'delivered':
-      case 'bounced':
-      case 'failed': {
-        if (!event.messageId) break;
-        await mail.markDelivery(
-          event.messageId,
-          event.type,
-          event.detail ?? null,
-          event.providerMessageId,
-        );
-        break;
-      }
-      case 'inbound': {
-        const message = event.message as Record<string, string> | undefined;
-        if (!message?.to || !message?.from) break;
-        const company = await pool.query<{ id: string }>(
-          'SELECT company_id AS id FROM mailboxes WHERE address = $1 LIMIT 1',
-          [String(message.to).toLowerCase()],
-        );
-        const companyId = company.rows[0]?.id;
-        if (!companyId) break;
-        await mail.ingestInbound({
-          companyId,
-          toAddress: String(message.to),
-          fromAddress: String(message.from),
-          fromName: message.fromName,
-          subject: message.subject ?? '',
-          text: message.text ?? '',
-          html: message.html,
-          providerMessageId: String(event.providerMessageId ?? message.messageId ?? ''),
-          messageIdHeader: message.messageId,
-        });
-        break;
-      }
-      default:
-        request.log.info({ type: event.type }, 'ignored unrecognised mail webhook event');
-    }
-    // Always 200 on a verified webhook so the provider does not retry indefinitely.
-    return reply.code(200).send({ received: true });
-  });
-}
-
-function safeJson(raw: string): Record<string, unknown> {
-  try {
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-}
 
 export { config };

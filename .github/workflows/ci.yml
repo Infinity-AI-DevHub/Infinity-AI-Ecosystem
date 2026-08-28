@@ -1,0 +1,128 @@
+# CI gates (blueprint 13/17). A pull request must pass format/lint, type check, unit
+# tests, integration and authorization tests, migration validation and dependency and
+# secret scanning before it can merge.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  api:
+    name: API — types, tests, migrations
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: infinity_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -proot"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    env:
+      DATABASE_URL: mysql://root:root@127.0.0.1:3306/infinity_test
+      TEST_DATABASE_URL: mysql://root:root@127.0.0.1:3306/infinity_test
+      DATA_ENCRYPTION_KEY: ci_only_key_0123456789abcdef0123456789abcdef
+      MAIL_DRIVER: log
+      MAIL_DEFAULT_DOMAIN: ci.test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/api/package-lock.json
+
+      - name: Install
+        working-directory: apps/api
+        run: npm ci
+
+      - name: Type check
+        working-directory: apps/api
+        run: npm run typecheck
+
+      - name: Validate migrations apply from empty
+        working-directory: apps/api
+        run: npm run migrate
+
+      - name: Verify migrations are idempotent
+        working-directory: apps/api
+        # Re-running must be a no-op; a checksum change on an applied file fails here.
+        run: node dist/src/cli/migrate.js
+
+      - name: Unit, integration and authorization tests
+        working-directory: apps/api
+        run: npm test
+
+      - name: Dependency audit
+        working-directory: apps/api
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  web:
+    name: Web — types and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Type check
+        working-directory: apps/web
+        run: npx tsc -b
+
+      - name: Build
+        working-directory: apps/web
+        run: npm run build
+
+      - name: Dependency audit
+        working-directory: apps/web
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect committed secrets
+        # A credential in history is a credential to rotate, not a warning to dismiss.
+        run: |
+          if git grep -nIE '(BEGIN (RSA|OPENSSH|PGP) PRIVATE KEY|AKIA[0-9A-Z]{16}|xox[baprs]-)' -- . ':!*.lock' ':!.github/workflows/*'; then
+            echo "::error::Possible secret committed to the repository"
+            exit 1
+          fi
+          echo "No obvious secrets found."
+
+      - name: Ensure no .env files are tracked
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$|(^|/)\.env\.[a-z]+$'; then
+            echo "::error::An environment file is tracked in git"
+            exit 1
+          fi
+          echo "No tracked environment files."

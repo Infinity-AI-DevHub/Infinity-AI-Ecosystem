@@ -347,6 +347,7 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
       z.object({
         folderId: z.string().uuid().nullable().optional(),
         limit: z.coerce.number().int().min(1).max(200).default(100),
+        recycled: z.coerce.boolean().optional(),
       }),
       request.query,
     );
@@ -546,6 +547,12 @@ export async function announcementRoutes(app: FastifyInstance): Promise<void> {
     return announcements.create(actor, input);
   });
 
+  app.get('/announcements/:id', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    return announcements.getForUser(actor, id);
+  });
+
   app.post('/announcements/:id/read', async (request, reply) => {
     const actor = requireActor(request);
     const { id } = parse(idParam, request.params);
@@ -583,7 +590,7 @@ export async function searchRoutes(app: FastifyInstance): Promise<void> {
     const types = query.types
       ?.split(',')
       .filter((t): t is search.DocType =>
-        ['mail', 'chat', 'file', 'person', 'task', 'meeting', 'announcement'].includes(t),
+        ['mail', 'chat', 'file', 'person', 'task', 'meeting', 'announcement', 'doc'].includes(t),
       );
     return search.search(actor, query.q, { types, limit: query.limit });
   });

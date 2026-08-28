@@ -3,7 +3,7 @@
  * Audit reads are themselves privileged and are recorded - access monitoring is part of
  * the control, not an afterthought.
  */
-import { many, one, pool } from '../core/db.js';
+import { jsonArray, many, newId, one, pool } from '../core/db.js';
 import { notFound, forbidden } from '../core/errors.js';
 import { authorize, invalidateCapabilityCache, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
@@ -14,7 +14,8 @@ import { config } from '../core/config.js';
 export async function companySettings(actor: Actor) {
   await authorize({ actor, capability: 'settings.read', resourceless: true });
   const company = await one(
-    'SELECT id, name, verified_domains, region, status, settings, created_at FROM companies WHERE id = $1',
+    `SELECT id, name, legal_name, verified_domains, region, status, settings, created_at
+       FROM companies WHERE id = $1`,
     [actor.companyId],
   );
   if (!company) throw notFound('Company not found');
@@ -23,18 +24,29 @@ export async function companySettings(actor: Actor) {
 
 export async function updateSettings(
   actor: Actor,
-  input: { name?: string; settings?: Record<string, unknown> },
+  input: { name?: string; legalName?: string | null; settings?: Record<string, unknown> },
 ) {
   await authorize({ actor, capability: 'settings.update', resourceless: true });
   const before = await companySettings(actor);
-  const res = await pool.query(
+  await pool.query(
     `UPDATE companies SET
        name = COALESCE($2, name),
-       settings = COALESCE($3::jsonb, settings),
-       updated_at = now()
-     WHERE id = $1
-     RETURNING id, name, verified_domains, region, status, settings`,
-    [actor.companyId, input.name ?? null, input.settings ? JSON.stringify(input.settings) : null],
+       legal_name = CASE WHEN $3 THEN $4 ELSE legal_name END,
+       settings = COALESCE($5, settings),
+       updated_at = NOW(3)
+     WHERE id = $1`,
+    [
+      actor.companyId,
+      input.name ?? null,
+      'legalName' in input,
+      input.legalName ?? null,
+      input.settings ? JSON.stringify(input.settings) : null,
+    ],
+  );
+  const res = await pool.query(
+    `SELECT id, name, legal_name, verified_domains, region, status, settings
+       FROM companies WHERE id = $1`,
+    [actor.companyId],
   );
   await auditFromActor(actor, 'settings.update', {
     resourceType: 'company',
@@ -56,57 +68,72 @@ export async function addVerifiedDomain(actor: Actor, domain: string) {
     const { unprocessable } = await import('../core/errors.js');
     throw unprocessable('That is not a valid domain name', [{ field: 'domain', message: 'Example: company.com' }]);
   }
-  const res = await pool.query<{ verified_domains: string[] }>(
-    `UPDATE companies SET verified_domains = array_append(verified_domains, $2), updated_at = now()
-      WHERE id = $1 AND NOT ($2 = ANY(verified_domains))
-      RETURNING verified_domains`,
+  // JSON_ARRAY_APPEND is a no-op guarded by the JSON_CONTAINS test, so re-adding an
+  // existing domain neither duplicates it nor errors.
+  await pool.query(
+    `UPDATE companies
+        SET verified_domains = JSON_ARRAY_APPEND(verified_domains, '$', $2),
+            updated_at = NOW(3)
+      WHERE id = $1 AND NOT JSON_CONTAINS(verified_domains, JSON_QUOTE($2))`,
     [actor.companyId, clean],
+  );
+  const res = await pool.query<{ verified_domains: unknown }>(
+    'SELECT verified_domains FROM companies WHERE id = $1',
+    [actor.companyId],
   );
   await auditFromActor(actor, 'company.domain_added', {
     resourceType: 'company',
     resourceId: actor.companyId,
     metadata: { domain: clean },
   });
-  return res.rows[0] ?? (await companySettings(actor));
+  return res.rows[0] ? { verified_domains: jsonArray(res.rows[0].verified_domains) } : companySettings(actor);
 }
 
 export async function listGroups(actor: Actor) {
   await authorize({ actor, capability: 'user.read', resourceless: true });
   return many(
     `SELECT g.id, g.name, g.description,
-            (SELECT count(*)::int FROM group_members m WHERE m.group_id = g.id) AS member_count
-       FROM groups g WHERE g.company_id = $1 ORDER BY g.name`,
+            (SELECT count(*) FROM group_members m WHERE m.group_id = g.id) AS member_count
+       FROM \`groups\` g WHERE g.company_id = $1 ORDER BY g.name`,
     [actor.companyId],
   );
 }
 
 export async function createGroup(actor: Actor, name: string, description?: string) {
   await authorize({ actor, capability: 'user.update', resourceless: true });
+  const groupId = newId();
   const res = await pool.query(
-    `INSERT INTO groups (company_id, name, description) VALUES ($1,$2,$3)
-     ON CONFLICT (company_id, name) DO NOTHING RETURNING id, name, description`,
-    [actor.companyId, name.trim(), description ?? null],
+    'INSERT IGNORE INTO `groups` (id, company_id, name, description) VALUES ($1,$2,$3,$4)',
+    [groupId, actor.companyId, name.trim(), description ?? null],
   );
-  if (!res.rows[0]) {
+  if (res.rowCount === 0) {
     const { conflict } = await import('../core/errors.js');
     throw conflict('A group with that name already exists');
   }
-  await auditFromActor(actor, 'group.create', { resourceType: 'company', resourceId: actor.companyId, metadata: { name } });
-  return res.rows[0];
+  await auditFromActor(actor, 'group.create', {
+    resourceType: 'company',
+    resourceId: actor.companyId,
+    metadata: { name },
+  });
+  return { id: groupId, name: name.trim(), description: description ?? null };
 }
 
 export async function setGroupMembers(actor: Actor, groupId: string, userIds: string[]) {
   await authorize({ actor, capability: 'user.update', resourceless: true });
-  const group = await one('SELECT 1 FROM groups WHERE id = $1 AND company_id = $2', [groupId, actor.companyId]);
-  if (!group) throw notFound('Group not found');
-  await pool.query('DELETE FROM group_members WHERE group_id = $1 AND user_id <> ALL($2::uuid[])', [
+  const group = await one('SELECT 1 FROM `groups` WHERE id = $1 AND company_id = $2', [
     groupId,
-    userIds,
+    actor.companyId,
   ]);
+  if (!group) throw notFound('Group not found');
+  await pool.query(
+    `DELETE FROM group_members
+      WHERE group_id = $1 AND NOT JSON_CONTAINS($2, JSON_QUOTE(user_id))`,
+    [groupId, JSON.stringify(userIds)],
+  );
   for (const userId of userIds) {
     await pool.query(
-      `INSERT INTO group_members (group_id, user_id) SELECT $1, id FROM users
-        WHERE id = $2 AND company_id = $3 ON CONFLICT DO NOTHING`,
+      `INSERT IGNORE INTO group_members (group_id, user_id) SELECT $1, id FROM users
+        WHERE id = $2 AND company_id = $3`,
       [groupId, userId, actor.companyId],
     );
   }
@@ -122,7 +149,7 @@ export async function setGroupMembers(actor: Actor, groupId: string, userIds: st
 export async function listDepartments(companyId: string) {
   return many(
     `SELECT d.id, d.name, d.parent_id,
-            (SELECT count(*)::int FROM users u WHERE u.department_id = d.id AND u.status = 'active') AS headcount
+            (SELECT count(*) FROM users u WHERE u.department_id = d.id AND u.status = 'active') AS headcount
        FROM departments d WHERE d.company_id = $1 ORDER BY d.name`,
     [companyId],
   );
@@ -156,17 +183,17 @@ export async function readAudit(
     metadata: Record<string, unknown>;
     created_at: Date;
   }>(
-    `SELECT id, actor_email, action, resource_type, resource_id, result, host(ip) AS ip,
+    `SELECT id, actor_email, action, resource_type, resource_id, result, ip,
             correlation_id, metadata, created_at
        FROM audit_events
       WHERE company_id = $1
-        AND ($2::text IS NULL OR action = $2)
-        AND ($3::uuid IS NULL OR actor_id = $3)
-        AND ($4::text IS NULL OR resource_type = $4)
-        AND ($5::uuid IS NULL OR resource_id = $5)
-        AND ($6::timestamptz IS NULL OR created_at >= $6)
-        AND ($7::timestamptz IS NULL OR created_at <= $7)
-        AND ($8::timestamptz IS NULL OR (created_at, id) < ($8, $9::bigint))
+        AND ($2 IS NULL OR action = $2)
+        AND ($3 IS NULL OR actor_id = $3)
+        AND ($4 IS NULL OR resource_type = $4)
+        AND ($5 IS NULL OR resource_id = $5)
+        AND ($6 IS NULL OR created_at >= $6)
+        AND ($7 IS NULL OR created_at <= $7)
+        AND ($8 IS NULL OR (created_at, id) < ($8, $9))
       ORDER BY created_at DESC, id DESC
       LIMIT $10`,
     [
@@ -199,41 +226,34 @@ export async function readAudit(
 /** Operational health for the admin console: queue depth, sockets, failures. */
 export async function operationsSnapshot(actor: Actor) {
   await authorize({ actor, capability: 'settings.read', resourceless: true });
-  const [queue, deadLetters, mailFailures, users, sessions] = await Promise.all([
+  const [queue, deadLetters, users, sessions] = await Promise.all([
     one<{ pending: number; oldest_seconds: number | null }>(
-      `SELECT count(*)::int AS pending,
-              EXTRACT(EPOCH FROM (now() - min(available_at)))::int AS oldest_seconds
+      `SELECT count(*) AS pending,
+              TIMESTAMPDIFF(SECOND, min(available_at), NOW(3)) AS oldest_seconds
          FROM outbox_events WHERE processed_at IS NULL`,
     ),
-    one<{ count: number }>(`SELECT count(*)::int AS count FROM dead_letters WHERE created_at > now() - interval '7 days'`),
-    one<{ count: number }>(
-      `SELECT count(*)::int AS count FROM mail_messages
-        WHERE company_id = $1 AND delivery_state IN ('bounced','failed')
-          AND updated_at > now() - interval '24 hours'`,
-      [actor.companyId],
-    ),
+    one<{ count: number }>(`SELECT count(*) AS count FROM dead_letters WHERE created_at > DATE_SUB(NOW(3), INTERVAL 7 DAY)`),
     one<{ active: number; invited: number; suspended: number }>(
-      `SELECT count(*) FILTER (WHERE status = 'active')::int AS active,
-              count(*) FILTER (WHERE status = 'invited')::int AS invited,
-              count(*) FILTER (WHERE status = 'suspended')::int AS suspended
+      `SELECT COUNT(CASE WHEN status = 'active' THEN 1 END) AS active,
+              COUNT(CASE WHEN status = 'invited' THEN 1 END) AS invited,
+              COUNT(CASE WHEN status = 'suspended' THEN 1 END) AS suspended
          FROM users WHERE company_id = $1`,
       [actor.companyId],
     ),
     one<{ count: number }>(
-      `SELECT count(*)::int AS count FROM sessions
-        WHERE company_id = $1 AND revoked_at IS NULL AND expires_at > now()`,
+      `SELECT count(*) AS count FROM sessions
+        WHERE company_id = $1 AND revoked_at IS NULL AND expires_at > NOW(3)`,
       [actor.companyId],
     ),
   ]);
   return {
     queue: { pending: queue?.pending ?? 0, oldestSeconds: queue?.oldest_seconds ?? 0 },
     deadLetters: deadLetters?.count ?? 0,
-    mailFailures24h: mailFailures?.count ?? 0,
     users: users ?? { active: 0, invited: 0, suspended: 0 },
     activeSessions: sessions?.count ?? 0,
     realtime: realtimeStats(),
     providers: {
-      mail: config.mail.driver,
+      notifications: config.notifications.driver,
       storage: config.storage.driver,
       meetings: config.meetings.provider,
       malwareScanner: process.env.CLAMAV_HOST ? 'clamav' : 'not configured',
@@ -254,7 +274,7 @@ export async function exportAudit(actor: Actor, from: string, to: string): Promi
     result: string;
     ip: string | null;
   }>(
-    `SELECT created_at, actor_email, action, resource_type, resource_id, result, host(ip) AS ip
+    `SELECT created_at, actor_email, action, resource_type, resource_id, result, ip
        FROM audit_events
       WHERE company_id = $1 AND created_at >= $2 AND created_at <= $3
       ORDER BY created_at

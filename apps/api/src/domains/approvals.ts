@@ -5,7 +5,7 @@
  * and parallel approvers, delegation, expiry/escalation, and an immutable decision
  * history. A requester can never be the final approver of their own request.
  */
-import { many, one, pool, transaction } from '../core/db.js';
+import { many, newId, one, pool, reload, transaction } from '../core/db.js';
 import { conflict, forbidden, notFound, unprocessable } from '../core/errors.js';
 import { assertSeparationOfDuties, authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
@@ -22,6 +22,20 @@ export type DefinitionRow = {
   active: boolean;
 };
 
+export type ApproverSpec = {
+  type: 'manager' | 'user' | 'access_level';
+  value?: string;
+  /**
+   * Used when the primary spec resolves to nobody.
+   *
+   * The common case is a `manager` step for someone at the top of the reporting line:
+   * a chief executive has no manager, and without a fallback they could never raise a
+   * request at all. The fallback keeps the control (someone still approves) while
+   * making the route resolvable for everyone.
+   */
+  fallback?: { type: 'user' | 'access_level'; value?: string };
+};
+
 /**
  * A routing rule matches on amount and department, then names the approvers for a step.
  * `approver` is resolved at request time: 'manager' walks the reporting line.
@@ -32,7 +46,13 @@ export type RoutingRule = {
   minAmount?: number;
   maxAmount?: number;
   departmentIds?: string[];
-  approver: { type: 'manager' | 'user' | 'access_level'; value?: string };
+  approver: ApproverSpec;
+  /**
+   * When true the step is skipped if it resolves to nobody, provided some other step
+   * still does. Approvals never silently proceed unapproved: if no step resolves the
+   * request is refused outright.
+   */
+  optional?: boolean;
   dueHours?: number;
 };
 
@@ -60,35 +80,98 @@ export async function listDefinitions(actor: Actor) {
   );
 }
 
-/** Resolves a routing rule into concrete approver user IDs. */
-async function resolveApprovers(
+/** Resolves one approver spec into concrete, currently-active user IDs. */
+async function resolveSpec(
   companyId: string,
   requester: { id: string; manager_id: string | null; department_id: string | null },
-  rule: RoutingRule,
+  spec: { type: string; value?: string },
 ): Promise<string[]> {
-  switch (rule.approver.type) {
+  switch (spec.type) {
     case 'manager': {
       if (!requester.manager_id) return [];
-      return [requester.manager_id];
-    }
-    case 'user': {
-      if (!rule.approver.value) return [];
+      // A manager who has since been suspended cannot hold up the queue.
       const row = await one<{ id: string }>(
         `SELECT id FROM users WHERE id = $1 AND company_id = $2 AND status = 'active'`,
-        [rule.approver.value, companyId],
+        [requester.manager_id, companyId],
+      );
+      return row ? [row.id] : [];
+    }
+    case 'user': {
+      if (!spec.value) return [];
+      const row = await one<{ id: string }>(
+        `SELECT id FROM users WHERE id = $1 AND company_id = $2 AND status = 'active'`,
+        [spec.value, companyId],
       );
       return row ? [row.id] : [];
     }
     case 'access_level': {
       const rows = await many<{ id: string }>(
         `SELECT id FROM users WHERE company_id = $1 AND access_level = $2 AND status = 'active'`,
-        [companyId, rule.approver.value ?? 'admin'],
+        [companyId, spec.value ?? 'admin'],
       );
       return rows.map((r) => r.id);
     }
     default:
       return [];
   }
+}
+
+/**
+ * Resolves a routing rule into approver IDs, applying the fallback when the primary
+ * spec yields nobody.
+ */
+/**
+ * Substitutes anyone with an open delegation for the person covering them.
+ *
+ * Applied after resolution rather than inside it, so the routing rule keeps meaning what
+ * it says - "the requester's manager" still resolves to the manager - and the delegation
+ * is a separate, visible redirection on top. That distinction matters when someone later
+ * asks why a decision was made by a person the route never names.
+ *
+ * A delegate who is themselves away is followed onward, capped so that two people who
+ * have delegated to each other cannot spin. If the chain cannot settle, the original
+ * approver is kept: a stalled queue is recoverable, and an approval silently routed
+ * somewhere unintended is not.
+ */
+async function applyDelegations(companyId: string, approverIds: string[]): Promise<string[]> {
+  const resolved: string[] = [];
+  for (const approverId of approverIds) {
+    let current = approverId;
+    const seen = new Set<string>([current]);
+    for (let hop = 0; hop < 3; hop += 1) {
+      const delegation = await one<{ to_user_id: string }>(
+        `SELECT d.to_user_id
+           FROM approval_delegations d
+           JOIN users u ON u.id = d.to_user_id
+          WHERE d.company_id = $1
+            AND d.from_user_id = $2
+            AND d.revoked_at IS NULL
+            AND d.starts_at <= NOW(3)
+            AND d.ends_at > NOW(3)
+            AND u.status = 'active'
+          ORDER BY d.created_at DESC
+          LIMIT 1`,
+        [companyId, current],
+      );
+      if (!delegation || seen.has(delegation.to_user_id)) break;
+      current = delegation.to_user_id;
+      seen.add(current);
+    }
+    if (!resolved.includes(current)) resolved.push(current);
+  }
+  return resolved;
+}
+
+async function resolveApprovers(
+  companyId: string,
+  requester: { id: string; manager_id: string | null; department_id: string | null },
+  rule: RoutingRule,
+): Promise<string[]> {
+  const primary = await resolveSpec(companyId, requester, rule.approver);
+  if (primary.length > 0) return applyDelegations(companyId, primary);
+  if (!rule.approver.fallback) return [];
+  const fallback = await resolveSpec(companyId, requester, rule.approver.fallback);
+  return applyDelegations(companyId, fallback);
 }
 
 function ruleApplies(rule: RoutingRule, amount: number | null, departmentId: string | null): boolean {
@@ -107,7 +190,7 @@ export async function createRequest(
 ): Promise<RequestRow> {
   await authorize({ actor, capability: 'request.create', resourceless: true });
   const definition = await one<DefinitionRow>(
-    'SELECT * FROM approval_definitions WHERE company_id = $1 AND key = $2 AND active',
+    'SELECT * FROM approval_definitions WHERE company_id = $1 AND `key` = $2 AND active',
     [actor.companyId, input.definitionKey],
   );
   if (!definition) throw notFound('That request type is not available');
@@ -127,40 +210,65 @@ export async function createRequest(
     ]);
   }
 
-  // Every step must resolve to at least one approver who is not the requester.
+  // Separation of duties is applied here as well as at decision time: a step that would
+  // resolve only to the requester is not a real approval, so it is treated as unresolved.
   const resolved: { rule: RoutingRule; approvers: string[] }[] = [];
+  const skipped: RoutingRule[] = [];
   for (const rule of rules.sort((a, b) => a.step - b.step)) {
     const approvers = (await resolveApprovers(actor.companyId, requester, rule)).filter(
       (id) => id !== actor.userId,
     );
-    if (approvers.length === 0) {
-      throw unprocessable('This request cannot be routed', [
-        {
-          field: 'definitionKey',
-          message:
-            rule.approver.type === 'manager'
-              ? 'No manager is assigned to you; ask an administrator to set one'
-              : 'No eligible approver is configured for this step',
-        },
-      ]);
+    if (approvers.length > 0) {
+      resolved.push({ rule, approvers });
+      continue;
     }
-    resolved.push({ rule, approvers });
+    if (rule.optional) {
+      skipped.push(rule);
+      continue;
+    }
+    throw unprocessable('This request cannot be routed', [
+      {
+        field: 'definitionKey',
+        message:
+          rule.approver.type === 'manager'
+            ? 'No manager is assigned to you, and this request type has no fallback approver. ' +
+              'Ask an administrator to set your manager or configure a fallback.'
+            : 'No eligible approver is configured for this step',
+      },
+    ]);
+  }
+
+  // Every step being skippable would mean nobody approves. That is never acceptable.
+  if (resolved.length === 0) {
+    throw unprocessable('This request cannot be routed', [
+      {
+        field: 'definitionKey',
+        message:
+          skipped.length > 0
+            ? 'No approver could be resolved for any step of this request type'
+            : 'This request type has no approval steps configured',
+      },
+    ]);
   }
 
   const firstRule = resolved[0]!.rule;
   const request = await transaction(async (tx) => {
+    // Lock the company row so two simultaneous requests cannot mint the same reference.
+    await tx.query('SELECT 1 FROM companies WHERE id = $1 FOR UPDATE', [actor.companyId]);
     const seqRes = await tx.query<{ next: number }>(
       `SELECT count(*) + 1 AS next FROM approval_requests WHERE company_id = $1`,
       [actor.companyId],
     );
     const reference = `${definition.key.toUpperCase()}-${String(seqRes.rows[0]?.next ?? 1).padStart(5, '0')}`;
 
-    const res = await tx.query<RequestRow>(
+    const requestId = newId();
+    await tx.query(
       `INSERT INTO approval_requests
-         (company_id, definition_id, reference, requester_id, title, amount, currency, data, current_step, due_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now() + ($10 || ' hours')::interval)
-       RETURNING *`,
+         (id, company_id, definition_id, reference, requester_id, title, amount, currency,
+          data, current_step, due_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, DATE_ADD(NOW(3), INTERVAL $11 HOUR))`,
       [
+        requestId,
         actor.companyId,
         definition.id,
         reference,
@@ -173,14 +281,16 @@ export async function createRequest(
         firstRule.dueHours ?? 72,
       ],
     );
-    const created = res.rows[0]!;
+    const created = (await reload<RequestRow>(tx, 'approval_requests', requestId))!;
 
     for (const { rule, approvers } of resolved) {
       for (const approverId of approvers) {
         await tx.query(
-          `INSERT INTO approval_steps (company_id, request_id, step_number, approver_id, mode, state)
-           VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
+          `INSERT IGNORE INTO approval_steps
+             (id, company_id, request_id, step_number, approver_id, mode, state)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
           [
+            newId(),
             actor.companyId,
             created.id,
             rule.step,
@@ -238,7 +348,7 @@ export async function listRequests(
        JOIN approval_definitions d ON d.id = r.definition_id
        JOIN users u ON u.id = r.requester_id
       WHERE r.company_id = $1
-        AND ($3::text IS NULL OR r.status = $3)
+        AND ($3 IS NULL OR r.status = $3)
         AND (
           ($4 = 'mine' AND r.requester_id = $2)
           OR ($4 = 'all')
@@ -322,9 +432,18 @@ export async function decide(
     if (!step) throw forbidden('This request is not waiting for your decision');
 
     await tx.query(
-      `INSERT INTO approval_decisions (company_id, request_id, step_number, approver_id, decision, comment)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [actor.companyId, requestId, request.current_step, actor.userId, input.decision, input.comment ?? null],
+      `INSERT INTO approval_decisions
+         (id, company_id, request_id, step_number, approver_id, decision, comment)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [
+        newId(),
+        actor.companyId,
+        requestId,
+        request.current_step,
+        actor.userId,
+        input.decision,
+        input.comment ?? null,
+      ],
     );
     await tx.query(`UPDATE approval_steps SET state = 'done' WHERE id = $1`, [step.id]);
 
@@ -341,7 +460,7 @@ export async function decide(
     } else {
       // Parallel steps need every approver on the step to have decided.
       const remaining = await tx.query<{ count: number }>(
-        `SELECT count(*)::int AS count FROM approval_steps
+        `SELECT count(*) AS count FROM approval_steps
           WHERE request_id = $1 AND step_number = $2 AND state = 'active'`,
         [requestId, request.current_step],
       );
@@ -372,9 +491,9 @@ export async function decide(
       }
     }
 
-    const updated = await tx.query<RequestRow>(
-      `UPDATE approval_requests SET status = $2, current_step = $3, version = version + 1, updated_at = now()
-        WHERE id = $1 RETURNING *`,
+    await tx.query(
+      `UPDATE approval_requests SET status = $2, current_step = $3, version = version + 1, updated_at = NOW(3)
+        WHERE id = $1`,
       [requestId, finalStatus, nextStep],
     );
 
@@ -404,7 +523,7 @@ export async function decide(
       },
       tx,
     );
-    return updated.rows[0]!;
+    return (await reload<RequestRow>(tx, 'approval_requests', requestId))!;
   });
 }
 
@@ -420,7 +539,7 @@ export async function cancelRequest(actor: Actor, requestId: string): Promise<vo
   if (request.status !== 'pending') throw conflict(`This request is already ${request.status}`);
   await transaction(async (tx) => {
     await tx.query(
-      `UPDATE approval_requests SET status = 'cancelled', version = version + 1, updated_at = now() WHERE id = $1`,
+      `UPDATE approval_requests SET status = 'cancelled', version = version + 1, updated_at = NOW(3) WHERE id = $1`,
       [requestId],
     );
     await tx.query(`UPDATE approval_steps SET state = 'skipped' WHERE request_id = $1 AND state <> 'done'`, [
@@ -434,7 +553,7 @@ export async function cancelRequest(actor: Actor, requestId: string): Promise<vo
 export async function escalateOverdue(): Promise<number> {
   const overdue = await many<{ id: string; company_id: string; reference: string; current_step: number }>(
     `SELECT id, company_id, reference, current_step FROM approval_requests
-      WHERE status = 'pending' AND due_at IS NOT NULL AND due_at < now()
+      WHERE status = 'pending' AND due_at IS NOT NULL AND due_at < NOW(3)
       LIMIT 100`,
   );
   for (const request of overdue) {
@@ -444,7 +563,9 @@ export async function escalateOverdue(): Promise<number> {
       payload: { requestId: request.id, reference: request.reference, escalated: true },
     });
     await pool.query(
-      `UPDATE approval_requests SET due_at = now() + interval '24 hours', updated_at = now() WHERE id = $1`,
+      `UPDATE approval_requests
+          SET due_at = DATE_ADD(NOW(3), INTERVAL 24 HOUR), updated_at = NOW(3)
+        WHERE id = $1`,
       [request.id],
     );
   }

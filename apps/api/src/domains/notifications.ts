@@ -2,7 +2,7 @@
  * Notifications. Created by domain workers reacting to outbox events, delivered over
  * WebSocket to connected users and persisted so they survive refresh and device change.
  */
-import { many, one, pool, type Queryable } from '../core/db.js';
+import { many, newId, one, pool, type Queryable } from '../core/db.js';
 import { publishToUser } from '../core/realtime.js';
 import { decodeCursor, encodeCursor } from '../core/validation.js';
 import { notFound } from '../core/errors.js';
@@ -21,13 +21,15 @@ export type NotificationInput = {
 };
 
 export async function create(input: NotificationInput, db: Queryable = pool): Promise<void> {
-  const res = await db.query<{ id: string; created_at: Date }>(
-    `INSERT INTO notifications
-       (company_id, user_id, type, title, body, link, resource_type, resource_id, dedupe_key)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-     ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
-     RETURNING id, created_at`,
+  // INSERT IGNORE lets the dedupe key silently drop a repeat rather than raising,
+  // which is what makes a redelivered event safe to process twice.
+  const id = newId();
+  const res = await db.query(
+    `INSERT IGNORE INTO notifications
+       (id, company_id, user_id, type, title, body, link, resource_type, resource_id, dedupe_key)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
     [
+      id,
       input.companyId,
       input.userId,
       input.type,
@@ -39,15 +41,14 @@ export async function create(input: NotificationInput, db: Queryable = pool): Pr
       input.dedupeKey ?? null,
     ],
   );
-  const row = res.rows[0];
-  if (!row) return; // deduplicated
+  if (res.rowCount === 0) return; // deduplicated
   publishToUser(input.userId, 'notification.created', {
-    id: row.id,
+    id,
     type: input.type,
     title: input.title,
     body: input.body ?? null,
     link: input.link ?? null,
-    createdAt: row.created_at,
+    createdAt: new Date().toISOString(),
   });
 }
 
@@ -79,8 +80,8 @@ export async function list(userId: string, opts: { limit: number; cursor?: strin
     `SELECT id, type, title, body, link, resource_type, resource_id, read_at, created_at
        FROM notifications
       WHERE user_id = $1
-        AND ($2::boolean IS NOT TRUE OR read_at IS NULL)
-        AND ($3::timestamptz IS NULL OR (created_at, id) < ($3, $4::uuid))
+        AND ($2 IS NOT TRUE OR read_at IS NULL)
+        AND ($3 IS NULL OR (created_at, id) < ($3, $4))
       ORDER BY created_at DESC, id DESC
       LIMIT $5`,
     [userId, opts.unreadOnly ?? false, cursor?.at ?? null, cursor?.id ?? null, opts.limit + 1],
@@ -96,7 +97,7 @@ export async function list(userId: string, opts: { limit: number; cursor?: strin
 
 export async function unreadCount(userId: string): Promise<number> {
   const row = await one<{ count: number }>(
-    'SELECT count(*)::int AS count FROM notifications WHERE user_id = $1 AND read_at IS NULL',
+    'SELECT count(*) AS count FROM notifications WHERE user_id = $1 AND read_at IS NULL',
     [userId],
   );
   return row?.count ?? 0;
@@ -104,7 +105,7 @@ export async function unreadCount(userId: string): Promise<number> {
 
 export async function markRead(userId: string, id: string): Promise<void> {
   const res = await pool.query(
-    'UPDATE notifications SET read_at = now() WHERE id = $1 AND user_id = $2 AND read_at IS NULL',
+    'UPDATE notifications SET read_at = NOW(3) WHERE id = $1 AND user_id = $2 AND read_at IS NULL',
     [id, userId],
   );
   if (res.rowCount === 0) {
@@ -115,7 +116,7 @@ export async function markRead(userId: string, id: string): Promise<void> {
 
 export async function markAllRead(userId: string): Promise<number> {
   const res = await pool.query(
-    'UPDATE notifications SET read_at = now() WHERE user_id = $1 AND read_at IS NULL',
+    'UPDATE notifications SET read_at = NOW(3) WHERE user_id = $1 AND read_at IS NULL',
     [userId],
   );
   return res.rowCount ?? 0;

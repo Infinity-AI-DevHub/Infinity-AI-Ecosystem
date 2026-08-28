@@ -1,12 +1,22 @@
 /**
  * Identity domain (blueprint 02).
  *
- * Owns users, credential references, MFA, sessions, invitations, recovery and login
- * policy. It must not own mailbox content, project permissions or business approvals -
- * those domains subscribe to identity events instead.
+ * Owns users, credential references, sessions, invitations and login policy. It must not own project permissions or business approvals - those domains
+ * subscribe to identity events instead.
  */
 import { randomUUID } from 'node:crypto';
-import { many, one, pool, transaction, isPgError, PG, type Queryable } from '../core/db.js';
+import {
+  isPgError,
+  jsonArray,
+  many,
+  newId,
+  one,
+  PG,
+  pool,
+  reload,
+  transaction,
+  type Queryable,
+} from '../core/db.js';
 import {
   badRequest,
   conflict,
@@ -16,23 +26,17 @@ import {
   unprocessable,
 } from '../core/errors.js';
 import {
-  decryptField,
-  encryptField,
-  generateRecoveryCodes,
   generateToken,
-  generateTotpSecret,
   hashPassword,
   hashToken,
   passwordNeedsRehash,
-  totpUri,
   verifyPassword,
-  verifyTotp,
 } from '../core/crypto.js';
 import { config } from '../core/config.js';
 import { recordAudit } from '../core/audit.js';
 import { emit } from '../core/outbox.js';
 import { disconnectUser } from '../core/realtime.js';
-import { invalidateCapabilityCache, loadAuthorizationContext, type AccessLevel, type Actor } from '../core/authz.js';
+import { authorize, invalidateCapabilityCache, loadAuthorizationContext, type AccessLevel, type Actor } from '../core/authz.js';
 import { logger } from '../core/logger.js';
 
 export type UserRow = {
@@ -127,10 +131,31 @@ export async function findUserById(id: string): Promise<UserRow | undefined> {
 export async function companyForEmail(email: string): Promise<{ id: string; status: string } | undefined> {
   const domain = email.split('@')[1];
   if (!domain) return undefined;
-  return one<{ id: string; status: string }>(
-    'SELECT id, status FROM companies WHERE $1 = ANY(verified_domains) LIMIT 1',
+  const byDomain = await one<{ id: string; status: string }>(
+    'SELECT id, status FROM companies WHERE JSON_CONTAINS(verified_domains, JSON_QUOTE($1)) LIMIT 1',
     [domain.toLowerCase()],
   );
+  if (byDomain) return byDomain;
+
+  /**
+   * Guests are the deliberate exception. Their address belongs to the client or vendor
+   * they work for, so it will never match a verified domain - that is the whole point of
+   * them being external. Their company is resolved through the guest account itself.
+   *
+   * Restricted to exactly one match on purpose: email is unique per company, not
+   * globally, so the same client contact could hold guest accounts at two companies in a
+   * multi-tenant deployment. Guessing which one they meant would sign them into the
+   * wrong workspace, so an ambiguous address simply fails to resolve.
+   */
+  const guestCompanies = await many<{ id: string; status: string }>(
+    `SELECT DISTINCT c.id, c.status
+       FROM users u
+       JOIN companies c ON c.id = u.company_id
+      WHERE u.email = $1 AND u.access_level = 'guest'
+      LIMIT 2`,
+    [email.toLowerCase()],
+  );
+  return guestCompanies.length === 1 ? guestCompanies[0] : undefined;
 }
 
 // ----------------------------------------------------------------- account creation
@@ -160,14 +185,15 @@ export async function createUser(
 ): Promise<CreatedUser> {
   const email = input.email.toLowerCase().trim();
   const domain = email.split('@')[1];
-  const company = await one<{ verified_domains: string[] }>(
+  const company = await one<{ verified_domains: unknown }>(
     'SELECT verified_domains FROM companies WHERE id = $1',
     [actor.companyId],
   );
   if (!company) throw notFound('Company not found');
-  if (!domain || !company.verified_domains.includes(domain)) {
+  const verifiedDomains = jsonArray(company.verified_domains);
+  if (!domain || !verifiedDomains.includes(domain)) {
     throw unprocessable('Address must use a verified company domain', [
-      { field: 'email', message: `Allowed domains: ${company.verified_domains.join(', ') || 'none configured'}` },
+      { field: 'email', message: `Allowed domains: ${verifiedDomains.join(', ') || 'none configured'}` },
     ]);
   }
   // Only a super administrator may mint another administrator-class account.
@@ -180,14 +206,15 @@ export async function createUser(
 
   return transaction(async (tx) => {
     let user: UserRow;
+    const userId = newId();
     try {
-      const res = await tx.query<UserRow>(
+      await tx.query(
         `INSERT INTO users
-           (company_id, email, email_display, display_name, legal_name, title,
+           (id, company_id, email, email_display, display_name, legal_name, title,
             department_id, manager_id, access_level, modules, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'invited')
-         RETURNING *`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'invited')`,
         [
+          userId,
           actor.companyId,
           email,
           input.email.trim(),
@@ -197,10 +224,10 @@ export async function createUser(
           input.departmentId ?? null,
           input.managerId ?? null,
           input.accessLevel,
-          input.modules ?? [],
+          JSON.stringify(input.modules ?? []),
         ],
       );
-      user = res.rows[0]!;
+      user = (await reload<UserRow>(tx, 'users', userId))!;
     } catch (err) {
       if (isPgError(err, PG.UNIQUE_VIOLATION)) {
         throw conflict('An account with this address already exists');
@@ -212,16 +239,23 @@ export async function createUser(
 
     for (const groupId of input.groupIds ?? []) {
       await tx.query(
-        'INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+        'INSERT IGNORE INTO group_members (group_id, user_id) VALUES ($1,$2)',
         [groupId, user.id],
       );
     }
 
     const token = generateToken();
     await tx.query(
-      `INSERT INTO invitations (company_id, user_id, token_hash, expires_at, created_by)
-       VALUES ($1,$2,$3, now() + ($4 || ' hours')::interval, $5)`,
-      [actor.companyId, user.id, hashToken(token), config.security.invitationTtlHours, actor.userId],
+      `INSERT INTO invitations (id, company_id, user_id, token_hash, expires_at, created_by)
+       VALUES ($1,$2,$3,$4, DATE_ADD(NOW(3), INTERVAL $5 HOUR), $6)`,
+      [
+        newId(),
+        actor.companyId,
+        user.id,
+        hashToken(token),
+        config.security.invitationTtlHours,
+        actor.userId,
+      ],
     );
 
     await recordAudit(
@@ -273,9 +307,9 @@ export async function createUser(
 
 // ----------------------------------------------------------------- activation
 
-export type ActivationResult = { user: UserRow; recoveryCodes: string[]; mfaSecret: string; mfaUri: string };
+export type ActivationResult = { user: UserRow };
 
-/** Consumes a single-use invitation, sets credentials and enrols MFA. */
+/** Consumes a single-use invitation and sets the account's password. */
 export async function activateAccount(
   token: string,
   password: string,
@@ -283,7 +317,7 @@ export async function activateAccount(
 ): Promise<ActivationResult> {
   const invitation = await one<{ id: string; user_id: string; company_id: string }>(
     `SELECT id, user_id, company_id FROM invitations
-      WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()`,
+      WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW(3)`,
     [hashToken(token)],
   );
   if (!invitation) throw badRequest('This invitation is invalid or has expired');
@@ -296,29 +330,26 @@ export async function activateAccount(
   await assertPasswordAcceptable(password, user.email);
 
   const passwordHash = await hashPassword(password);
-  const mfaSecret = generateTotpSecret();
-  const recoveryCodes = generateRecoveryCodes();
-  const hashedRecovery = recoveryCodes.map((code) => hashToken(code));
 
   const updated = await transaction(async (tx) => {
     // Single-use: the UPDATE only matches while the invitation is still unused, so two
     // concurrent activations cannot both succeed.
     const claimed = await tx.query(
-      'UPDATE invitations SET used_at = now() WHERE id = $1 AND used_at IS NULL',
+      'UPDATE invitations SET used_at = NOW(3) WHERE id = $1 AND used_at IS NULL',
       [invitation.id],
     );
     if (claimed.rowCount === 0) throw badRequest('This invitation has already been used');
 
     await tx.query(
       `UPDATE identities
-          SET password_hash = $2, password_set_at = now(), mfa_secret_enc = $3,
-              recovery_codes = $4, failed_attempts = 0, locked_until = NULL, updated_at = now()
+          SET password_hash = $2, password_set_at = NOW(3),
+              failed_attempts = 0, locked_until = NULL, updated_at = NOW(3)
         WHERE user_id = $1`,
-      [user.id, passwordHash, encryptField(mfaSecret), hashedRecovery],
+      [user.id, passwordHash],
     );
-    const res = await tx.query<UserRow>(
-      `UPDATE users SET status = 'active', activated_at = now(), updated_at = now(), version = version + 1
-        WHERE id = $1 RETURNING *`,
+    await tx.query(
+      `UPDATE users SET status = 'active', activated_at = NOW(3), updated_at = NOW(3), version = version + 1
+        WHERE id = $1`,
       [user.id],
     );
     await recordAudit(
@@ -345,39 +376,20 @@ export async function activateAccount(
       },
       tx,
     );
-    return res.rows[0]!;
+    return (await reload<UserRow>(tx, 'users', user.id))!;
   });
 
-  return {
-    user: updated,
-    recoveryCodes,
-    mfaSecret,
-    mfaUri: totpUri(mfaSecret, updated.email, 'Infinity Workspace'),
-  };
-}
-
-/** Confirms the enrolled authenticator; MFA is not considered active until this passes. */
-export async function confirmMfa(userId: string, code: string): Promise<void> {
-  const identity = await one<{ mfa_secret_enc: string | null }>(
-    'SELECT mfa_secret_enc FROM identities WHERE user_id = $1',
-    [userId],
-  );
-  if (!identity?.mfa_secret_enc) throw badRequest('No authenticator is enrolled');
-  if (!verifyTotp(decryptField(identity.mfa_secret_enc), code)) {
-    throw badRequest('That verification code is not valid');
-  }
-  await pool.query(
-    `UPDATE identities SET mfa_enabled = true, mfa_confirmed_at = now(), updated_at = now()
-      WHERE user_id = $1`,
-    [userId],
-  );
+  return { user: updated };
 }
 
 // ----------------------------------------------------------------- authentication
 
-export type LoginOutcome =
-  | { status: 'mfa_required'; challengeToken: string }
-  | { status: 'authenticated'; sessionToken: string; csrfToken: string; user: UserRow };
+export type LoginOutcome = {
+  status: 'authenticated';
+  sessionToken: string;
+  csrfToken: string;
+  user: UserRow;
+};
 
 /**
  * Password verification.
@@ -398,11 +410,10 @@ export async function authenticate(
   const identity = user
     ? await one<{
         password_hash: string | null;
-        mfa_enabled: boolean;
         failed_attempts: number;
         locked_until: Date | null;
       }>(
-        'SELECT password_hash, mfa_enabled, failed_attempts, locked_until FROM identities WHERE user_id = $1',
+        'SELECT password_hash, failed_attempts, locked_until FROM identities WHERE user_id = $1',
         [user.id],
       )
     : undefined;
@@ -434,7 +445,7 @@ export async function authenticate(
   }
 
   await pool.query(
-    `UPDATE identities SET failed_attempts = 0, locked_until = NULL, last_auth_at = now() WHERE user_id = $1`,
+    `UPDATE identities SET failed_attempts = 0, locked_until = NULL, last_auth_at = NOW(3) WHERE user_id = $1`,
     [user.id],
   );
   if (passwordNeedsRehash(identity?.password_hash ?? null)) {
@@ -445,72 +456,9 @@ export async function authenticate(
     ]);
   }
 
-  const mfaRequired =
-    identity?.mfa_enabled ||
-    (config.security.requireMfaForAdmins &&
-      (user.access_level === 'admin' || user.access_level === 'super_admin'));
-
-  if (mfaRequired) {
-    const challengeToken = generateToken();
-    await pool.query(
-      `INSERT INTO rate_counters (bucket, count, expires_at)
-       VALUES ($1, 0, now() + interval '5 minutes')
-       ON CONFLICT (bucket) DO UPDATE SET expires_at = EXCLUDED.expires_at, count = 0`,
-      [`mfa_challenge:${hashToken(challengeToken)}:${user.id}`],
-    );
-    return { status: 'mfa_required', challengeToken: `${user.id}.${challengeToken}` };
-  }
-
-  const session = await createSession(user, ctx, false);
+  const session = await createSession(user, ctx);
   await auditLogin(user, 'success', 'password', ctx);
   return { status: 'authenticated', ...session, user };
-}
-
-/** Second factor: an authenticator code or a single-use recovery code. */
-export async function verifyMfaChallenge(
-  challengeToken: string,
-  code: string,
-  ctx: RequestContext,
-): Promise<{ sessionToken: string; csrfToken: string; user: UserRow }> {
-  const [userId, secretPart] = challengeToken.split('.');
-  if (!userId || !secretPart) throw unauthenticated('Invalid verification challenge');
-
-  const bucket = `mfa_challenge:${hashToken(secretPart)}:${userId}`;
-  const challenge = await one<{ bucket: string }>(
-    'SELECT bucket FROM rate_counters WHERE bucket = $1 AND expires_at > now()',
-    [bucket],
-  );
-  if (!challenge) throw unauthenticated('This verification challenge has expired');
-
-  const user = await findUserById(userId);
-  if (!user || user.status !== 'active') throw unauthenticated('Invalid verification challenge');
-
-  const identity = await one<{ mfa_secret_enc: string | null; recovery_codes: string[] }>(
-    'SELECT mfa_secret_enc, recovery_codes FROM identities WHERE user_id = $1',
-    [userId],
-  );
-
-  let method: 'totp' | 'recovery' | null = null;
-  if (identity?.mfa_secret_enc && verifyTotp(decryptField(identity.mfa_secret_enc), code)) {
-    method = 'totp';
-  } else if (identity?.recovery_codes?.includes(hashToken(code.trim().toUpperCase()))) {
-    method = 'recovery';
-    await pool.query(
-      'UPDATE identities SET recovery_codes = array_remove(recovery_codes, $2) WHERE user_id = $1',
-      [userId, hashToken(code.trim().toUpperCase())],
-    );
-  }
-
-  if (!method) {
-    await registerFailedAttempt(userId);
-    await auditLogin(user, 'denied', 'bad_mfa_code', ctx);
-    throw unauthenticated('That verification code is not valid');
-  }
-
-  await pool.query('DELETE FROM rate_counters WHERE bucket = $1', [bucket]);
-  const session = await createSession(user, ctx, true);
-  await auditLogin(user, 'success', `mfa_${method}`, ctx);
-  return { ...session, user };
 }
 
 async function registerFailedAttempt(userId: string): Promise<void> {
@@ -518,9 +466,9 @@ async function registerFailedAttempt(userId: string): Promise<void> {
     `UPDATE identities
         SET failed_attempts = failed_attempts + 1,
             locked_until = CASE WHEN failed_attempts + 1 >= $2
-                                THEN now() + ($3 || ' minutes')::interval
+                                THEN DATE_ADD(NOW(3), INTERVAL $3 MINUTE)
                                 ELSE locked_until END,
-            updated_at = now()
+            updated_at = NOW(3)
       WHERE user_id = $1`,
     [userId, config.security.maxFailedLogins, config.security.lockoutMinutes],
   );
@@ -552,19 +500,19 @@ async function auditLogin(
 export async function createSession(
   user: UserRow,
   ctx: RequestContext,
-  mfaSatisfied: boolean,
 ): Promise<{ sessionToken: string; csrfToken: string }> {
   const sessionToken = generateToken();
   const csrfToken = generateToken(24);
   await pool.query(
-    `INSERT INTO sessions (company_id, user_id, token_hash, csrf_secret, mfa_satisfied, ip, user_agent, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7, now() + ($8 || ' minutes')::interval)`,
+    `INSERT INTO sessions
+       (id, company_id, user_id, token_hash, csrf_secret, ip, user_agent, expires_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7, DATE_ADD(NOW(3), INTERVAL $8 MINUTE))`,
     [
+      newId(),
       user.company_id,
       user.id,
       hashToken(sessionToken),
       csrfToken,
-      mfaSatisfied,
       ctx.ip,
       ctx.userAgent?.slice(0, 400) ?? null,
       config.security.sessionTtlMinutes,
@@ -578,7 +526,6 @@ export type SessionRecord = {
   user_id: string;
   company_id: string;
   csrf_secret: string;
-  mfa_satisfied: boolean;
   expires_at: Date;
   last_seen_at: Date;
 };
@@ -586,27 +533,47 @@ export type SessionRecord = {
 /** Resolves a session cookie into an actor, enforcing absolute and idle expiry. */
 export async function resolveSession(sessionToken: string): Promise<{ session: SessionRecord; user: UserRow } | null> {
   const session = await one<SessionRecord>(
-    `SELECT id, user_id, company_id, csrf_secret, mfa_satisfied, expires_at, last_seen_at
+    `SELECT id, user_id, company_id, csrf_secret, expires_at, last_seen_at
        FROM sessions
-      WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()`,
+      WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > NOW(3)`,
     [hashToken(sessionToken)],
   );
   if (!session) return null;
 
   const idleLimitMs = config.security.sessionIdleMinutes * 60_000;
   if (Date.now() - new Date(session.last_seen_at).getTime() > idleLimitMs) {
-    await pool.query('UPDATE sessions SET revoked_at = now() WHERE id = $1', [session.id]);
+    await pool.query('UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1', [session.id]);
     return null;
   }
 
   const user = await findUserById(session.user_id);
   if (!user || user.status !== 'active') {
-    await pool.query('UPDATE sessions SET revoked_at = now() WHERE id = $1', [session.id]);
+    await pool.query('UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1', [session.id]);
     return null;
   }
+
+  /**
+   * Guest access ends on a date, and that date has to be enforced on every request
+   * rather than by a nightly job. A finished engagement whose cleanup did not run is
+   * otherwise a live door into the company for however long it takes someone to notice.
+   */
+  if (user.access_level === 'guest') {
+    const membership = await one<{ expired: number }>(
+      `SELECT (access_expires_at IS NOT NULL AND access_expires_at <= NOW(3)) AS expired
+         FROM external_memberships WHERE user_id = $1`,
+      [user.id],
+    );
+    // No membership row means the guest is not attached to any organisation, which
+    // should be impossible; refuse rather than guess.
+    if (!membership || membership.expired) {
+      await pool.query('UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1', [session.id]);
+      return null;
+    }
+  }
+
   // Touch last_seen without blocking the request path.
   pool
-    .query('UPDATE sessions SET last_seen_at = now() WHERE id = $1', [session.id])
+    .query('UPDATE sessions SET last_seen_at = NOW(3) WHERE id = $1', [session.id])
     .catch((err) => logger.warn({ err }, 'failed to touch session'));
 
   return { session, user };
@@ -614,15 +581,11 @@ export async function resolveSession(sessionToken: string): Promise<{ session: S
 
 export async function buildActor(
   user: UserRow,
-  session: { id: string; mfa_satisfied: boolean } | null,
+  session: { id: string } | null,
   tokenScopes: string[] | null = null,
   tokenId: string | null = null,
 ): Promise<Actor> {
   const { capabilities, groupIds } = await loadAuthorizationContext(user.id, user.access_level);
-  const identity = await one<{ mfa_enabled: boolean }>(
-    'SELECT mfa_enabled FROM identities WHERE user_id = $1',
-    [user.id],
-  );
   return {
     userId: user.id,
     companyId: user.company_id,
@@ -634,8 +597,6 @@ export async function buildActor(
     managerId: user.manager_id,
     capabilities,
     groupIds,
-    mfaSatisfied: session?.mfa_satisfied ?? false,
-    mfaEnabled: identity?.mfa_enabled ?? false,
     sessionId: session?.id ?? null,
     tokenId,
     tokenScopes,
@@ -643,7 +604,7 @@ export async function buildActor(
 }
 
 export async function revokeSession(sessionId: string): Promise<void> {
-  await pool.query('UPDATE sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL', [
+  await pool.query('UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1 AND revoked_at IS NULL', [
     sessionId,
   ]);
   const { disconnectSession } = await import('../core/realtime.js');
@@ -652,9 +613,9 @@ export async function revokeSession(sessionId: string): Promise<void> {
 
 export async function listSessions(userId: string) {
   return many(
-    `SELECT id, device, ip, user_agent, mfa_satisfied, last_seen_at, created_at, expires_at
+    `SELECT id, device, ip, user_agent, last_seen_at, created_at, expires_at
        FROM sessions
-      WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
+      WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > NOW(3)
       ORDER BY last_seen_at DESC`,
     [userId],
   );
@@ -662,10 +623,10 @@ export async function listSessions(userId: string) {
 
 /** Revokes every session and API token for a user and closes their live sockets. */
 export async function revokeAllAccess(userId: string, reason: string, db: Queryable = pool): Promise<void> {
-  await db.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [
+  await db.query('UPDATE sessions SET revoked_at = NOW(3) WHERE user_id = $1 AND revoked_at IS NULL', [
     userId,
   ]);
-  await db.query('UPDATE api_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [
+  await db.query('UPDATE api_tokens SET revoked_at = NOW(3) WHERE user_id = $1 AND revoked_at IS NULL', [
     userId,
   ]);
   disconnectUser(userId, reason);
@@ -718,21 +679,20 @@ export async function updateUser(
   }
 
   return transaction(async (tx) => {
-    const res = await tx.query<UserRow>(
+    await tx.query(
       `UPDATE users SET
          display_name  = COALESCE($3, display_name),
-         title         = CASE WHEN $4::boolean THEN $5 ELSE title END,
-         department_id = CASE WHEN $6::boolean THEN $7 ELSE department_id END,
-         manager_id    = CASE WHEN $8::boolean THEN $9 ELSE manager_id END,
+         title         = CASE WHEN $4 THEN $5 ELSE title END,
+         department_id = CASE WHEN $6 THEN $7 ELSE department_id END,
+         manager_id    = CASE WHEN $8 THEN $9 ELSE manager_id END,
          access_level  = COALESCE($10, access_level),
          modules       = COALESCE($11, modules),
          timezone      = COALESCE($12, timezone),
          locale        = COALESCE($13, locale),
-         phone         = CASE WHEN $14::boolean THEN $15 ELSE phone END,
+         phone         = CASE WHEN $14 THEN $15 ELSE phone END,
          version       = version + 1,
-         updated_at    = now()
-       WHERE id = $1 AND company_id = $2
-       RETURNING *`,
+         updated_at    = NOW(3)
+       WHERE id = $1 AND company_id = $2`,
       [
         userId,
         actor.companyId,
@@ -751,7 +711,7 @@ export async function updateUser(
         input.phone ?? null,
       ],
     );
-    const updated = res.rows[0]!;
+    const updated = (await reload<UserRow>(tx, 'users', userId))!;
     await recordAudit(
       {
         companyId: actor.companyId,
@@ -803,7 +763,8 @@ export async function updateUser(
 
 /**
  * Suspension (blueprint 03). Sessions, tokens and live connections are revoked
- * immediately; mailbox, files and ownership are preserved under retention.
+ * immediately; files and ownership are preserved under retention. Email access is
+ * revoked separately in the email application.
  */
 export async function suspendUser(
   actor: Actor,
@@ -819,17 +780,14 @@ export async function suspendUser(
   }
 
   const updated = await transaction(async (tx) => {
-    const res = await tx.query<UserRow>(
-      `UPDATE users SET status = 'suspended', suspended_at = now(), version = version + 1, updated_at = now()
-        WHERE id = $1 AND company_id = $2 RETURNING *`,
+    await tx.query(
+      `UPDATE users SET status = 'suspended', suspended_at = NOW(3), version = version + 1, updated_at = NOW(3)
+        WHERE id = $1 AND company_id = $2`,
       [userId, actor.companyId],
     );
     await revokeAllAccess(userId, 'account_suspended', tx);
-    // Outbound mail is blocked while suspended; the mailbox itself is retained.
-    await tx.query(
-      `UPDATE mailboxes SET provision_state = 'disabled', updated_at = now() WHERE owner_id = $1`,
-      [userId],
-    );
+    // Email lives in a separate application, so revoking access there is a step the
+    // administrator performs in that system; this event is emitted for that purpose.
     await recordAudit(
       {
         companyId: actor.companyId,
@@ -857,7 +815,7 @@ export async function suspendUser(
       },
       tx,
     );
-    return res.rows[0]!;
+    return (await reload<UserRow>(tx, 'users', userId))!;
   });
 
   disconnectUser(userId, 'account_suspended');
@@ -870,14 +828,9 @@ export async function reactivateUser(actor: Actor, userId: string, ctx: RequestC
   if (existing.status !== 'suspended') throw conflict('Only a suspended account can be reactivated');
 
   return transaction(async (tx) => {
-    const res = await tx.query<UserRow>(
-      `UPDATE users SET status = 'active', suspended_at = NULL, version = version + 1, updated_at = now()
-        WHERE id = $1 RETURNING *`,
-      [userId],
-    );
     await tx.query(
-      `UPDATE mailboxes SET provision_state = 'ready', updated_at = now()
-        WHERE owner_id = $1 AND provision_state = 'disabled'`,
+      `UPDATE users SET status = 'active', suspended_at = NULL, version = version + 1, updated_at = NOW(3)
+        WHERE id = $1`,
       [userId],
     );
     await recordAudit(
@@ -903,7 +856,7 @@ export async function reactivateUser(actor: Actor, userId: string, ctx: RequestC
       },
       tx,
     );
-    return res.rows[0]!;
+    return (await reload<UserRow>(tx, 'users', userId))!;
   });
 }
 
@@ -916,16 +869,29 @@ export async function reissueInvitation(
   const user = await findUserById(userId);
   if (!user || user.company_id !== actor.companyId) throw notFound('Account not found');
   if (user.status === 'active') throw conflict('This account is already active');
+  // An offboarded account is closed for good. Activation would refuse the link anyway,
+  // but issuing one at all suggests a departed employee can be let back in by clicking
+  // it - and hands out a live-looking credential for an account that must stay shut.
+  if (user.status === 'offboarded') {
+    throw conflict('This account has been offboarded; create a new account instead');
+  }
 
   const token = generateToken();
   await transaction(async (tx) => {
-    await tx.query('UPDATE invitations SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [
+    await tx.query('UPDATE invitations SET used_at = NOW(3) WHERE user_id = $1 AND used_at IS NULL', [
       userId,
     ]);
     await tx.query(
-      `INSERT INTO invitations (company_id, user_id, token_hash, expires_at, created_by)
-       VALUES ($1,$2,$3, now() + ($4 || ' hours')::interval, $5)`,
-      [actor.companyId, userId, hashToken(token), config.security.invitationTtlHours, actor.userId],
+      `INSERT INTO invitations (id, company_id, user_id, token_hash, expires_at, created_by)
+       VALUES ($1,$2,$3,$4, DATE_ADD(NOW(3), INTERVAL $5 HOUR), $6)`,
+      [
+        newId(),
+        actor.companyId,
+        userId,
+        hashToken(token),
+        config.security.invitationTtlHours,
+        actor.userId,
+      ],
     );
     await recordAudit(
       {
@@ -966,13 +932,19 @@ export async function changeOwnPassword(
     [userId],
   );
   if (!(await verifyPassword(currentPassword, identity?.password_hash ?? null))) {
-    throw unauthenticated('Current password is not correct');
+    // Deliberately not 401. The caller's session is perfectly valid - they mistyped one
+    // field. Answering with 401 makes the client's global "session is gone" handler fire
+    // and signs the person out mid-form, with no message explaining why. This is a field
+    // validation failure and is reported as one.
+    throw unprocessable('Current password is not correct', [
+      { field: 'currentPassword', message: 'Current password is not correct' },
+    ]);
   }
   await assertPasswordAcceptable(newPassword, user.email);
   const hash = await hashPassword(newPassword);
   await transaction(async (tx) => {
     await tx.query(
-      'UPDATE identities SET password_hash = $2, password_set_at = now(), updated_at = now() WHERE user_id = $1',
+      'UPDATE identities SET password_hash = $2, password_set_at = NOW(3), updated_at = NOW(3) WHERE user_id = $1',
       [userId, hash],
     );
     await recordAudit(
@@ -1003,10 +975,17 @@ export async function listUsers(
   const rows = await many<UserRow>(
     `SELECT * FROM users
       WHERE company_id = $1
-        AND ($2::text IS NULL OR status = $2)
-        AND ($3::uuid IS NULL OR department_id = $3)
-        AND ($4::text IS NULL OR display_name ILIKE '%' || $4 || '%' OR email ILIKE '%' || $4 || '%')
-        AND ($5::timestamptz IS NULL OR (created_at, id) < ($5, $6::uuid))
+        -- Guests are external people, not colleagues. They must not surface in the
+        -- employee directory, the people pickers that feed off it, or the mention and
+        -- assignee lists built from those - a client contact appearing as a colleague is
+        -- both a leak of the relationship and an invitation to assign them work.
+        AND access_level <> 'guest'
+        AND ($2 IS NULL OR status = $2)
+        AND ($3 IS NULL OR department_id = $3)
+        -- The utf8mb4_0900_ai_ci collation is already case-insensitive, so LIKE gives
+        -- the behaviour PostgreSQL needed ILIKE for.
+        AND ($4 IS NULL OR display_name LIKE CONCAT('%', $4, '%') OR email LIKE CONCAT('%', $4, '%'))
+        AND ($5 IS NULL OR (created_at, id) < ($5, $6))
       ORDER BY created_at DESC, id DESC
       LIMIT $7`,
     [
@@ -1050,3 +1029,345 @@ export function publicUser(user: UserRow) {
 }
 
 export { randomUUID };
+
+// ---------------------------------------------------------------- password recovery
+
+/**
+ * Password recovery.
+ *
+ * This platform is the company's only system: there is no identity provider behind it
+ * and no second place to sign in from. An account that cannot authenticate therefore has
+ * no route back in except this one, which is why recovery is part of the product rather
+ * than an operational script. Re-issuing an activation invitation does not cover it -
+ * that refuses accounts which are already active, which is everyone who has ever used
+ * the product.
+ */
+const RESET_TTL_MINUTES = 60;
+
+export type ResetIssue = { token: string; url: string; userId: string };
+
+/**
+ * Starts a reset for the address, if it belongs to a live account.
+ *
+ * Returns null when it does not. Callers must answer identically either way: whether an
+ * address has an account here is exactly the fact an attacker wants, and the sign-in
+ * path already refuses to leak it.
+ */
+export async function requestPasswordReset(
+  email: string,
+  ctx: RequestContext,
+): Promise<ResetIssue | null> {
+  const normalized = email.toLowerCase().trim();
+  const company = await companyForEmail(normalized);
+  const user = company ? await findUserByEmail(company.id, normalized) : undefined;
+  // Invited accounts are deliberately excluded: they have no password to reset, and an
+  // activation invitation is the correct instrument for them.
+  if (!user || user.status !== 'active') return null;
+
+  const token = generateToken();
+  await transaction(async (tx) => {
+    // Only the newest link may work. Without this, every previously mailed link stays
+    // live for its full hour, so one intercepted message keeps its value even after the
+    // person notices and requests another.
+    await tx.query(
+      `UPDATE password_resets SET invalidated_at = NOW(3)
+        WHERE user_id = $1 AND consumed_at IS NULL AND invalidated_at IS NULL`,
+      [user.id],
+    );
+    await tx.query(
+      `INSERT INTO password_resets (id, company_id, user_id, token_hash, requested_ip, expires_at)
+       VALUES ($1,$2,$3,$4,$5, DATE_ADD(NOW(3), INTERVAL $6 MINUTE))`,
+      [newId(), user.company_id, user.id, hashToken(token), ctx.ip, RESET_TTL_MINUTES],
+    );
+    await recordAudit(
+      {
+        companyId: user.company_id,
+        actorId: user.id,
+        actorEmail: user.email,
+        action: 'auth.password_reset_requested',
+        resourceType: 'user',
+        resourceId: user.id,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        correlationId: ctx.correlationId,
+      },
+      tx,
+    );
+    await emit(
+      {
+        companyId: user.company_id,
+        type: 'user.password_reset_requested',
+        actorId: user.id,
+        correlationId: ctx.correlationId,
+        payload: {
+          userId: user.id,
+          email: user.email,
+          url: `${config.publicUrl}/reset?token=${token}`,
+          expiresInMinutes: RESET_TTL_MINUTES,
+        },
+      },
+      tx,
+    );
+  });
+
+  return { token, url: `${config.publicUrl}/reset?token=${token}`, userId: user.id };
+}
+
+/** Consumes a single-use reset token and sets a new password. */
+export async function completePasswordReset(
+  token: string,
+  newPassword: string,
+  ctx: RequestContext,
+): Promise<void> {
+  const reset = await one<{ id: string; user_id: string }>(
+    `SELECT id, user_id FROM password_resets
+      WHERE token_hash = $1 AND consumed_at IS NULL AND invalidated_at IS NULL
+        AND expires_at > NOW(3)`,
+    [hashToken(token)],
+  );
+  if (!reset) throw badRequest('This reset link is invalid or has expired');
+
+  const user = await findUserById(reset.user_id);
+  if (!user) throw notFound('Account not found');
+  if (user.status !== 'active') throw forbidden('This account is not available');
+
+  await assertPasswordAcceptable(newPassword, user.email);
+  const passwordHash = await hashPassword(newPassword);
+
+  await transaction(async (tx) => {
+    // Single-use, enforced by the UPDATE matching only while unconsumed, so two
+    // simultaneous submissions of the same link cannot both set a password.
+    const claimed = await tx.query(
+      'UPDATE password_resets SET consumed_at = NOW(3) WHERE id = $1 AND consumed_at IS NULL',
+      [reset.id],
+    );
+    if (claimed.rowCount === 0) throw badRequest('This reset link has already been used');
+
+    await tx.query(
+      `UPDATE identities
+          SET password_hash = $2, password_set_at = NOW(3),
+              failed_attempts = 0, locked_until = NULL, updated_at = NOW(3)
+        WHERE user_id = $1`,
+      [user.id, passwordHash],
+    );
+    // A reset is the remedy for a suspected compromise, so every existing session and
+    // token goes with it. The lockout from failed attempts is cleared above for the same
+    // reason: the person proved control of the mailbox, and leaving them locked out
+    // would defeat the recovery they just completed.
+    await revokeAllAccess(user.id, 'password_reset', tx);
+    await recordAudit(
+      {
+        companyId: user.company_id,
+        actorId: user.id,
+        actorEmail: user.email,
+        action: 'auth.password_reset_completed',
+        resourceType: 'user',
+        resourceId: user.id,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        correlationId: ctx.correlationId,
+      },
+      tx,
+    );
+  });
+}
+
+// ---------------------------------------------------------------- offboarding
+
+export type OffboardInput = {
+  successorId: string | null;
+  reason: string;
+  lastDay?: string | null;
+};
+
+export type OffboardResult = {
+  user: UserRow;
+  transferred: Record<string, number>;
+};
+
+/**
+ * Offboards someone and moves their work to a named successor.
+ *
+ * Suspension was the only tool here, and it says nothing about where the work went. On a
+ * platform that holds everything the company has, that is how a departure quietly turns
+ * into data loss: projects, folders and open tasks keep pointing at someone who will
+ * never log in again, their reports lose the manager that approval routing depends on,
+ * and any request waiting on their decision stalls indefinitely. Every one of those
+ * pointers is moved here, in one transaction, and the counts are recorded so the
+ * transfer can be read back long afterwards.
+ *
+ * A successor is optional but strongly preferred - without one, the work is released
+ * rather than reassigned, and the record says so.
+ */
+export async function offboardUser(
+  actor: Actor,
+  userId: string,
+  input: OffboardInput,
+  ctx: RequestContext,
+): Promise<OffboardResult> {
+  await authorize({ actor, capability: 'user.suspend', resourceless: true });
+
+  const existing = await findUserById(userId);
+  if (!existing || existing.company_id !== actor.companyId) throw notFound('Account not found');
+  if (userId === actor.userId) throw forbidden('You cannot offboard your own account');
+  if (existing.access_level === 'super_admin' && actor.accessLevel !== 'super_admin') {
+    throw forbidden('Only a super administrator can offboard a super administrator');
+  }
+  if (existing.status === 'offboarded') throw conflict('This account is already offboarded');
+  if (input.reason.trim().length < 3) {
+    throw unprocessable('Give a reason for the offboarding', [
+      { field: 'reason', message: 'A reason is required and is recorded in the audit trail' },
+    ]);
+  }
+
+  let successor: UserRow | undefined;
+  if (input.successorId) {
+    successor = await findUserById(input.successorId);
+    if (!successor || successor.company_id !== actor.companyId) {
+      throw unprocessable('The successor account was not found', [
+        { field: 'successorId', message: 'Choose someone in this company' },
+      ]);
+    }
+    if (successor.id === userId) {
+      throw unprocessable('Someone cannot succeed themselves', [
+        { field: 'successorId', message: 'Choose a different person' },
+      ]);
+    }
+    if (successor.status !== 'active') {
+      throw unprocessable('The successor must be an active account', [
+        { field: 'successorId', message: 'Choose someone who can actually pick this work up' },
+      ]);
+    }
+  }
+
+  const transferred: Record<string, number> = {};
+
+  const updated = await transaction(async (tx) => {
+    const move = async (label: string, sql: string, params: unknown[]) => {
+      const result = await tx.query(sql, params);
+      transferred[label] = result.rowCount ?? 0;
+    };
+
+    if (successor) {
+      await move(
+        'projects',
+        'UPDATE projects SET owner_id = $2 WHERE owner_id = $1 AND company_id = $3',
+        [userId, successor.id, actor.companyId],
+      );
+      // Only work still in flight moves. Reassigning a finished task would rewrite
+      // history and misattribute who actually did it.
+      await move(
+        'tasks',
+        `UPDATE tasks SET assignee_id = $2, updated_at = NOW(3)
+          WHERE assignee_id = $1 AND company_id = $3 AND status NOT IN ('done','cancelled')`,
+        [userId, successor.id, actor.companyId],
+      );
+      await move('files', 'UPDATE files SET owner_id = $2 WHERE owner_id = $1 AND company_id = $3', [
+        userId,
+        successor.id,
+        actor.companyId,
+      ]);
+      await move(
+        'folders',
+        'UPDATE folders SET owner_id = $2 WHERE owner_id = $1 AND company_id = $3',
+        [userId, successor.id, actor.companyId],
+      );
+      // Direct reports must not be left without a manager: approval routing resolves
+      // through this column, and an unresolvable route now refuses outright.
+      await move(
+        'direct_reports',
+        'UPDATE users SET manager_id = $2, updated_at = NOW(3) WHERE manager_id = $1 AND company_id = $3',
+        [userId, successor.id, actor.companyId],
+      );
+      // Any decision still waiting on them would otherwise wait forever.
+      await move(
+        'pending_approvals',
+        `UPDATE approval_steps s
+            JOIN approval_requests r ON r.id = s.request_id
+            SET s.approver_id = $2
+          WHERE s.approver_id = $1 AND s.state = 'active' AND r.company_id = $3`,
+        [userId, successor.id, actor.companyId],
+      );
+    } else {
+      transferred.projects = 0;
+      transferred.tasks = 0;
+      transferred.files = 0;
+      transferred.folders = 0;
+      transferred.direct_reports = 0;
+      transferred.pending_approvals = 0;
+    }
+
+    await tx.query(
+      `UPDATE users
+          SET status = 'offboarded', offboarded_at = NOW(3), suspended_at = NOW(3),
+              version = version + 1, updated_at = NOW(3)
+        WHERE id = $1 AND company_id = $2`,
+      [userId, actor.companyId],
+    );
+
+    await tx.query(
+      `INSERT INTO offboardings (id, company_id, user_id, successor_id, performed_by, reason, transferred, last_day)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [
+        newId(),
+        actor.companyId,
+        userId,
+        successor?.id ?? null,
+        actor.userId,
+        input.reason.trim(),
+        JSON.stringify(transferred),
+        input.lastDay ? new Date(input.lastDay) : null,
+      ],
+    );
+
+    await revokeAllAccess(userId, 'offboarded', tx);
+
+    await recordAudit(
+      {
+        companyId: actor.companyId,
+        actorId: actor.userId,
+        actorEmail: actor.email,
+        action: 'user.offboard',
+        resourceType: 'user',
+        resourceId: userId,
+        metadata: { successorId: successor?.id ?? null, reason: input.reason.trim(), transferred },
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        correlationId: ctx.correlationId,
+      },
+      tx,
+    );
+    await emit(
+      {
+        companyId: actor.companyId,
+        type: 'user.offboarded',
+        actorId: actor.userId,
+        correlationId: ctx.correlationId,
+        payload: { userId, successorId: successor?.id ?? null, transferred },
+      },
+      tx,
+    );
+
+    return (await reload<UserRow>(tx, 'users', userId))!;
+  });
+
+  return { user: updated, transferred };
+}
+
+/** The offboarding record for someone, so "who inherited this?" stays answerable. */
+export async function getOffboarding(
+  actor: Actor,
+  userId: string,
+): Promise<Record<string, unknown> | undefined> {
+  await authorize({ actor, capability: 'user.read', resourceless: true });
+  return one(
+    `SELECT o.*, s.display_name AS successor_name, p.display_name AS performed_by_name
+       FROM offboardings o
+       LEFT JOIN users s ON s.id = o.successor_id
+       LEFT JOIN users p ON p.id = o.performed_by
+      WHERE o.user_id = $1 AND o.company_id = $2
+      ORDER BY o.created_at DESC
+      LIMIT 1`,
+    [userId, actor.companyId],
+  );
+}

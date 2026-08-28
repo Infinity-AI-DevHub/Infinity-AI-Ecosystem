@@ -30,14 +30,15 @@ export async function lookup(
     response: unknown;
   }>(
     `SELECT request_fingerprint, status_code, response
-       FROM idempotency_keys WHERE key = $1 AND company_id = $2 AND endpoint = $3`,
+       FROM idempotency_keys WHERE \`key\` = $1 AND company_id = $2 AND endpoint = $3`,
     [key, companyId, endpoint],
   );
   const row = res.rows[0];
   if (!row) {
     await pool.query(
-      `INSERT INTO idempotency_keys (key, company_id, user_id, endpoint, request_fingerprint)
-       VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+      `INSERT IGNORE INTO idempotency_keys
+         (\`key\`, company_id, user_id, endpoint, request_fingerprint)
+       VALUES ($1,$2,$3,$4,$5)`,
       [key, companyId, userId, endpoint, requestFingerprint],
     );
     return null;
@@ -61,7 +62,7 @@ export async function store(
 ): Promise<void> {
   await pool.query(
     `UPDATE idempotency_keys SET status_code = $4, response = $5
-      WHERE key = $1 AND company_id = $2 AND endpoint = $3`,
+      WHERE \`key\` = $1 AND company_id = $2 AND endpoint = $3`,
     [key, companyId, endpoint, statusCode, JSON.stringify(body ?? null)],
   );
 }
@@ -70,7 +71,7 @@ export async function store(
 export async function releaseStale(key: string, companyId: string, endpoint: string): Promise<void> {
   await pool.query(
     `DELETE FROM idempotency_keys
-      WHERE key = $1 AND company_id = $2 AND endpoint = $3 AND status_code IS NULL`,
+      WHERE \`key\` = $1 AND company_id = $2 AND endpoint = $3 AND status_code IS NULL`,
     [key, companyId, endpoint],
   );
 }

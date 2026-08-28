@@ -2,7 +2,9 @@
  * Runtime configuration. Every value comes from the environment; nothing secret
  * is ever committed (blueprint 12: "no secrets in code, browser bundle, logs").
  */
+import 'dotenv/config';
 import { randomBytes } from 'node:crypto';
+import { isPrivateHost, validateOutboundUrl } from './security.js';
 
 function req(name: string, fallback?: string): string {
   const v = process.env[name] ?? fallback;
@@ -26,6 +28,27 @@ function int(name: string, fallback: number): number {
   return n;
 }
 
+function url(name: string, fallback: string, options: { required?: boolean; httpsInProd?: boolean } = {}): string {
+  const value = process.env[name] ?? fallback;
+  if (!value) {
+    if (options.required) throw new Error(`Missing required environment variable ${name}`);
+    return value;
+  }
+  try {
+    const parsed = new URL(value);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error(`${name} must use http or https`);
+    }
+    if (options.httpsInProd && isProd && parsed.protocol !== 'https:') {
+      throw new Error(`${name} must use https in production`);
+    }
+    return parsed.toString().replace(/\/$/, '');
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith(name)) throw err;
+    throw new Error(`Environment variable ${name} must be a valid URL`);
+  }
+}
+
 const nodeEnv = process.env.NODE_ENV ?? 'development';
 const isProd = nodeEnv === 'production';
 
@@ -44,20 +67,20 @@ export const config = {
   isProd,
   port: int('PORT', 4000),
   host: process.env.HOST ?? '0.0.0.0',
-  publicUrl: process.env.PUBLIC_URL ?? 'http://localhost:5173',
-  apiUrl: process.env.API_URL ?? 'http://localhost:4000',
+  publicUrl: url('PUBLIC_URL', 'http://localhost:5173', { httpsInProd: true }),
+  apiUrl: url('API_URL', 'http://localhost:4000', { httpsInProd: true }),
   logLevel: process.env.LOG_LEVEL ?? (isProd ? 'info' : 'debug'),
   trustProxy: bool('TRUST_PROXY', isProd),
 
   db: {
-    url: req('DATABASE_URL', 'postgres://postgres:postgres@localhost:5432/infinity'),
+    url: req('DATABASE_URL', 'mysql://root:root@localhost:8889/ecosystem'),
     poolMax: int('DATABASE_POOL_MAX', 10),
     ssl: bool('DATABASE_SSL', false),
     statementTimeoutMs: int('DATABASE_STATEMENT_TIMEOUT_MS', 15000),
   },
 
   security: {
-    /** Encrypts MFA secrets at rest. Rotate through KMS in production. */
+    /** Encrypts sensitive fields at rest. Rotate through KMS in production. */
     dataKey: secret('DATA_ENCRYPTION_KEY'),
     sessionCookie: process.env.SESSION_COOKIE_NAME ?? 'iw_session',
     csrfCookie: process.env.CSRF_COOKIE_NAME ?? 'iw_csrf',
@@ -69,7 +92,6 @@ export const config = {
     scryptCost: int('SCRYPT_COST', 1 << 17),
     maxFailedLogins: int('MAX_FAILED_LOGINS', 8),
     lockoutMinutes: int('LOCKOUT_MINUTES', 15),
-    requireMfaForAdmins: bool('REQUIRE_MFA_FOR_ADMINS', true),
   },
 
   limits: {
@@ -86,28 +108,40 @@ export const config = {
     localRoot: process.env.STORAGE_LOCAL_ROOT ?? './var/objects',
     bucket: process.env.S3_BUCKET ?? 'infinity-files',
     region: process.env.S3_REGION ?? 'us-east-1',
-    endpoint: process.env.S3_ENDPOINT ?? '',
+    endpoint: process.env.S3_ENDPOINT
+      ? validateOutboundUrl('S3_ENDPOINT', process.env.S3_ENDPOINT, { allowPrivateHosts: !isProd, httpsInProd: isProd })
+      : '',
     accessKeyId: process.env.S3_ACCESS_KEY_ID ?? '',
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? '',
     signedUrlTtlSeconds: int('SIGNED_URL_TTL_SECONDS', 300),
   },
 
-  mail: {
-    /** 'log' prints outbound mail (development only), 'smtp' and 'provider' are real. */
-    driver: (process.env.MAIL_DRIVER ?? 'log') as 'log' | 'smtp' | 'provider',
+  /**
+   * Outbound transactional email only - activation invitations and security notices.
+   * Employee mailboxes live in a separate email application, so nothing here reads,
+   * stores or syncs anyone's mail.
+   */
+  notifications: {
+    /** 'log' prints messages (development only); 'smtp' and 'provider' really deliver. */
+    driver: (process.env.NOTIFY_DRIVER ?? 'log') as 'log' | 'smtp' | 'provider',
     smtpHost: process.env.SMTP_HOST ?? '',
     smtpPort: int('SMTP_PORT', 587),
     smtpUser: process.env.SMTP_USER ?? '',
     smtpPassword: process.env.SMTP_PASSWORD ?? '',
-    providerApiUrl: process.env.MAIL_PROVIDER_API_URL ?? '',
-    providerApiKey: process.env.MAIL_PROVIDER_API_KEY ?? '',
-    webhookSecret: process.env.MAIL_WEBHOOK_SECRET ?? '',
-    defaultDomain: process.env.MAIL_DEFAULT_DOMAIN ?? 'infinity.test',
+    providerApiUrl: process.env.NOTIFY_PROVIDER_API_URL
+      ? validateOutboundUrl('NOTIFY_PROVIDER_API_URL', process.env.NOTIFY_PROVIDER_API_URL, { allowPrivateHosts: false, httpsInProd: isProd })
+      : '',
+    providerApiKey: process.env.NOTIFY_PROVIDER_API_KEY ?? '',
+    /** Envelope sender for system messages. Must be on a verified domain. */
+    fromAddress: process.env.NOTIFY_FROM_ADDRESS ?? '',
+    defaultDomain: process.env.NOTIFY_DEFAULT_DOMAIN ?? 'iinfinityai.com',
   },
 
   meetings: {
     provider: (process.env.MEETING_PROVIDER ?? 'none') as 'none' | 'livekit',
-    livekitUrl: process.env.LIVEKIT_URL ?? '',
+    livekitUrl: process.env.LIVEKIT_URL
+      ? validateOutboundUrl('LIVEKIT_URL', process.env.LIVEKIT_URL, { allowPrivateHosts: !isProd, httpsInProd: isProd })
+      : '',
     livekitApiKey: process.env.LIVEKIT_API_KEY ?? '',
     livekitApiSecret: process.env.LIVEKIT_API_SECRET ?? '',
     tokenTtlSeconds: int('MEETING_TOKEN_TTL_SECONDS', 900),
@@ -127,5 +161,25 @@ export const config = {
     notificationDays: int('RETENTION_NOTIFICATION_DAYS', 90),
   },
 } as const;
+
+if (config.isProd) {
+  if (isPrivateHost(config.publicUrl) || isPrivateHost(config.apiUrl)) {
+    throw new Error('PUBLIC_URL and API_URL must be public HTTPS origins in production');
+  }
+  if (
+    config.notifications.driver === 'provider' &&
+    (!config.notifications.providerApiUrl || !config.notifications.providerApiKey)
+  ) {
+    throw new Error(
+      'NOTIFY_PROVIDER_API_URL and NOTIFY_PROVIDER_API_KEY are required for the provider notifier',
+    );
+  }
+  if (config.notifications.driver === 'smtp' && !config.notifications.smtpHost) {
+    throw new Error('SMTP_HOST is required when NOTIFY_DRIVER=smtp');
+  }
+  if (config.storage.driver === 's3' && (!config.storage.accessKeyId || !config.storage.secretAccessKey)) {
+    throw new Error('S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are required for S3 storage');
+  }
+}
 
 export type Config = typeof config;

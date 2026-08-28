@@ -8,7 +8,6 @@ import { config } from '../../core/config.js';
 import { authRoutes } from './auth.js';
 import { meRoutes } from './me.js';
 import { userRoutes } from './users.js';
-import { mailRoutes } from './mail.js';
 import {
   announcementRoutes,
   approvalRoutes,
@@ -18,7 +17,13 @@ import {
   searchRoutes,
   taskRoutes,
 } from './collaboration.js';
-import { adminRoutes, objectRoutes, webhookRoutes } from './admin.js';
+import { adminRoutes, objectRoutes } from './admin.js';
+import { externalRoutes, publicShareRoutes } from './external.js';
+import { leaveRoutes } from './leave.js';
+import { documentRoutes } from './documents.js';
+import { financeRoutes } from './finance.js';
+import { hrRoutes } from './hr.js';
+import { reportRoutes } from './reports.js';
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   /** Liveness: the process is up. Never touches the database. */
@@ -42,7 +47,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       await authRoutes(api);
       await meRoutes(api);
       await userRoutes(api);
-      await mailRoutes(api);
       await calendarRoutes(api);
       await chatRoutes(api);
       await taskRoutes(api);
@@ -52,10 +56,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       await searchRoutes(api);
       await adminRoutes(api);
       await objectRoutes(api);
+      await externalRoutes(api);
+      await leaveRoutes(api);
+      await documentRoutes(api);
+      await financeRoutes(api);
+      await hrRoutes(api);
+      await reportRoutes(api);
+      // Anonymous by design: the token in the URL is the whole credential. Registered
+      // last and named separately so the authenticated surface above stays obvious.
+      await publicShareRoutes(api);
     },
     { prefix: '/api/v1' },
   );
-
-  // Webhooks are registered in their own scope so the raw-body parser stays isolated.
-  await app.register(webhookRoutes, { prefix: '/api/v1' });
 }
