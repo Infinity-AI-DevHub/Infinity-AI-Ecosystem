@@ -64,16 +64,37 @@ openssl rand -hex 32
 
 ### With Docker
 
+The whole stack, not just its dependencies:
+
 ```bash
-docker compose up -d          # mysql, minio, clamav
+docker compose up --build
+```
+
+Migrations run as their own service and must complete before the API or the workers
+start, so a bad migration fails the deploy instead of leaving instances racing to apply
+it. The web app waits for the API to report healthy. Once it settles, the workspace is
+on <http://localhost:8080> and the API on <http://localhost:4000>.
+
+To bring up only the backing services and run the apps from source, name them:
+
+```bash
+docker compose up -d mysql minio clamav
 ```
 
 ## Testing
 
 ```bash
 cd apps/api
-npm test                      # unit + end-to-end, needs TEST_DATABASE_URL
+export TEST_DATABASE_URL=mysql://root:root@localhost:3307/ecosystem_test
+npm test                      # unit + end-to-end
+npm run test:unit             # unit only, no database
+npm run test:e2e              # end-to-end only
 ```
+
+Point `TEST_DATABASE_URL` at a database you are willing to lose - the suite creates and
+removes its own company on every run. Without it the end-to-end tests warn loudly and
+skip; in CI (`CI=true`) they refuse to start at all, because a suite that quietly skips
+itself reports green while covering nothing.
 
 The end-to-end suite runs against a real database and a real HTTP server, and asserts
 the blueprint's acceptance criteria directly: invite → activate → sign in →
