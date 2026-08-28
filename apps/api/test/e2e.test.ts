@@ -875,6 +875,16 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
 
   // --------------------------------------------------------------- contract
 
+  it('rejects a page size above the configured maximum', async () => {
+    // The people pickers requested limit=200 against a cap of 100 and failed on every
+    // load. The contract is asserted here so a client cannot drift past it unnoticed.
+    const over = await admin.get('/api/v1/users?limit=200');
+    assert.equal(over.status, 422);
+
+    const atCap = await admin.get('/api/v1/users?limit=100');
+    assert.equal(atCap.status, 200);
+  });
+
   it('returns the standard error envelope with a correlation id', async () => {
     const missing = await admin.get('/api/v1/users/00000000-0000-0000-0000-000000000000');
     assert.equal(missing.status, 404);

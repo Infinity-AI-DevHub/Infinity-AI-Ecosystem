@@ -594,8 +594,8 @@ function GroupMembersDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const people = useQuery<{ items: Person[] }>('/users?limit=200', (signal) =>
-    api.get('/users?limit=200', signal),
+  const people = useQuery<{ items: Person[] }>('/users?limit=100&status=active', (signal) =>
+    api.get('/users?limit=100&status=active', signal),
   );
   const [selected, setSelected] = useState<string[] | null>(null);
 
@@ -627,6 +627,12 @@ function GroupMembersDialog({
           {(data) => (
             <fieldset className="field">
               <legend>People</legend>
+              {data.items.length >= 100 ? (
+                <p className="field-hint">
+                  Showing the first 100 active accounts. Larger directories need the
+                  people directory to assign membership.
+                </p>
+              ) : null}
               <div className="attendee-picker">
                 {data.items.map((person) => (
                   <label key={person.id} className="checkbox-row">

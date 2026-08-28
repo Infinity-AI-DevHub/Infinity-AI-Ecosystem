@@ -15,23 +15,48 @@ const cache = new Map<string, Entry>();
 const inFlight = new Map<string, Promise<unknown>>();
 const subscribers = new Map<string, Set<() => void>>();
 
+/**
+ * Counts how many times each key has been invalidated.
+ *
+ * A mounted component refetches when this number moves, never merely because a request
+ * settled. Deciding by "is the cache empty?" instead caused a self-sustaining storm: a
+ * failed request leaves the cache empty, notifying subscribers, which refetch, which
+ * fail again. One broken endpoint became thousands of requests a minute and could not
+ * recover once it tripped the rate limiter.
+ */
+const invalidations = new Map<string, number>();
+
+/**
+ * Consecutive failures per key, used as a circuit breaker.
+ *
+ * The invalidation counter already stops a failed request retriggering itself, but this
+ * bounds the damage from any future path that requests too eagerly - a chatty realtime
+ * channel invalidating on every frame, for example. After this many consecutive
+ * failures the key stops fetching automatically; an explicit reload() still works, so
+ * the reader's "Try again" is never disabled.
+ */
+const failures = new Map<string, number>();
+const MAX_CONSECUTIVE_FAILURES = 5;
+
 const DEFAULT_TTL_MS = 30_000;
 
 function notify(key: string): void {
   for (const handler of subscribers.get(key) ?? []) handler();
 }
 
+function bumpInvalidation(key: string): void {
+  invalidations.set(key, (invalidations.get(key) ?? 0) + 1);
+}
+
 /** Drops cached entries whose key starts with `prefix`, then refetches live consumers. */
 export function invalidate(prefix: string): void {
-  for (const key of [...cache.keys()]) {
-    if (key.startsWith(prefix)) {
-      cache.delete(key);
-      notify(key);
-    }
-  }
-  // Keys with no cached entry may still have mounted subscribers awaiting first load.
-  for (const key of [...subscribers.keys()]) {
-    if (key.startsWith(prefix)) notify(key);
+  const keys = new Set([...cache.keys(), ...subscribers.keys()]);
+  for (const key of keys) {
+    if (!key.startsWith(prefix)) continue;
+    cache.delete(key);
+    failures.delete(key);
+    bumpInvalidation(key);
+    notify(key);
   }
 }
 
@@ -45,7 +70,11 @@ export function setCached<T>(key: string, updater: (current: T | undefined) => T
 export function clearCache(): void {
   cache.clear();
   inFlight.clear();
-  for (const key of subscribers.keys()) notify(key);
+  failures.clear();
+  for (const key of subscribers.keys()) {
+    bumpInvalidation(key);
+    notify(key);
+  }
 }
 
 export type QueryState<T> = {
@@ -80,6 +109,8 @@ export function useQuery<T>(
       const existing = cache.get(key);
       if (!force && existing && Date.now() - existing.at < ttlMs) return;
 
+      if (!force && (failures.get(key) ?? 0) >= MAX_CONSECUTIVE_FAILURES) return;
+
       // Deduplicate: several components mounting at once share one request.
       let promise = inFlight.get(key);
       if (!promise) {
@@ -97,9 +128,11 @@ export function useQuery<T>(
       setRefreshing(true);
       try {
         await promise;
+        failures.delete(key);
         setError(null);
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
+        failures.set(key, (failures.get(key) ?? 0) + 1);
         setError(err instanceof ApiError || err instanceof NetworkError ? err : new NetworkError());
       } finally {
         setRefreshing(false);
@@ -116,10 +149,18 @@ export function useQuery<T>(
      * Invalidation drops the cached entry and notifies subscribers. A mounted component
      * must then refetch, not just re-render - otherwise it renders its loading state
      * forever and only recovers when it happens to remount.
+     *
+     * The refetch is driven by the invalidation counter rather than by an empty cache,
+     * so a request that keeps failing cannot retrigger itself. A failed query stays
+     * failed and offers the reader a retry.
      */
+    let seenInvalidation = invalidations.get(key) ?? 0;
     const handler = () => {
       forceRender((n) => n + 1);
-      if (!cache.has(key) && !inFlight.has(key)) void run(true);
+      const current = invalidations.get(key) ?? 0;
+      if (current === seenInvalidation) return;
+      seenInvalidation = current;
+      if (!inFlight.has(key)) void run(true);
     };
 
     let set = subscribers.get(key);
@@ -142,7 +183,10 @@ export function useQuery<T>(
     loading: active && data === undefined && error === null,
     refreshing: refreshing && !isFresh,
     error,
-    reload: () => void run(true),
+    reload: () => {
+      if (key !== null) failures.delete(key);
+      void run(true);
+    },
   };
 }
 

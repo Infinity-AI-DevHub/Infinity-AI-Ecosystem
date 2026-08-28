@@ -471,8 +471,8 @@ function CreateProjectDialog({
   const [memberIds, setMemberIds] = useState<string[]>([]);
 
   const people = useQuery<{ items: { id: string; displayName: string }[] }>(
-    '/users?limit=200',
-    (signal) => api.get('/users?limit=200', signal),
+    '/users?limit=100&status=active',
+    (signal) => api.get('/users?limit=100&status=active', signal),
   );
 
   const create = useMutation(
@@ -569,6 +569,9 @@ function CreateProjectDialog({
             <legend>Members</legend>
             <p className="field-hint">
               Only members can see this project's tasks. You are added automatically.
+              {(people.data?.items.length ?? 0) >= 100
+                ? ' Showing the first 100 active accounts.'
+                : ''}
             </p>
             <div className="attendee-picker">
               {(people.data?.items ?? []).map((person) => (

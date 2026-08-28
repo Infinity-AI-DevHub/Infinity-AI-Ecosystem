@@ -6,6 +6,7 @@
  * is a plain textarea with an explicit send control - fully keyboard operable.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useDebounced } from '../lib/useDebounced';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Hash, MessageSquarePlus, Plus, Send, UserPlus } from 'lucide-react';
 import { api } from '../lib/api';
@@ -398,10 +399,16 @@ function DirectMessageDialog({
 }) {
   const { session } = useSession();
   const [search, setSearch] = useState('');
+  const query = useDebounced(search, 250);
 
+  // The directory can exceed one page, so the search runs on the server rather than
+  // filtering whatever happened to be in the first page.
+  const listKey = `/users?limit=100&status=active${
+    query ? `&q=${encodeURIComponent(query)}` : ''
+  }`;
   const people = useQuery<{ items: { id: string; displayName: string; email: string }[] }>(
-    '/users?limit=200',
-    (signal) => api.get('/users?limit=200', signal),
+    listKey,
+    (signal) => api.get(listKey, signal),
   );
 
   const open = useMutation(
@@ -409,13 +416,9 @@ function DirectMessageDialog({
     { invalidates: ['/chat/rooms'], onSuccess: (room) => onOpened(room.id) },
   );
 
-  const candidates = (people.data?.items ?? [])
-    .filter((person) => person.id !== session?.user?.id)
-    .filter((person) =>
-      search.trim().length === 0
-        ? true
-        : `${person.displayName} ${person.email}`.toLowerCase().includes(search.toLowerCase()),
-    );
+  const candidates = (people.data?.items ?? []).filter(
+    (person) => person.id !== session?.user?.id,
+  );
 
   return (
     <div className="dialog-scrim" role="presentation" onClick={onClose}>
@@ -442,6 +445,11 @@ function DirectMessageDialog({
             placeholder="Name or email"
             autoFocus
           />
+          {candidates.length >= 100 ? (
+            <p className="field-hint">
+              Showing the first 100 matches. Narrow the search to find someone specific.
+            </p>
+          ) : null}
         </div>
 
         <AsyncSection query={people}>
