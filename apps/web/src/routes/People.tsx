@@ -7,11 +7,11 @@
  */
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Copy, ShieldOff, ShieldCheck, UserMinus, UserPlus } from 'lucide-react';
+import { Copy, Plus, ShieldOff, ShieldCheck, UserMinus, UserPlus } from 'lucide-react';
 import { api, idempotencyKey, type Paged, type User } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
-import { initials, relativeTime, titleCase } from '../lib/format';
+import { formatCurrency, formatDate, initials, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 
 type Department = { id: string; name: string; headcount: number };
@@ -220,6 +220,8 @@ export default function People() {
                   </dd>
                 </div>
               </dl>
+
+              <EmploymentHistory userId={selected.id} />
 
               {can('user.suspend') && selected.id !== session?.user?.id ? (
                 <div className="person-actions">
@@ -621,6 +623,158 @@ function HeldEquipment({ userId }: { userId: string }) {
             </li>
           ))}
         </ul>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Someone's employment history.
+ *
+ * Shown on their profile rather than in a separate HR module, because the question
+ * "when did they join and on what terms" arrives while you are already looking at them.
+ * Salary appears only for those entitled to it; when it is withheld the row says so
+ * rather than showing a blank, so nobody reads "not allowed" as "not recorded".
+ */
+function EmploymentHistory({ userId }: { userId: string }) {
+  const { can } = useSession();
+  const [adding, setAdding] = useState(false);
+  const key = `/hr/employment/${userId}`;
+  const history = useQuery<{ items: EmploymentEntry[] }>(key, (signal) => api.get(key, signal));
+
+  // Someone with no HR access gets a 403 here; that is expected rather than an error to
+  // display, so the whole section simply does not appear for them.
+  if (history.error) return null;
+
+  return (
+    <div className="employment-section">
+      <div className="panel-header">
+        <div><h4>Employment</h4></div>
+        {can('hr.manage') ? (
+          <button type="button" className="ghost-button" onClick={() => setAdding(true)}>
+            <Plus size={14} aria-hidden="true" /> Record change
+          </button>
+        ) : null}
+      </div>
+
+      <AsyncSection query={history}>
+        {(data) =>
+          data.items.length === 0 ? (
+            <p className="field-hint">No employment record yet.</p>
+          ) : (
+            <ul className="employment-list">
+              {data.items.map((entry) => (
+                <li key={entry.id} className={entry.effective_to ? 'employment-past' : ''}>
+                  <div>
+                    <strong>{entry.job_title}</strong>
+                    <span>
+                      {formatDate(entry.effective_from)}
+                      {entry.effective_to ? ` – ${formatDate(entry.effective_to)}` : ' – present'}
+                      {' · '}{titleCase(entry.employment_type.replace('_', ' '))}
+                      {entry.change_reason ? ` · ${entry.change_reason}` : ''}
+                    </span>
+                  </div>
+                  {entry.salaryVisible && entry.salary !== undefined ? (
+                    <span className="employment-salary">
+                      {formatCurrency(entry.salary, entry.salary_currency)}
+                      <span className="task-meta">/{entry.salary_period}</span>
+                    </span>
+                  ) : (
+                    <span className="task-meta">pay withheld</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )
+        }
+      </AsyncSection>
+
+      {adding ? (
+        <EmploymentDialog userId={userId} onClose={() => setAdding(false)} />
+      ) : null}
+    </div>
+  );
+}
+
+type EmploymentEntry = {
+  id: string;
+  job_title: string;
+  employment_type: string;
+  effective_from: string;
+  effective_to: string | null;
+  change_reason: string | null;
+  salary?: number;
+  salaryVisible: boolean;
+  salary_currency: string;
+  salary_period: string;
+};
+
+function EmploymentDialog({ userId, onClose }: { userId: string; onClose: () => void }) {
+  const { can } = useSession();
+  const [jobTitle, setJobTitle] = useState('');
+  const [employmentType, setEmploymentType] = useState('permanent');
+  const [effectiveFrom, setEffectiveFrom] = useState('');
+  const [salary, setSalary] = useState('');
+  const [changeReason, setChangeReason] = useState('');
+
+  const record = useMutation(
+    async () =>
+      api.post(`/hr/employment/${userId}`, {
+        jobTitle,
+        employmentType,
+        effectiveFrom,
+        salary: salary ? Number(salary) : null,
+        changeReason: changeReason || null,
+      }),
+    { invalidates: ['/hr/employment', '/users'], onSuccess: onClose },
+  );
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="employment-title" onClick={(e) => e.stopPropagation()}>
+        <h3 id="employment-title">Record a change of terms</h3>
+        <p className="field-hint">
+          The current record is closed the day before this one starts. Existing terms
+          cannot be back-dated over — that is a correction, and it should be visible as one.
+        </p>
+        <FormError error={record.error} />
+        <form onSubmit={(e) => { e.preventDefault(); void record.mutate(); }}>
+          <div className="field">
+            <label htmlFor="emp-title">Job title</label>
+            <input id="emp-title" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} required autoFocus />
+          </div>
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="emp-type">Type</label>
+              <select id="emp-type" value={employmentType} onChange={(e) => setEmploymentType(e.target.value)}>
+                {['permanent', 'fixed_term', 'contractor', 'intern', 'part_time'].map((t) => (
+                  <option key={t} value={t}>{titleCase(t.replace('_', ' '))}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="emp-from">Effective from</label>
+              <input id="emp-from" type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} required />
+            </div>
+          </div>
+          {can('hr.compensation') ? (
+            <div className="field">
+              <label htmlFor="emp-salary">Salary</label>
+              <input id="emp-salary" type="number" min="0" step="1" value={salary} onChange={(e) => setSalary(e.target.value)} />
+              <p className="field-hint">Encrypted at rest, and never written to the audit trail.</p>
+            </div>
+          ) : null}
+          <div className="field">
+            <label htmlFor="emp-reason">Reason</label>
+            <input id="emp-reason" value={changeReason} onChange={(e) => setChangeReason(e.target.value)} placeholder="Promotion" />
+          </div>
+          <div className="dialog-actions">
+            <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
+            <button type="submit" className="primary-button" disabled={record.pending}>
+              {record.pending ? 'Recording…' : 'Record change'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

@@ -15,6 +15,7 @@ import Clients from './routes/Clients';
 import Leave from './routes/Leave';
 import Docs from './routes/Docs';
 import Finance from './routes/Finance';
+import Growth from './routes/Growth';
 import SharedResource from './routes/SharedResource';
 import ResetPassword from './routes/ResetPassword';
 import './App.css';
@@ -75,6 +76,7 @@ function AppRoutes() {
                   <Route path="/docs" element={<Docs />} />
                   <Route path="/docs/:spaceId" element={<Docs />} />
                   <Route path="/docs/:spaceId/:pageId" element={<Docs />} />
+                  <Route path="/growth" element={<Growth />} />
                   <Route path="/finance" element={<Finance />} />
                   <Route path="/leave" element={<Leave />} />
                   <Route path="/clients" element={<Clients />} />

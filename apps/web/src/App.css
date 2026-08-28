@@ -1909,3 +1909,78 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .receipt-attached svg { flex-shrink: 0; }
+
+/* ==========================================================================
+   Growth
+   ========================================================================== */
+
+.review-list, .goal-list, .cycle-list { display: grid; gap: var(--sp-2); }
+
+.review-button {
+  display: flex; align-items: center; gap: var(--sp-3); width: 100%; min-width: 0;
+  padding: var(--sp-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.review-button:hover { background: var(--bg-hover); border-color: var(--border-default); }
+.review-button > div { flex: 1; min-width: 0; }
+.review-button strong { display: block; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.review-button span:not(.status-tag) { font-size: var(--text-xs); color: var(--fg-tertiary); }
+
+.goal-form { display: flex; gap: var(--sp-3); align-items: flex-end; margin-bottom: var(--sp-4); }
+.goal-form .field { flex: 1; margin-bottom: 0; }
+
+.goal-list > li {
+  min-width: 0;
+  padding: var(--sp-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+}
+.goal-done { opacity: 0.65; }
+.goal-head { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+.goal-head strong { flex: 1; min-width: 0; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.goal-progress { display: flex; align-items: center; gap: var(--sp-3); margin-top: var(--sp-2); }
+.goal-progress input[type='range'] { flex: 1; accent-color: var(--a-600); cursor: pointer; }
+.goal-percent {
+  min-width: 42px; text-align: right;
+  font-size: var(--text-xs); font-weight: var(--weight-semi);
+  font-variant-numeric: tabular-nums; color: var(--fg-secondary);
+}
+/* Progress and status are independent, so a goal can read as mostly done and still be
+   flagged - the percentage turns when the status says it is at risk. */
+.goal-percent-risk { color: var(--warn-700); }
+
+.cycle-list li {
+  display: flex; align-items: center; gap: var(--sp-3); min-width: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+}
+.cycle-list > li > div { flex: 1; min-width: 0; }
+.cycle-list strong { display: block; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.cycle-list span:not(.status-tag) { font-size: var(--text-xs); color: var(--fg-tertiary); }
+
+@media (max-width: 620px) {
+  .goal-form { flex-direction: column; align-items: stretch; }
+}
+
+.employment-section { margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px solid var(--border-subtle); }
+.employment-list { display: grid; gap: var(--sp-2); }
+.employment-list li {
+  display: flex; align-items: center; gap: var(--sp-3); min-width: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+}
+.employment-list > li > div { flex: 1; min-width: 0; }
+.employment-list strong { display: block; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.employment-list span:not(.employment-salary):not(.task-meta) { font-size: var(--text-xs); color: var(--fg-tertiary); }
+/* A closed record stays legible but stops competing with the current terms. */
+.employment-past { opacity: 0.65; }
+.employment-salary {
+  font-size: var(--text-sm); font-weight: var(--weight-semi);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
