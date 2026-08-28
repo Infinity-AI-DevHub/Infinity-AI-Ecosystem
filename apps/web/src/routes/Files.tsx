@@ -5,9 +5,9 @@
  * quota and scans the content before the file becomes usable. Downloads are always
  * short-lived signed URLs requested at click time - never long-lived links in markup.
  */
-import { useRef, useState } from 'react';
-import { Download, FolderPlus, History, RotateCcw, ShieldAlert, Trash2, Upload } from 'lucide-react';
-import { api, API_URL, ApiError, NetworkError } from '../lib/api';
+import { useMemo, useRef, useState } from 'react';
+import { Download, FolderPlus, History, Link2, RotateCcw, ShieldAlert, Trash2, Upload } from 'lucide-react';
+import { api, API_URL, ApiError, idempotencyKey, NetworkError } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatBytes, relativeTime, titleCase } from '../lib/format';
@@ -35,6 +35,7 @@ export default function Files() {
   const [uploading, setUploading] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [versionsFor, setVersionsFor] = useState<FileRecord | null>(null);
+  const [sharingFile, setSharingFile] = useState<FileRecord | null>(null);
   const [showRecycled, setShowRecycled] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -255,6 +256,17 @@ export default function Files() {
                             >
                               <History size={15} />
                             </button>
+                            {can('file.share_external') ? (
+                              <button
+                                type="button"
+                                className="icon-button"
+                                aria-label={`Share ${file.name} outside the company`}
+                                disabled={file.state !== 'active'}
+                                onClick={() => setSharingFile(file)}
+                              >
+                                <Link2 size={15} />
+                              </button>
+                            ) : null}
                             {file.state === 'recycled' && can('file.restore') ? (
                               <button
                                 type="button"
@@ -292,6 +304,13 @@ export default function Files() {
           ) : null}
         </section>
       </div>
+
+      {sharingFile ? (
+
+        <ShareDialog file={sharingFile} onClose={() => setSharingFile(null)} />
+
+      ) : null}
+
 
       {versionsFor ? (
         <VersionHistoryDialog file={versionsFor} onClose={() => setVersionsFor(null)} />
@@ -470,6 +489,137 @@ function NewFolderDialog({
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Creating an external share link.
+ *
+ * The defaults are the conservative ones - two weeks, download allowed, no password -
+ * because a link is a credential in a URL and whoever holds it holds the access. The
+ * copy says that plainly rather than leaving someone to infer it.
+ */
+function ShareDialog({ file, onClose }: { file: FileRecord; onClose: () => void }) {
+  const [expiresInDays, setExpiresInDays] = useState(14);
+  const [password, setPassword] = useState('');
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [maxUses, setMaxUses] = useState('');
+  const [url, setUrl] = useState<string | null>(null);
+  const key = useMemo(() => idempotencyKey(), []);
+
+  const create = useMutation(
+    async () =>
+      api.post<{ url: string }>(
+        '/share-links',
+        {
+          resourceType: 'file',
+          resourceId: file.id,
+          expiresInDays,
+          password: password || null,
+          recipientEmail: recipientEmail || null,
+          maxUses: maxUses ? Number(maxUses) : null,
+        },
+        { idempotencyKey: key },
+      ),
+    { onSuccess: (result) => setUrl(result.url) },
+  );
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <div
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="share-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 id="share-title">Share {file.name} outside the company</h3>
+
+        {url ? (
+          <>
+            <p className="field-hint">
+              Anyone with this link can open the file until it expires. Send it the way you
+              would send the file itself.
+            </p>
+            <code className="invitation-link">{url}</code>
+            <div className="dialog-actions">
+              <button type="button" className="ghost-button" onClick={() => navigator.clipboard?.writeText(url)}>
+                Copy link
+              </button>
+              <button type="button" className="primary-button" onClick={onClose}>Done</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="field-hint">
+              This creates a link that works without an account. Anyone who has it has the
+              access, so keep it short-lived and add a password for anything sensitive.
+            </p>
+            <FormError error={create.error} />
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void create.mutate();
+              }}
+            >
+              <div className="field-row">
+                <div className="field">
+                  <label htmlFor="share-days">Expires after</label>
+                  <select
+                    id="share-days"
+                    value={expiresInDays}
+                    onChange={(event) => setExpiresInDays(Number(event.target.value))}
+                  >
+                    {[1, 7, 14, 30, 90].map((days) => (
+                      <option key={days} value={days}>{days} day{days === 1 ? '' : 's'}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="share-uses">Limit opens</label>
+                  <input
+                    id="share-uses"
+                    type="number"
+                    min={1}
+                    value={maxUses}
+                    placeholder="Unlimited"
+                    onChange={(event) => setMaxUses(event.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="field">
+                <label htmlFor="share-password-set">Password (optional)</label>
+                <input
+                  id="share-password-set"
+                  type="text"
+                  value={password}
+                  minLength={6}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="At least 6 characters"
+                />
+                <p className="field-hint">Send this separately from the link, not alongside it.</p>
+              </div>
+              <div className="field">
+                <label htmlFor="share-recipient">Who is it for? (optional)</label>
+                <input
+                  id="share-recipient"
+                  type="email"
+                  value={recipientEmail}
+                  onChange={(event) => setRecipientEmail(event.target.value)}
+                />
+                <p className="field-hint">Recorded with the link so you know who it was meant for.</p>
+              </div>
+              <div className="dialog-actions">
+                <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
+                <button type="submit" className="primary-button" disabled={create.pending}>
+                  {create.pending ? 'Creating…' : 'Create link'}
+                </button>
+              </div>
+            </form>
+          </>
+        )}
       </div>
     </div>
   );

@@ -519,9 +519,17 @@ export async function consumeShareLink(
     [link.id],
   );
   if (stored?.password_hash) {
-    if (!input.password || !(await verifyPassword(input.password, stored.password_hash))) {
+    // Distinguishing "none given" from "wrong" is safe here and stops the second attempt
+    // reading as though the first was ignored. It leaks nothing: the preview already
+    // confirmed this link exists, so the only fact on offer is one the holder has.
+    if (!input.password) {
       throw unprocessable('This link needs a password', [
         { field: 'password', message: 'Enter the password you were given' },
+      ]);
+    }
+    if (!(await verifyPassword(input.password, stored.password_hash))) {
+      throw unprocessable('That password is not correct', [
+        { field: 'password', message: 'Check it with whoever sent you the link' },
       ]);
     }
   }

@@ -11,6 +11,8 @@ import { Loading } from './components/States';
 import { Shell } from './components/Shell';
 import SignIn from './routes/SignIn';
 import Activate from './routes/Activate';
+import Clients from './routes/Clients';
+import SharedResource from './routes/SharedResource';
 import ResetPassword from './routes/ResetPassword';
 import './App.css';
 
@@ -49,6 +51,8 @@ function AppRoutes() {
       <Route path="/sign-in" element={<SignIn />} />
       <Route path="/activate" element={<Activate />} />
       <Route path="/reset" element={<ResetPassword />} />
+      {/* Outside the authenticated shell: whoever opens this does not work here. */}
+      <Route path="/shared/:token" element={<SharedResource />} />
       <Route
         path="/*"
         element={
@@ -65,6 +69,8 @@ function AppRoutes() {
                   <Route path="/tasks" element={<Tasks />} />
                   <Route path="/tasks/:taskId" element={<Tasks />} />
                   <Route path="/files" element={<Files />} />
+                  <Route path="/clients" element={<Clients />} />
+                  <Route path="/clients/:organizationId" element={<Clients />} />
                   <Route path="/people" element={<People />} />
                   <Route path="/people/:userId" element={<People />} />
                   <Route path="/announcements" element={<Announcements />} />

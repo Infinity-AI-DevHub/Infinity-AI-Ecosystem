@@ -892,6 +892,10 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 .agenda-item span { font-size: var(--text-xs); color: var(--fg-tertiary); }
 
 .meeting-detail h3 { font-size: var(--text-xl); margin-bottom: var(--sp-2); }
+/* Section labels inside a panel. Scoped to three specific detail views originally,
+   which meant any new panel got an unstyled, unspaced h4 sitting flush against the
+   paragraph above it. */
+.panel h4,
 .meeting-detail h4, .request-detail h4, .announcement-detail h4 {
   margin: var(--sp-5) 0 var(--sp-2);
   font-size: var(--text-2xs);
@@ -899,6 +903,7 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   letter-spacing: var(--tracking-caps);
   color: var(--fg-tertiary);
 }
+.dialog h4 { text-transform: none; letter-spacing: 0; font-size: var(--text-sm); color: var(--fg-primary); }
 .meeting-when { font-size: var(--text-sm); color: var(--fg-secondary); margin-bottom: var(--sp-3); }
 .meeting-zone { font-size: var(--text-xs); color: var(--fg-muted); }
 .meeting-agenda { white-space: pre-wrap; font-size: var(--text-sm); color: var(--fg-secondary); }
@@ -1430,3 +1435,97 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 .inline-select:hover:not(:disabled) { background-color: var(--bg-hover); border-color: var(--border-default); }
 .inline-select:focus { outline: none; border-color: var(--border-accent); box-shadow: var(--ring-focus); }
 .inline-select:disabled { cursor: not-allowed; opacity: 0.6; }
+
+/* ==========================================================================
+   Clients and guests
+   ========================================================================== */
+
+.guest-list { display: grid; gap: var(--sp-2); }
+.guest-row {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+.guest-summary {
+  display: flex; align-items: center; gap: var(--sp-3); width: 100%;
+  padding: var(--sp-3);
+  border: none; background: transparent;
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+.guest-summary:hover { background: var(--bg-hover); }
+.guest-summary[aria-expanded='true'] { background: var(--bg-sunken); }
+
+.guest-detail {
+  padding: var(--sp-4);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-sunken);
+}
+.guest-detail h5 {
+  margin-bottom: var(--sp-2);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semi);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  color: var(--fg-tertiary);
+}
+.guest-detail .danger-button { margin-top: var(--sp-4); }
+
+.grant-list { display: grid; gap: var(--sp-2); }
+.grant-list li {
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; min-width: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  font-size: var(--text-sm);
+}
+.grant-type {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semi);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  color: var(--fg-accent);
+}
+.grant-list code {
+  padding: 1px var(--sp-2);
+  border-radius: var(--r-xs);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-subtle);
+  font-size: var(--text-2xs);
+}
+.grant-caps { flex: 1; min-width: 0; color: var(--fg-secondary); overflow-wrap: anywhere; }
+
+/* The recipient-facing share page: no navigation, no branding chrome beyond the mark,
+   because whoever opens it does not work here and has no workspace to return to. */
+.share-page {
+  min-height: 100vh;
+  display: grid; place-items: center;
+  padding: var(--sp-6);
+  background: radial-gradient(1100px 520px at 50% -12%, var(--a-50), transparent 62%), var(--bg-app);
+}
+.share-card {
+  width: min(520px, 100%);
+  padding: var(--sp-8);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+}
+.share-resource {
+  display: flex; align-items: center; gap: var(--sp-3); min-width: 0;
+  padding: var(--sp-4);
+  margin: var(--sp-5) 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+}
+.share-resource svg { flex-shrink: 0; color: var(--fg-tertiary); }
+.share-resource > div { min-width: 0; }
+.share-resource strong {
+  display: block; font-size: var(--text-md); font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+.share-resource span { font-size: var(--text-xs); color: var(--fg-tertiary); }
+.share-expiry { font-size: var(--text-xs); color: var(--fg-tertiary); margin-top: var(--sp-4); }
