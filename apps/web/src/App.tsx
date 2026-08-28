@@ -12,6 +12,7 @@ import { Shell } from './components/Shell';
 import SignIn from './routes/SignIn';
 import Activate from './routes/Activate';
 import Clients from './routes/Clients';
+import Leave from './routes/Leave';
 import SharedResource from './routes/SharedResource';
 import ResetPassword from './routes/ResetPassword';
 import './App.css';
@@ -69,6 +70,7 @@ function AppRoutes() {
                   <Route path="/tasks" element={<Tasks />} />
                   <Route path="/tasks/:taskId" element={<Tasks />} />
                   <Route path="/files" element={<Files />} />
+                  <Route path="/leave" element={<Leave />} />
                   <Route path="/clients" element={<Clients />} />
                   <Route path="/clients/:organizationId" element={<Clients />} />
                   <Route path="/people" element={<People />} />

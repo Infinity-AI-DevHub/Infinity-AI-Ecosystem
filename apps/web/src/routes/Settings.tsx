@@ -14,6 +14,18 @@ import { formatDateTime, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 import { setNotice } from '../lib/notice';
 
+type Delegation = {
+  id: string;
+  from_user_id: string;
+  to_user_id: string;
+  from_name: string;
+  to_name: string;
+  starts_at: string;
+  ends_at: string;
+  reason: string | null;
+  revoked_at: string | null;
+};
+
 type SessionRecord = {
   id: string;
   device: string | null;
@@ -40,6 +52,43 @@ export default function Settings() {
   const sessions = useQuery<{ items: SessionRecord[] }>('/auth/sessions', (signal) =>
     api.get('/auth/sessions', signal),
   );
+
+  const delegations = useQuery<{ items: Delegation[] }>('/delegations', (signal) =>
+    api.get('/delegations', signal),
+  );
+  const colleagues = useQuery<{ items: User[] }>('/users?limit=100&status=active', (signal) =>
+    api.get('/users?limit=100&status=active', signal),
+  );
+
+  const [coverTo, setCoverTo] = useState('');
+  const [coverFrom, setCoverFrom] = useState('');
+  const [coverUntil, setCoverUntil] = useState('');
+  const [coverReason, setCoverReason] = useState('');
+  const [reassign, setReassign] = useState(true);
+
+  const arrangeCover = useMutation(
+    async () =>
+      api.post('/delegations', {
+        toUserId: coverTo,
+        startsAt: new Date(`${coverFrom}T00:00:00Z`).toISOString(),
+        endsAt: new Date(`${coverUntil}T23:59:59Z`).toISOString(),
+        reason: coverReason || null,
+        reassignExisting: reassign,
+      }),
+    {
+      invalidates: ['/delegations'],
+      onSuccess: () => {
+        setCoverTo('');
+        setCoverFrom('');
+        setCoverUntil('');
+        setCoverReason('');
+      },
+    },
+  );
+
+  const withdrawCover = useMutation(async (id: string) => api.delete(`/delegations/${id}`), {
+    invalidates: ['/delegations'],
+  });
 
   const saveProfile = useMutation(
     async () => api.patch<User>('/me', { displayName, title: title || null, timezone }),
@@ -178,6 +227,112 @@ export default function Settings() {
               {changePassword.pending ? 'Updating…' : 'Change password'}
             </button>
           </form>
+        </section>
+
+        <section className="panel" aria-labelledby="cover-heading">
+          <h3 id="cover-heading">Cover while you are away</h3>
+          <p className="field-hint">
+            Approvals routed to you go to whoever is covering, for as long as the window
+            lasts. It ends on its own, so there is nothing to remember to turn off.
+          </p>
+
+          <FormError error={arrangeCover.error} />
+
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void arrangeCover.mutate();
+            }}
+          >
+            <div className="field">
+              <label htmlFor="cover-to">Who is covering</label>
+              <select id="cover-to" value={coverTo} onChange={(e) => setCoverTo(e.target.value)} required>
+                <option value="">Choose a colleague…</option>
+                {(colleagues.data?.items ?? [])
+                  .filter((person) => person.id !== user?.id)
+                  .map((person) => (
+                    <option key={person.id} value={person.id}>{person.displayName}</option>
+                  ))}
+              </select>
+            </div>
+            <div className="field-row">
+              <div className="field">
+                <label htmlFor="cover-from">From</label>
+                <input id="cover-from" type="date" value={coverFrom} onChange={(e) => setCoverFrom(e.target.value)} required />
+              </div>
+              <div className="field">
+                <label htmlFor="cover-until">Until</label>
+                <input id="cover-until" type="date" value={coverUntil} min={coverFrom || undefined} onChange={(e) => setCoverUntil(e.target.value)} required />
+              </div>
+            </div>
+            <div className="field">
+              <label htmlFor="cover-reason">Reason (optional)</label>
+              <input id="cover-reason" value={coverReason} onChange={(e) => setCoverReason(e.target.value)} placeholder="Annual leave" />
+            </div>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={reassign} onChange={(e) => setReassign(e.target.checked)} />
+              Also hand over decisions already waiting on me
+            </label>
+            <p className="field-hint">
+              Leave this on unless you intend to come back to them yourself — cover that
+              only applies to new requests is not cover.
+            </p>
+            <button
+              type="submit"
+              className="primary-button"
+              disabled={arrangeCover.pending || !coverTo || !coverFrom || !coverUntil}
+            >
+              {arrangeCover.pending ? 'Arranging…' : 'Arrange cover'}
+            </button>
+          </form>
+
+          <h4>Arranged</h4>
+          <AsyncSection query={delegations}>
+            {(data) =>
+              data.items.length === 0 ? (
+                <p className="panel-empty">No cover arranged.</p>
+              ) : (
+                <ul className="delegation-list">
+                  {data.items.map((delegation) => {
+                    const outgoing = delegation.from_user_id === user?.id;
+                    const withdrawn = Boolean(delegation.revoked_at);
+                    const ended = new Date(delegation.ends_at) < new Date();
+                    return (
+                      <li key={delegation.id} className={withdrawn || ended ? 'delegation-done' : ''}>
+                        <div>
+                          <strong>
+                            {outgoing ? `To ${delegation.to_name}` : `From ${delegation.from_name}`}
+                          </strong>
+                          <span>
+                            {formatDateTime(delegation.starts_at).split(',')[0]} –{' '}
+                            {formatDateTime(delegation.ends_at).split(',')[0]}
+                            {delegation.reason ? ` · ${delegation.reason}` : ''}
+                          </span>
+                        </div>
+                        {withdrawn ? (
+                          <span className="status-tag">Withdrawn</span>
+                        ) : ended ? (
+                          <span className="status-tag">Ended</span>
+                        ) : outgoing ? (
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            disabled={withdrawCover.pending}
+                            onClick={() => void withdrawCover.mutate(delegation.id)}
+                          >
+                            Withdraw
+                          </button>
+                        ) : (
+                          <span className="status-tag status-active">Active</span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )
+            }
+          </AsyncSection>
+          <FormError error={withdrawCover.error} />
         </section>
 
         <section className="panel" aria-labelledby="sessions-heading">

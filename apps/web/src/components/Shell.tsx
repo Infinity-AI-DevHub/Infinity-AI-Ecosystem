@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   Users,
   Handshake,
+  Palmtree,
   X,
 } from 'lucide-react';
 import { useSession } from '../lib/session';
@@ -47,6 +48,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/files', label: 'Files', icon: FilesIcon, capability: 'file.read' },
   { to: '/announcements', label: 'Announcements', icon: Megaphone },
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, capability: 'request.create' },
+  { to: '/leave', label: 'Leave', icon: Palmtree, capability: 'leave.request' },
   { to: '/people', label: 'People', icon: Users, capability: 'user.read' },
   { to: '/clients', label: 'Clients', icon: Handshake, capability: 'external_org.read' },
   { to: '/admin', label: 'Admin', icon: SettingsIcon, capability: 'settings.read' },

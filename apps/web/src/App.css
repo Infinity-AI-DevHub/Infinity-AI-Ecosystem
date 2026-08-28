@@ -1529,3 +1529,70 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 }
 .share-resource span { font-size: var(--text-xs); color: var(--fg-tertiary); }
 .share-expiry { font-size: var(--text-xs); color: var(--fg-tertiary); margin-top: var(--sp-4); }
+
+/* ==========================================================================
+   Leave
+   ========================================================================== */
+
+/* The type colour reads as a left accent on the card rather than a dot floating beside
+   the number, where it collided with the first digit. */
+.balance-card { position: relative; overflow: hidden; }
+.balance-swatch {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  border-radius: 0;
+}
+/* The breakdown is the honest part of a balance: what is spent, what is merely
+   promised, and what the number was before either. */
+.balance-breakdown {
+  margin-top: var(--sp-1);
+  font-size: var(--text-2xs);
+  color: var(--fg-tertiary);
+}
+
+.leave-list, .away-list { display: grid; gap: var(--sp-2); }
+
+.leave-row {
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; min-width: 0;
+  padding: var(--sp-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.leave-bar { width: 3px; align-self: stretch; min-height: 30px; border-radius: var(--r-full); flex-shrink: 0; }
+.leave-body { flex: 1; min-width: 0; }
+.leave-body strong { display: block; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.leave-body span { font-size: var(--text-xs); color: var(--fg-tertiary); overflow-wrap: anywhere; }
+
+.away-list li {
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; min-width: 0;
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.away-list li:last-child { border-bottom: none; }
+.away-list > li > div { flex: 1; min-width: 0; }
+.away-list strong { display: block; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.away-list span:not(.avatar):not(.leave-chip):not(.status-tag) {
+  font-size: var(--text-xs); color: var(--fg-tertiary);
+}
+.leave-chip {
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-full);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semi);
+  white-space: nowrap;
+}
+
+.delegation-list { display: grid; gap: var(--sp-2); }
+.delegation-list li {
+  display: flex; align-items: center; gap: var(--sp-3); min-width: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+}
+.delegation-list > li > div { flex: 1; min-width: 0; }
+.delegation-list strong { display: block; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.delegation-list span { font-size: var(--text-xs); color: var(--fg-tertiary); }
+/* Cover that has ended is kept visible but stops competing for attention. */
+.delegation-done { opacity: 0.6; }
