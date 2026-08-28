@@ -452,6 +452,28 @@ code, pre { font-family: var(--font-mono); font-size: 0.92em; }
   cursor: pointer;
 }
 .header-controls select { width: auto; min-width: 180px; }
+/* Controls placed directly in a header row, outside a .field wrapper, still need the
+   input styling - otherwise a search box next to a styled button renders as a bare
+   browser default. */
+.header-controls input[type='search'],
+.header-controls input[type='text'] {
+  width: auto;
+  min-width: 220px;
+  min-height: 34px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  font: inherit;
+  font-size: var(--text-md);
+  color: var(--fg-primary);
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.header-controls input:focus {
+  outline: none;
+  border-color: var(--border-accent);
+  box-shadow: var(--ring-focus);
+}
 
 .field-row { display: grid; gap: var(--sp-3); grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .filter-row {
@@ -1784,4 +1806,72 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 }
 @media (max-width: 860px) {
   .docs-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ==========================================================================
+   Finance
+   ========================================================================== */
+
+/* One line of a claim: a row of small fields rather than a stack, because entering six
+   receipts as six stacked forms is the thing people avoid doing. */
+.claim-line {
+  display: grid;
+  gap: var(--sp-2);
+  grid-template-columns: 140px 1fr 1fr 110px 100px auto;
+  align-items: end;
+  min-width: 0;
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+}
+.claim-line .field { margin-bottom: 0; min-width: 0; }
+.claim-total {
+  margin: var(--sp-4) 0 var(--sp-1);
+  font-size: var(--text-md);
+  text-align: right;
+}
+.claim-total strong {
+  font-size: var(--text-xl);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-tight);
+}
+
+/* Committed money is shown beside spent, in a lighter tone: it has not left the account
+   but it is not available either, and a bar showing only spend overstates what is left. */
+.budget-card { display: grid; gap: var(--sp-1); }
+.budget-bar {
+  display: flex;
+  height: 6px;
+  margin-top: var(--sp-2);
+  border-radius: var(--r-full);
+  background: var(--n-150);
+  overflow: hidden;
+}
+.budget-spent { background: var(--a-600); }
+.budget-committed { background: var(--a-200); }
+
+.asset-serial { font-size: var(--text-2xs); color: var(--fg-tertiary); }
+
+.assignment-list { display: grid; gap: var(--sp-2); }
+.assignment-list li {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+}
+.assignment-list strong { display: block; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.assignment-list span { font-size: var(--text-xs); color: var(--fg-tertiary); }
+
+@media (max-width: 1024px) {
+  .claim-line { grid-template-columns: 1fr 1fr; }
+}
+
+.held-list { margin-top: var(--sp-2); display: grid; gap: var(--sp-1); }
+.held-list li { font-size: var(--text-xs); }
+.held-list code {
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+  background: rgba(0, 0, 0, 0.05);
+  font-weight: var(--weight-semi);
 }

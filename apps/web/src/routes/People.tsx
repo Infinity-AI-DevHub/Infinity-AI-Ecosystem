@@ -518,6 +518,8 @@ function OffboardDialog({
           again. Use Suspend instead if they may come back.
         </p>
 
+        <HeldEquipment userId={person.id} />
+
         <FormError error={offboard.error} />
 
         <form
@@ -577,6 +579,48 @@ function OffboardDialog({
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Equipment the departing person still holds.
+ *
+ * Projects and files move with a database update; a laptop does not. Offboarding is the
+ * one moment someone is definitely thinking about this person, so the list belongs here
+ * rather than in a report nobody opens - equipment leaving with a departing employee is
+ * the commonest way a company loses track of it.
+ */
+function HeldEquipment({ userId }: { userId: string }) {
+  const { can } = useSession();
+  const key = can('asset.read') ? `/assets/held-by/${userId}` : null;
+  const assets = useQuery<{ items: { id: string; asset_tag: string; name: string; serial_number: string | null }[] }>(
+    key,
+    (signal) => api.get(key!, signal),
+  );
+
+  if (!key || !assets.data || assets.data.items.length === 0) return null;
+
+  return (
+    <div className="degraded-notice" role="status">
+      <div>
+        <strong>
+          Still holding {assets.data.items.length} item
+          {assets.data.items.length === 1 ? '' : 's'} of equipment
+        </strong>
+        <p>
+          Closing their account does not collect it. Arrange the return before their last
+          day, then mark each item back into stock in Finance.
+        </p>
+        <ul className="held-list">
+          {assets.data.items.map((asset) => (
+            <li key={asset.id}>
+              <code>{asset.asset_tag}</code> {asset.name}
+              {asset.serial_number ? <span className="task-meta"> · {asset.serial_number}</span> : null}
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );

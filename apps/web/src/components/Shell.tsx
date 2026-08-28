@@ -25,6 +25,7 @@ import {
   Handshake,
   Palmtree,
   BookText,
+  Wallet,
   X,
 } from 'lucide-react';
 import { useSession } from '../lib/session';
@@ -51,6 +52,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/announcements', label: 'Announcements', icon: Megaphone },
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, capability: 'request.create' },
   { to: '/leave', label: 'Leave', icon: Palmtree, capability: 'leave.request' },
+  { to: '/finance', label: 'Finance', icon: Wallet, capability: 'expense.submit' },
   { to: '/people', label: 'People', icon: Users, capability: 'user.read' },
   { to: '/clients', label: 'Clients', icon: Handshake, capability: 'external_org.read' },
   { to: '/admin', label: 'Admin', icon: SettingsIcon, capability: 'settings.read' },
