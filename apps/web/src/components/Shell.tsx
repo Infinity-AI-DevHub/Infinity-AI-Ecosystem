@@ -27,6 +27,7 @@ import {
   BookText,
   Wallet,
   Target,
+  BarChart3,
   X,
 } from 'lucide-react';
 import { useSession } from '../lib/session';
@@ -57,6 +58,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/growth', label: 'Growth', icon: Target, capability: 'goal.manage' },
   { to: '/people', label: 'People', icon: Users, capability: 'user.read' },
   { to: '/clients', label: 'Clients', icon: Handshake, capability: 'external_org.read' },
+  { to: '/reports', label: 'Reports', icon: BarChart3, capability: 'report.read' },
   { to: '/admin', label: 'Admin', icon: SettingsIcon, capability: 'settings.read' },
 ];
 

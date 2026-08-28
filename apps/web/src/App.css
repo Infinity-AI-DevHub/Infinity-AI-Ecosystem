@@ -1984,3 +1984,79 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   font-size: var(--text-sm); font-weight: var(--weight-semi);
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
+
+/* ==========================================================================
+   Reports
+   ========================================================================== */
+
+/* Attention comes first and looks unlike the rest of the page, because a number that
+   needs acting on should not sit in the same visual register as one that is merely true. */
+.attention-panel { border-color: var(--warn-200); background: var(--warn-50); }
+.attention-panel .panel-header svg { color: var(--warn-600); }
+.attention-grid {
+  display: grid;
+  gap: var(--sp-5);
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+.attention-item { min-width: 0; }
+.attention-item > strong {
+  display: block;
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semi);
+  letter-spacing: var(--tracking-tight);
+  line-height: 1.1;
+}
+.attention-item > span { display: block; font-size: var(--text-sm); color: var(--fg-secondary); }
+.attention-list { margin-top: var(--sp-3); display: grid; gap: var(--sp-1); }
+.attention-list li { font-size: var(--text-xs); color: var(--fg-secondary); overflow-wrap: anywhere; }
+.attention-list code {
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+  background: rgba(0, 0, 0, 0.05);
+  font-weight: var(--weight-semi);
+}
+
+.bar-list { display: grid; gap: var(--sp-2); }
+.bar-list li {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) minmax(60px, 2fr) auto;
+  gap: var(--sp-3);
+  align-items: center;
+  min-width: 0;
+}
+.bar-label {
+  font-size: var(--text-sm);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bar-track {
+  height: 8px;
+  border-radius: var(--r-full);
+  background: var(--n-150);
+  overflow: hidden;
+}
+.bar-fill { display: block; height: 100%; border-radius: var(--r-full); }
+.bar-value {
+  font-size: var(--text-xs); font-weight: var(--weight-semi);
+  font-variant-numeric: tabular-nums; color: var(--fg-secondary);
+  white-space: nowrap;
+}
+
+.budget-lines { display: grid; gap: var(--sp-2); }
+.budget-lines li {
+  display: flex; align-items: center; gap: var(--sp-3); min-width: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+}
+.budget-lines > li > div { flex: 1; min-width: 0; }
+.budget-lines strong { display: block; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.budget-lines span { font-size: var(--text-xs); color: var(--fg-tertiary); }
+
+.plain-list { display: grid; gap: var(--sp-2); }
+.plain-list li { font-size: var(--text-sm); color: var(--fg-secondary); overflow-wrap: anywhere; }
+.plain-list strong { color: var(--fg-primary); font-weight: var(--weight-medium); }
+
+@media (max-width: 520px) {
+  .bar-list li { grid-template-columns: 1fr auto; }
+  .bar-track { grid-column: 1 / -1; }
+}

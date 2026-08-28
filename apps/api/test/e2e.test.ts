@@ -991,6 +991,80 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(invalid.body.error.fields.length > 0, true);
   });
 
+  it('surfaces the money nobody paid and the equipment nobody returned', async () => {
+    // report.read was granted to roles in the first migration and checked nowhere. These
+    // two reports are why it exists: approved-but-unpaid and equipment still out with
+    // someone who has left are both invisible until something asks the question.
+    const overview = await admin.get('/api/v1/reports/overview');
+    assert.equal(overview.status, 200);
+    assert.ok(overview.body.headcount);
+    assert.ok(overview.body.spend);
+    assert.ok(overview.body.assets);
+
+    const claim = await admin.post(
+      '/api/v1/expenses/claims',
+      { title: 'Unpaid probe', items: [{ spentOn: '2026-08-10', amount: 40 }] },
+      { 'idempotency-key': `unpaid-${Date.now()}` },
+    );
+    assert.equal(claim.status, 201);
+    // Approved and left unpaid, which is precisely the state the report exists to find.
+    await db.pool.query(
+      "UPDATE expense_claims SET status = 'approved', decided_at = NOW(3) WHERE id = $1",
+      [claim.body.id],
+    );
+
+    const spend = await admin.get('/api/v1/reports/spend');
+    assert.equal(
+      (spend.body.awaitingPayment as { reference: string }[]).some(
+        (row) => row.reference === claim.body.reference,
+      ),
+      true,
+    );
+
+    // Equipment assigned while someone was active, then they left - a laptop cannot be
+    // transferred by a database update, so offboarding cannot clear this on its own.
+    const leaverEmail = `stranded.${Date.now()}@e2e.test`;
+    const leaver = await admin.post(
+      '/api/v1/users',
+      { email: leaverEmail, displayName: 'Departing Holder', accessLevel: 'staff' },
+      { 'idempotency-key': `stranded-${Date.now()}` },
+    );
+    await new Client(app).post('/api/v1/auth/activate', {
+      token: new URL(leaver.body.invitation.url).searchParams.get('token')!,
+      password: 'Departing-Holder-2026!',
+    });
+
+    const asset = await admin.post('/api/v1/assets', {
+      assetTag: `PROBE-${Date.now().toString().slice(-6)}`,
+      name: 'Probe laptop',
+      purchaseCost: 1200,
+    });
+    assert.equal(asset.status, 201);
+    assert.equal(
+      (await admin.post(`/api/v1/assets/${asset.body.id}/assign`, {
+        userId: leaver.body.user.id,
+      })).status,
+      200,
+    );
+    assert.equal(
+      (await admin.post(
+        `/api/v1/users/${leaver.body.user.id}/offboard`,
+        { successorId: adminId, reason: 'Left' },
+        { 'idempotency-key': `stranded-off-${Date.now()}` },
+      )).status,
+      200,
+    );
+
+    const assets = await admin.get('/api/v1/reports/assets');
+    assert.equal(
+      (assets.body.withDepartedStaff as { asset_tag: string }[]).some(
+        (row) => row.asset_tag === asset.body.asset_tag,
+      ),
+      true,
+      'equipment left with a departed employee must appear in the report',
+    );
+  });
+
   it('shows an employment history without showing what people earn', async () => {
     // Compensation is the one thing here sensitive between colleagues rather than only to
     // outsiders, so it is gated separately from the record it sits in - plenty of people
