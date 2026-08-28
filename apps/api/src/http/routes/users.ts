@@ -113,6 +113,40 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     return identity.publicUser(updated);
   });
 
+  /**
+   * Offboarding is not suspension: it is terminal, and it always names where the work
+   * went. It is idempotency-keyed because a retried click must not offboard twice and
+   * transfer a second time against a successor who has already inherited everything.
+   */
+  app.post('/users/:id/offboard', async (request, reply) => {
+    const actor = requireActor(request);
+    await authorize({ actor, capability: 'user.suspend', resourceless: true });
+    const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
+    const input = parse(
+      z.object({
+        successorId: z.string().uuid().nullable().default(null),
+        reason: z.string().min(3).max(500),
+        lastDay: z.string().date().nullable().optional(),
+      }),
+      request.body,
+    );
+    return withIdempotency(request, reply, 'POST /users/:id/offboard', async () => {
+      const result = await identity.offboardUser(actor, id, input, request.requestContext);
+      return {
+        statusCode: 200,
+        body: { user: identity.publicUser(result.user), transferred: result.transferred },
+      };
+    });
+  });
+
+  app.get('/users/:id/offboarding', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
+    const record = await identity.getOffboarding(actor, id);
+    if (!record) throw notFound('No offboarding record for this account');
+    return record;
+  });
+
   app.post('/users/:id/reactivate', async (request) => {
     const actor = requireActor(request);
     await authorize({ actor, capability: 'user.reactivate', resourceless: true });

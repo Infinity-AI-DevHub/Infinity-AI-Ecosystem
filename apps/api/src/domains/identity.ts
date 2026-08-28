@@ -36,7 +36,7 @@ import { config } from '../core/config.js';
 import { recordAudit } from '../core/audit.js';
 import { emit } from '../core/outbox.js';
 import { disconnectUser } from '../core/realtime.js';
-import { invalidateCapabilityCache, loadAuthorizationContext, type AccessLevel, type Actor } from '../core/authz.js';
+import { authorize, invalidateCapabilityCache, loadAuthorizationContext, type AccessLevel, type Actor } from '../core/authz.js';
 import { logger } from '../core/logger.js';
 
 export type UserRow = {
@@ -828,6 +828,12 @@ export async function reissueInvitation(
   const user = await findUserById(userId);
   if (!user || user.company_id !== actor.companyId) throw notFound('Account not found');
   if (user.status === 'active') throw conflict('This account is already active');
+  // An offboarded account is closed for good. Activation would refuse the link anyway,
+  // but issuing one at all suggests a departed employee can be let back in by clicking
+  // it - and hands out a live-looking credential for an account that must stay shut.
+  if (user.status === 'offboarded') {
+    throw conflict('This account has been offboarded; create a new account instead');
+  }
 
   const token = generateToken();
   await transaction(async (tx) => {
@@ -1118,4 +1124,204 @@ export async function completePasswordReset(
       tx,
     );
   });
+}
+
+// ---------------------------------------------------------------- offboarding
+
+export type OffboardInput = {
+  successorId: string | null;
+  reason: string;
+  lastDay?: string | null;
+};
+
+export type OffboardResult = {
+  user: UserRow;
+  transferred: Record<string, number>;
+};
+
+/**
+ * Offboards someone and moves their work to a named successor.
+ *
+ * Suspension was the only tool here, and it says nothing about where the work went. On a
+ * platform that holds everything the company has, that is how a departure quietly turns
+ * into data loss: projects, folders and open tasks keep pointing at someone who will
+ * never log in again, their reports lose the manager that approval routing depends on,
+ * and any request waiting on their decision stalls indefinitely. Every one of those
+ * pointers is moved here, in one transaction, and the counts are recorded so the
+ * transfer can be read back long afterwards.
+ *
+ * A successor is optional but strongly preferred - without one, the work is released
+ * rather than reassigned, and the record says so.
+ */
+export async function offboardUser(
+  actor: Actor,
+  userId: string,
+  input: OffboardInput,
+  ctx: RequestContext,
+): Promise<OffboardResult> {
+  await authorize({ actor, capability: 'user.suspend', resourceless: true });
+
+  const existing = await findUserById(userId);
+  if (!existing || existing.company_id !== actor.companyId) throw notFound('Account not found');
+  if (userId === actor.userId) throw forbidden('You cannot offboard your own account');
+  if (existing.access_level === 'super_admin' && actor.accessLevel !== 'super_admin') {
+    throw forbidden('Only a super administrator can offboard a super administrator');
+  }
+  if (existing.status === 'offboarded') throw conflict('This account is already offboarded');
+  if (input.reason.trim().length < 3) {
+    throw unprocessable('Give a reason for the offboarding', [
+      { field: 'reason', message: 'A reason is required and is recorded in the audit trail' },
+    ]);
+  }
+
+  let successor: UserRow | undefined;
+  if (input.successorId) {
+    successor = await findUserById(input.successorId);
+    if (!successor || successor.company_id !== actor.companyId) {
+      throw unprocessable('The successor account was not found', [
+        { field: 'successorId', message: 'Choose someone in this company' },
+      ]);
+    }
+    if (successor.id === userId) {
+      throw unprocessable('Someone cannot succeed themselves', [
+        { field: 'successorId', message: 'Choose a different person' },
+      ]);
+    }
+    if (successor.status !== 'active') {
+      throw unprocessable('The successor must be an active account', [
+        { field: 'successorId', message: 'Choose someone who can actually pick this work up' },
+      ]);
+    }
+  }
+
+  const transferred: Record<string, number> = {};
+
+  const updated = await transaction(async (tx) => {
+    const move = async (label: string, sql: string, params: unknown[]) => {
+      const result = await tx.query(sql, params);
+      transferred[label] = result.rowCount ?? 0;
+    };
+
+    if (successor) {
+      await move(
+        'projects',
+        'UPDATE projects SET owner_id = $2 WHERE owner_id = $1 AND company_id = $3',
+        [userId, successor.id, actor.companyId],
+      );
+      // Only work still in flight moves. Reassigning a finished task would rewrite
+      // history and misattribute who actually did it.
+      await move(
+        'tasks',
+        `UPDATE tasks SET assignee_id = $2, updated_at = NOW(3)
+          WHERE assignee_id = $1 AND company_id = $3 AND status NOT IN ('done','cancelled')`,
+        [userId, successor.id, actor.companyId],
+      );
+      await move('files', 'UPDATE files SET owner_id = $2 WHERE owner_id = $1 AND company_id = $3', [
+        userId,
+        successor.id,
+        actor.companyId,
+      ]);
+      await move(
+        'folders',
+        'UPDATE folders SET owner_id = $2 WHERE owner_id = $1 AND company_id = $3',
+        [userId, successor.id, actor.companyId],
+      );
+      // Direct reports must not be left without a manager: approval routing resolves
+      // through this column, and an unresolvable route now refuses outright.
+      await move(
+        'direct_reports',
+        'UPDATE users SET manager_id = $2, updated_at = NOW(3) WHERE manager_id = $1 AND company_id = $3',
+        [userId, successor.id, actor.companyId],
+      );
+      // Any decision still waiting on them would otherwise wait forever.
+      await move(
+        'pending_approvals',
+        `UPDATE approval_steps s
+            JOIN approval_requests r ON r.id = s.request_id
+            SET s.approver_id = $2
+          WHERE s.approver_id = $1 AND s.state = 'active' AND r.company_id = $3`,
+        [userId, successor.id, actor.companyId],
+      );
+    } else {
+      transferred.projects = 0;
+      transferred.tasks = 0;
+      transferred.files = 0;
+      transferred.folders = 0;
+      transferred.direct_reports = 0;
+      transferred.pending_approvals = 0;
+    }
+
+    await tx.query(
+      `UPDATE users
+          SET status = 'offboarded', offboarded_at = NOW(3), suspended_at = NOW(3),
+              version = version + 1, updated_at = NOW(3)
+        WHERE id = $1 AND company_id = $2`,
+      [userId, actor.companyId],
+    );
+
+    await tx.query(
+      `INSERT INTO offboardings (id, company_id, user_id, successor_id, performed_by, reason, transferred, last_day)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [
+        newId(),
+        actor.companyId,
+        userId,
+        successor?.id ?? null,
+        actor.userId,
+        input.reason.trim(),
+        JSON.stringify(transferred),
+        input.lastDay ? new Date(input.lastDay) : null,
+      ],
+    );
+
+    await revokeAllAccess(userId, 'offboarded', tx);
+
+    await recordAudit(
+      {
+        companyId: actor.companyId,
+        actorId: actor.userId,
+        actorEmail: actor.email,
+        action: 'user.offboard',
+        resourceType: 'user',
+        resourceId: userId,
+        metadata: { successorId: successor?.id ?? null, reason: input.reason.trim(), transferred },
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        correlationId: ctx.correlationId,
+      },
+      tx,
+    );
+    await emit(
+      {
+        companyId: actor.companyId,
+        type: 'user.offboarded',
+        actorId: actor.userId,
+        correlationId: ctx.correlationId,
+        payload: { userId, successorId: successor?.id ?? null, transferred },
+      },
+      tx,
+    );
+
+    return (await reload<UserRow>(tx, 'users', userId))!;
+  });
+
+  return { user: updated, transferred };
+}
+
+/** The offboarding record for someone, so "who inherited this?" stays answerable. */
+export async function getOffboarding(
+  actor: Actor,
+  userId: string,
+): Promise<Record<string, unknown> | undefined> {
+  await authorize({ actor, capability: 'user.read', resourceless: true });
+  return one(
+    `SELECT o.*, s.display_name AS successor_name, p.display_name AS performed_by_name
+       FROM offboardings o
+       LEFT JOIN users s ON s.id = o.successor_id
+       LEFT JOIN users p ON p.id = o.performed_by
+      WHERE o.user_id = $1 AND o.company_id = $2
+      ORDER BY o.created_at DESC
+      LIMIT 1`,
+    [userId, actor.companyId],
+  );
 }

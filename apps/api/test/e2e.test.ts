@@ -991,6 +991,88 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(invalid.body.error.fields.length > 0, true);
   });
 
+  it('moves a departing person\'s work to a successor instead of orphaning it', async () => {
+    // Suspension left projects, open tasks and direct reports pointing at someone who
+    // would never sign in again, and any approval waiting on them stalled forever. On a
+    // platform that holds everything the company has, that is quiet data loss.
+    // A dedicated account: offboarding is terminal, so borrowing the shared staff fixture
+    // would leave every later test working against a closed account.
+    const leaverEmail = `leaver.${Date.now()}@e2e.test`;
+    const leaver = await admin.post(
+      '/api/v1/users',
+      { email: leaverEmail, displayName: 'Departing Colleague', accessLevel: 'staff' },
+      { 'idempotency-key': `create-${leaverEmail}` },
+    );
+    assert.equal(leaver.status, 201);
+    const leaverId = leaver.body.user.id as string;
+
+    // Activate them: work is only ever assigned to a live account, and offboarding
+    // someone who never signed in would not exercise the transfer at all.
+    const leaverToken = new URL(leaver.body.invitation.url).searchParams.get('token')!;
+    const activated = await new Client(app).post('/api/v1/auth/activate', {
+      token: leaverToken,
+      password: 'Departing-Colleague-2026!',
+    });
+    assert.equal(activated.status, 201);
+
+    const project = await admin.post('/api/v1/projects', {
+      name: 'Offboarding probe',
+      key: `O${Date.now().toString().slice(-6)}`,
+    });
+    assert.equal(project.status, 201);
+
+    const task = await admin.post(`/api/v1/projects/${project.body.id}/tasks`, {
+      title: 'Work in flight',
+      assigneeId: leaverId,
+    });
+    assert.equal(task.status, 201);
+
+    // The project owner is its creator, so hand it to the departing person directly -
+    // the point of the test is the transfer, not how ownership was acquired.
+    await db.pool.query('UPDATE projects SET owner_id = $1 WHERE id = $2', [
+      leaverId,
+      project.body.id,
+    ]);
+
+    const result = await admin.post(
+      `/api/v1/users/${leaverId}/offboard`,
+      { successorId: adminId, reason: 'Left the company' },
+      { 'idempotency-key': `offb-${Date.now()}` },
+    );
+    assert.equal(result.status, 200);
+    assert.equal(result.body.user.status, 'offboarded');
+    assert.ok(result.body.transferred.tasks >= 1);
+    assert.ok(result.body.transferred.projects >= 1);
+
+    // Nothing may still point at the departed account.
+    const orphanedProjects = await db.one<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM projects WHERE owner_id = $1',
+      [leaverId],
+    );
+    assert.equal(Number(orphanedProjects!.c), 0);
+    const orphanedTasks = await db.one<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM tasks WHERE assignee_id = $1 AND status NOT IN ('done','cancelled')",
+      [leaverId],
+    );
+    assert.equal(Number(orphanedTasks!.c), 0);
+
+    // And the account is closed for good, not merely paused.
+    // The account is closed for good: even a fresh activation link cannot revive it.
+    const revive = await admin.post(
+      `/api/v1/users/${leaverId}/invitation`,
+      {},
+      { 'idempotency-key': `revive-${Date.now()}` },
+    );
+    assert.equal(revive.status >= 400, true);
+
+    const repeat = await admin.post(
+      `/api/v1/users/${leaverId}/offboard`,
+      { successorId: adminId, reason: 'Left the company' },
+      { 'idempotency-key': `offb-again-${Date.now()}` },
+    );
+    assert.equal(repeat.status, 409);
+  });
+
   it('recovers a forgotten password without revealing who has an account', async () => {
     // This is the company's only system: there is no identity provider to fall back on,
     // so recovery has to work. It also must not become an employee directory for anyone

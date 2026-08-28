@@ -7,7 +7,7 @@
  */
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Copy, ShieldOff, ShieldCheck, UserPlus } from 'lucide-react';
+import { Copy, ShieldOff, ShieldCheck, UserMinus, UserPlus } from 'lucide-react';
 import { api, idempotencyKey, type Paged, type User } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
@@ -24,6 +24,7 @@ export default function People() {
   const [statusFilter, setStatusFilter] = useState('');
   const [inviting, setInviting] = useState(false);
   const [invitationUrl, setInvitationUrl] = useState<string | null>(null);
+  const [offboarding, setOffboarding] = useState<User | null>(null);
 
   const listKey = `/users?limit=100${search ? `&q=${encodeURIComponent(search)}` : ''}${
     statusFilter ? `&status=${statusFilter}` : ''
@@ -45,6 +46,12 @@ export default function People() {
   const reactivate = useMutation(async (id: string) => api.post(`/users/${id}/reactivate`, {}), {
     invalidates: ['/users'],
   });
+
+  const changeLevel = useMutation(
+    async ({ id, accessLevel, version }: { id: string; accessLevel: string; version: number }) =>
+      api.patch(`/users/${id}`, { accessLevel }, { ifMatch: version }),
+    { invalidates: ['/users'] },
+  );
 
   return (
     <div className="module-page">
@@ -169,7 +176,34 @@ export default function People() {
                 </div>
                 <div>
                   <dt>Access level</dt>
-                  <dd>{titleCase(selected.accessLevel)}</dd>
+                  <dd>
+                    {can('user.update') && selected.id !== session?.user?.id ? (
+                      <>
+                        <label className="visually-hidden" htmlFor="person-access-level">
+                          Access level for {selected.displayName}
+                        </label>
+                        <select
+                          id="person-access-level"
+                          className="inline-select"
+                          value={selected.accessLevel}
+                          disabled={changeLevel.pending || selected.status === 'offboarded'}
+                          onChange={(event) =>
+                            void changeLevel.mutate({
+                              id: selected.id,
+                              accessLevel: event.target.value,
+                              version: selected.version,
+                            })
+                          }
+                        >
+                          {['staff', 'manager', 'auditor', 'admin', 'super_admin'].map((level) => (
+                            <option key={level} value={level}>{titleCase(level)}</option>
+                          ))}
+                        </select>
+                      </>
+                    ) : (
+                      titleCase(selected.accessLevel)
+                    )}
+                  </dd>
                 </div>
                 <div>
                   <dt>Status</dt>
@@ -216,22 +250,50 @@ export default function People() {
                     </button>
                   )}
                   <p className="field-hint">
-                    Suspending closes every session and live connection immediately. Mail and
-                    files are retained.
+                    Suspending closes every session and live connection immediately, and is
+                    reversible. Files and history are retained.
                   </p>
+
+                  {selected.status !== 'offboarded' ? (
+                    <>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        style={{ marginTop: 'var(--sp-3)' }}
+                        onClick={() => setOffboarding(selected)}
+                      >
+                        <UserMinus size={15} aria-hidden="true" /> Offboard
+                      </button>
+                      <p className="field-hint">
+                        For someone leaving for good. Names who inherits their projects,
+                        open tasks, files and direct reports.
+                      </p>
+                    </>
+                  ) : null}
                 </div>
               ) : null}
 
-              {suspend.error ? (
-                <p className="field-error" role="alert">{suspend.error.message}</p>
-              ) : null}
-              {reactivate.error ? (
-                <p className="field-error" role="alert">{reactivate.error.message}</p>
-              ) : null}
+              <FormError error={suspend.error} />
+              <FormError error={reactivate.error} />
+              <FormError error={changeLevel.error} />
             </article>
           )}
         </section>
       </div>
+
+      {offboarding ? (
+        <OffboardDialog
+          person={offboarding}
+          colleagues={(people.data?.items ?? []).filter(
+            (p) => p.id !== offboarding.id && p.status === 'active',
+          )}
+          onClose={() => setOffboarding(null)}
+          onDone={() => {
+            setOffboarding(null);
+            invalidate('/users');
+          }}
+        />
+      ) : null}
 
       {inviting ? (
         <InviteDialog
@@ -362,6 +424,156 @@ function InviteDialog({
             <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
             <button type="submit" className="primary-button" disabled={create.pending}>
               {create.pending ? 'Creating…' : 'Create account'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Offboarding asks one question that suspension never did: who picks this up?
+ *
+ * The successor is optional but the dialog pushes hard toward naming one, because the
+ * alternative is work that belongs to nobody. What actually moved is reported back
+ * afterwards rather than assumed - the counts come from the transaction that did it.
+ */
+function OffboardDialog({
+  person,
+  colleagues,
+  onClose,
+  onDone,
+}: {
+  person: User;
+  colleagues: User[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [successorId, setSuccessorId] = useState('');
+  const [reason, setReason] = useState('');
+  const [lastDay, setLastDay] = useState('');
+  const [transferred, setTransferred] = useState<Record<string, number> | null>(null);
+  const key = useMemo(() => idempotencyKey(), []);
+
+  const offboard = useMutation(
+    async () =>
+      api.post<{ transferred: Record<string, number> }>(
+        `/users/${person.id}/offboard`,
+        { successorId: successorId || null, reason, lastDay: lastDay || null },
+        { idempotencyKey: key },
+      ),
+    { invalidates: ['/users'], onSuccess: (result) => setTransferred(result.transferred) },
+  );
+
+  if (transferred) {
+    const moved = Object.entries(transferred).filter(([, count]) => count > 0);
+    return (
+      <div className="dialog-scrim" role="presentation" onClick={onDone}>
+        <div
+          className="dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="offboard-done"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <h3 id="offboard-done">{person.displayName} has been offboarded</h3>
+          {moved.length === 0 ? (
+            <p className="field-hint">
+              Nothing needed transferring. Their access has been closed.
+            </p>
+          ) : (
+            <>
+              <p className="field-hint">Their access is closed. This moved to the successor:</p>
+              <dl className="detail-list">
+                {moved.map(([label, count]) => (
+                  <div key={label}>
+                    <dt>{titleCase(label.replace(/_/g, ' '))}</dt>
+                    <dd>{count}</dd>
+                  </div>
+                ))}
+              </dl>
+            </>
+          )}
+          <div className="dialog-actions">
+            <button type="button" className="primary-button" onClick={onDone}>Done</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <div
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="offboard-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 id="offboard-title">Offboard {person.displayName}</h3>
+        <p className="field-hint">
+          This is permanent. Their sessions close immediately and they cannot sign in
+          again. Use Suspend instead if they may come back.
+        </p>
+
+        <FormError error={offboard.error} />
+
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void offboard.mutate();
+          }}
+        >
+          <div className="field">
+            <label htmlFor="offboard-successor">Who takes over their work?</label>
+            <select
+              id="offboard-successor"
+              value={successorId}
+              onChange={(event) => setSuccessorId(event.target.value)}
+            >
+              <option value="">Nobody — release their work</option>
+              {colleagues.map((colleague) => (
+                <option key={colleague.id} value={colleague.id}>
+                  {colleague.displayName}
+                </option>
+              ))}
+            </select>
+            <p className="field-hint">
+              {successorId
+                ? 'Their projects, open tasks, files, folders, direct reports and any approval waiting on them move across.'
+                : 'Without a successor their work stays unassigned, and anything waiting on their approval will stall. Only choose this if there is genuinely nobody.'}
+            </p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="offboard-reason">Reason</label>
+            <input
+              id="offboard-reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Resignation, end of contract, …"
+              required
+              minLength={3}
+            />
+            <p className="field-hint">Recorded in the audit trail and on the offboarding record.</p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="offboard-last-day">Last day (optional)</label>
+            <input
+              id="offboard-last-day"
+              type="date"
+              value={lastDay}
+              onChange={(event) => setLastDay(event.target.value)}
+            />
+          </div>
+
+          <div className="dialog-actions">
+            <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
+            <button type="submit" className="danger-button" disabled={offboard.pending || reason.trim().length < 3}>
+              {offboard.pending ? 'Offboarding…' : `Offboard ${person.displayName}`}
             </button>
           </div>
         </form>
