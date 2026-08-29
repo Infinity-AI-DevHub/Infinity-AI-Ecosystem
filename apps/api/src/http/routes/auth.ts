@@ -32,6 +32,13 @@ const resetSchema = z.object({
   password: z.string().min(1).max(512),
 });
 
+const desktopLoginSchema = z.object({
+  email: z.string().email().max(320),
+  password: z.string().min(1).max(512),
+  /** Shown on the signed-in-devices screen so a person can tell their machines apart. */
+  device: z.string().max(160).optional(),
+});
+
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/auth/login', async (request, reply) => {
     const input = parse(loginSchema, request.body);
@@ -82,6 +89,36 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     // instruction to sign in again.
     clearSessionCookie(reply);
     return reply.code(204).send();
+  });
+
+  /**
+   * Desktop sign-in. Same credential check as the browser path, different currency: a
+   * bearer token pair instead of a cookie, because there is no cookie jar and no
+   * cross-site risk for a double-submit token to defend against.
+   */
+  app.post('/auth/token', async (request, reply) => {
+    const input = parse(desktopLoginSchema, request.body);
+    await enforce(`login:email:${hashToken(input.email)}`, config.limits.loginPerMinute, 60);
+    await enforce(`login:ip:${request.ip}`, config.limits.loginPerMinute * 3, 60);
+
+    const outcome = await identity.authenticate(input.email, input.password, request.requestContext);
+    const grant = await identity.issueDesktopSession(
+      outcome.user,
+      request.requestContext,
+      input.device,
+    );
+    return reply.code(200).send({ ...grant, user: identity.publicUser(outcome.user) });
+  });
+
+  /**
+   * Rotates the token pair. Rate limited per IP because a stolen refresh token being
+   * hammered is exactly what this endpoint would otherwise make cheap.
+   */
+  app.post('/auth/token/refresh', async (request, reply) => {
+    const input = parse(z.object({ refreshToken: z.string().min(10).max(200) }), request.body);
+    await enforce(`refresh:ip:${request.ip}`, 60, 600);
+    const grant = await identity.refreshDesktopSession(input.refreshToken, request.requestContext);
+    return reply.code(200).send(grant);
   });
 
   app.post('/auth/logout', async (request, reply) => {

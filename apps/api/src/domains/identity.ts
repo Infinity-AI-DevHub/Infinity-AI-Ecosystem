@@ -532,18 +532,29 @@ export type SessionRecord = {
 
 /** Resolves a session cookie into an actor, enforcing absolute and idle expiry. */
 export async function resolveSession(sessionToken: string): Promise<{ session: SessionRecord; user: UserRow } | null> {
-  const session = await one<SessionRecord>(
-    `SELECT id, user_id, company_id, csrf_secret, expires_at, last_seen_at
+  const session = await one<SessionRecord & { kind: string }>(
+    `SELECT id, user_id, company_id, csrf_secret, expires_at, last_seen_at, kind
        FROM sessions
-      WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > NOW(3)`,
+      WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > NOW(3)
+        AND (absolute_expires_at IS NULL OR absolute_expires_at > NOW(3))`,
     [hashToken(sessionToken)],
   );
   if (!session) return null;
 
-  const idleLimitMs = config.security.sessionIdleMinutes * 60_000;
-  if (Date.now() - new Date(session.last_seen_at).getTime() > idleLimitMs) {
-    await pool.query('UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1', [session.id]);
-    return null;
+  /**
+   * Idle expiry applies to browsers only.
+   *
+   * A browser tab left open on a shared machine is the risk that timeout exists for. A
+   * desktop application sits behind the operating system's own lock screen, and its
+   * ceiling is the absolute five-day cap enforced in the query above - which use does not
+   * extend.
+   */
+  if (session.kind !== 'desktop') {
+    const idleLimitMs = config.security.sessionIdleMinutes * 60_000;
+    if (Date.now() - new Date(session.last_seen_at).getTime() > idleLimitMs) {
+      await pool.query('UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1', [session.id]);
+      return null;
+    }
   }
 
   const user = await findUserById(session.user_id);
@@ -1370,4 +1381,205 @@ export async function getOffboarding(
       LIMIT 1`,
     [userId, actor.companyId],
   );
+}
+
+// ---------------------------------------------------------------- desktop sessions
+
+export type DesktopGrant = {
+  accessToken: string;
+  refreshToken: string;
+  /** When the access token dies and the client should refresh. */
+  expiresAt: string;
+  /** The hard ceiling. After this the person signs in again, however active they were. */
+  absoluteExpiresAt: string;
+};
+
+/**
+ * Issues a desktop session: a short access token plus the refresh token that renews it.
+ *
+ * Both are opaque and stored only as hashes, exactly like the browser session token, so a
+ * database reader cannot mint either. The access token doubles as the session row's
+ * token_hash, which means everything already built on sessions - revocation, suspension
+ * closing access immediately, the signed-in-devices screen - applies to desktop clients
+ * without a second code path to keep in step.
+ */
+export async function issueDesktopSession(
+  user: UserRow,
+  ctx: RequestContext,
+  deviceLabel?: string | null,
+): Promise<DesktopGrant> {
+  const accessToken = generateToken();
+  const refreshToken = generateToken();
+  const id = newId();
+
+  await pool.query(
+    `INSERT INTO sessions
+       (id, company_id, user_id, kind, token_hash, refresh_token_hash, csrf_secret,
+        device, ip, user_agent, expires_at, absolute_expires_at)
+     VALUES ($1,$2,$3,'desktop',$4,$5,$6,$7,$8,$9,
+             DATE_ADD(NOW(3), INTERVAL $10 MINUTE),
+             DATE_ADD(NOW(3), INTERVAL $11 DAY))`,
+    [
+      id,
+      user.company_id,
+      user.id,
+      hashToken(accessToken),
+      hashToken(refreshToken),
+      // Bearer-authenticated calls carry no cookie, so there is nothing for a
+      // double-submit token to prove. The column stays populated rather than nullable so
+      // the browser path's assumptions hold unchanged.
+      generateToken(24),
+      deviceLabel?.slice(0, 160) ?? null,
+      ctx.ip,
+      ctx.userAgent?.slice(0, 400) ?? null,
+      config.security.desktopAccessMinutes,
+      config.security.desktopSessionDays,
+    ],
+  );
+
+  const row = await one<{ expires_at: Date; absolute_expires_at: Date }>(
+    'SELECT expires_at, absolute_expires_at FROM sessions WHERE id = $1',
+    [id],
+  );
+  return {
+    accessToken,
+    refreshToken,
+    expiresAt: new Date(row!.expires_at).toISOString(),
+    absoluteExpiresAt: new Date(row!.absolute_expires_at).toISOString(),
+  };
+}
+
+/**
+ * Exchanges a refresh token for a new access token.
+ *
+ * The refresh token rotates on every use, and a token that has already been rotated is
+ * treated as stolen rather than as a mistake: presenting one revokes the entire chain it
+ * belongs to, so an attacker who copied a token off a machine loses access the moment the
+ * real client refreshes, and the real client loses it too and has to sign in. That is the
+ * intended outcome - a silent race between two holders of the same credential is worse
+ * than an interrupted session.
+ *
+ * The absolute expiry is carried forward untouched, so refreshing cannot extend a session
+ * past its five days.
+ */
+export async function refreshDesktopSession(
+  refreshToken: string,
+  ctx: RequestContext,
+): Promise<DesktopGrant> {
+  const hashed = hashToken(refreshToken);
+
+  const current = await one<{
+    id: string;
+    user_id: string;
+    company_id: string;
+    revoked_at: Date | null;
+    absolute_expires_at: Date;
+    device: string | null;
+  }>(
+    `SELECT id, user_id, company_id, revoked_at, absolute_expires_at, device
+       FROM sessions
+      WHERE refresh_token_hash = $1 AND kind = 'desktop'`,
+    [hashed],
+  );
+
+  if (!current) throw unauthenticated('This session is no longer valid');
+
+  // Already rotated or explicitly revoked: the credential is in more hands than it should
+  // be, so the whole chain goes.
+  if (current.revoked_at) {
+    await revokeSessionChain(current.id);
+    throw unauthenticated('This session was ended for security reasons; sign in again');
+  }
+
+  if (new Date(current.absolute_expires_at) <= new Date()) {
+    await pool.query('UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1', [current.id]);
+    throw unauthenticated('Your session has reached its limit; sign in again');
+  }
+
+  const user = await findUserById(current.user_id);
+  if (!user || user.status !== 'active') {
+    await pool.query('UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1', [current.id]);
+    throw unauthenticated('This account is not available');
+  }
+
+  const accessToken = generateToken();
+  const nextRefresh = generateToken();
+  const id = newId();
+
+  await transaction(async (tx) => {
+    // Retiring the old row and inserting the new one together means there is never a
+    // moment where both are live, and never one where neither is.
+    const retired = await tx.query(
+      'UPDATE sessions SET revoked_at = NOW(3) WHERE id = $1 AND revoked_at IS NULL',
+      [current.id],
+    );
+    if (retired.rowCount === 0) throw unauthenticated('This session is no longer valid');
+
+    await tx.query(
+      `INSERT INTO sessions
+         (id, company_id, user_id, kind, token_hash, refresh_token_hash, csrf_secret,
+          device, ip, user_agent, expires_at, absolute_expires_at, rotated_from)
+       VALUES ($1,$2,$3,'desktop',$4,$5,$6,$7,$8,$9,
+               DATE_ADD(NOW(3), INTERVAL $10 MINUTE), $11, $12)`,
+      [
+        id,
+        current.company_id,
+        current.user_id,
+        hashToken(accessToken),
+        hashToken(nextRefresh),
+        generateToken(24),
+        current.device,
+        ctx.ip,
+        ctx.userAgent?.slice(0, 400) ?? null,
+        config.security.desktopAccessMinutes,
+        current.absolute_expires_at,
+        current.id,
+      ],
+    );
+  });
+
+  const row = await one<{ expires_at: Date }>('SELECT expires_at FROM sessions WHERE id = $1', [id]);
+  return {
+    accessToken,
+    refreshToken: nextRefresh,
+    expiresAt: new Date(row!.expires_at).toISOString(),
+    absoluteExpiresAt: new Date(current.absolute_expires_at).toISOString(),
+  };
+}
+
+/**
+ * Revokes every session in a rotation chain, walking both directions from one member.
+ *
+ * A stolen refresh token is only useful because it descends from a real sign-in, so
+ * cutting the branch it sits on is not enough - the whole lineage goes.
+ */
+export async function revokeSessionChain(sessionId: string): Promise<void> {
+  const seen = new Set<string>();
+  const queue = [sessionId];
+
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    const parent = await one<{ rotated_from: string | null }>(
+      'SELECT rotated_from FROM sessions WHERE id = $1',
+      [id],
+    );
+    if (parent?.rotated_from) queue.push(parent.rotated_from);
+
+    const children = await many<{ id: string }>(
+      'SELECT id FROM sessions WHERE rotated_from = $1',
+      [id],
+    );
+    for (const child of children) queue.push(child.id);
+  }
+
+  if (seen.size > 0) {
+    await pool.query(
+      `UPDATE sessions SET revoked_at = NOW(3)
+        WHERE id IN (${[...seen].map((_, i) => `$${i + 1}`).join(',')}) AND revoked_at IS NULL`,
+      [...seen],
+    );
+  }
 }

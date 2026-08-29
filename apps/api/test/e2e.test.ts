@@ -991,6 +991,59 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(invalid.body.error.fields.length > 0, true);
   });
 
+  it('caps a desktop session at five days and treats a replayed refresh as theft', async () => {
+    // The desktop client cannot use the cookie and CSRF pair, so it carries a bearer
+    // token. The two properties worth pinning: refreshing must never extend the ceiling,
+    // and a refresh token presented twice must be treated as stolen rather than as a
+    // retry - otherwise a copied token quietly outlives the session it came from.
+    const anonymous = new Client(app);
+    const granted = await anonymous.post('/api/v1/auth/token', {
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD,
+      device: 'Suite runner',
+    });
+    assert.equal(granted.status, 200);
+    const first = granted.body as {
+      accessToken: string;
+      refreshToken: string;
+      absoluteExpiresAt: string;
+    };
+
+    const days = (new Date(first.absoluteExpiresAt).getTime() - Date.now()) / 86_400_000;
+    assert.ok(days > 4.9 && days < 5.1, `ceiling should be five days, got ${days}`);
+
+    // The bearer token authenticates, and a write needs no CSRF token: that defence
+    // exists because browsers attach cookies unbidden, which a header never is.
+    const bearer = { authorization: `Bearer ${first.accessToken}` };
+    assert.equal((await anonymous.get('/api/v1/me', bearer)).status, 200);
+
+    const rotated = await anonymous.post('/api/v1/auth/token/refresh', {
+      refreshToken: first.refreshToken,
+    });
+    assert.equal(rotated.status, 200);
+    const second = rotated.body as { accessToken: string; absoluteExpiresAt: string };
+
+    // Refreshing buys a new access token, never more time overall.
+    assert.equal(second.absoluteExpiresAt, first.absoluteExpiresAt);
+    assert.equal((await anonymous.get('/api/v1/me', bearer)).status, 401);
+    assert.equal(
+      (await anonymous.get('/api/v1/me', { authorization: `Bearer ${second.accessToken}` })).status,
+      200,
+    );
+
+    // Replaying the spent refresh token means the credential is in more hands than it
+    // should be. The whole rotation chain goes, including the session currently live.
+    const replay = await anonymous.post('/api/v1/auth/token/refresh', {
+      refreshToken: first.refreshToken,
+    });
+    assert.equal(replay.status, 401);
+    assert.equal(
+      (await anonymous.get('/api/v1/me', { authorization: `Bearer ${second.accessToken}` })).status,
+      401,
+      'a replayed refresh token must kill the live session too, not just the replay',
+    );
+  });
+
   it('surfaces the money nobody paid and the equipment nobody returned', async () => {
     // report.read was granted to roles in the first migration and checked nowhere. These
     // two reports are why it exists: approved-but-unpaid and equipment still out with

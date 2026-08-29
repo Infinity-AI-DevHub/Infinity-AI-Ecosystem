@@ -29,6 +29,32 @@ export function clientIp(request: FastifyRequest): string | null {
   return request.ip ?? null;
 }
 
+
+/**
+ * Extracts a bearer token from a request.
+ *
+ * Two carriers, because a WebSocket cannot have headers set on it from a renderer -
+ * browsers and Electron both refuse. The subprotocol is the standard way round that, and
+ * it is preferable to a query parameter: a URL ends up in access logs, proxy logs and
+ * browser history, and a credential in any of those outlives the session it belongs to.
+ */
+export function bearerToken(request: FastifyRequest): string | null {
+  const authorization = request.headers.authorization;
+  if (typeof authorization === 'string' && authorization.startsWith('Bearer ')) {
+    return authorization.slice(7).trim() || null;
+  }
+
+  const offered = request.headers['sec-websocket-protocol'];
+  const protocols = (Array.isArray(offered) ? offered.join(',') : offered ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  // Shaped as `bearer, <token>` so the first entry names the scheme and the second
+  // carries the credential.
+  if (protocols.length === 2 && protocols[0] === 'bearer') return protocols[1] ?? null;
+  return null;
+}
+
 /** Resolves the caller from a session cookie or a service API token. */
 export async function resolveActor(request: FastifyRequest): Promise<Actor | null> {
   const apiToken = request.headers['x-api-token'];
@@ -51,6 +77,18 @@ export async function resolveActor(request: FastifyRequest): Promise<Actor | nul
     // A service token carries no interactive session; its reach is bounded by the
     // capability scope recorded on the token itself.
     return identity.buildActor(user, null, record.capabilities, record.id);
+  }
+
+  /**
+   * Desktop clients present a bearer token. It resolves through exactly the same session
+   * lookup as the browser cookie - the token is the session - so revocation, suspension
+   * and expiry behave identically and there is no second path to keep in step.
+   */
+  const bearer = bearerToken(request);
+  if (bearer) {
+    const resolved = await identity.resolveSession(bearer);
+    if (!resolved) return null;
+    return identity.buildActor(resolved.user, resolved.session);
   }
 
   const cookie = request.cookies[config.security.sessionCookie];
@@ -88,6 +126,12 @@ function sameOriginAllowed(request: FastifyRequest): boolean {
 export async function assertCsrf(request: FastifyRequest): Promise<void> {
   if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return;
   if (typeof request.headers['x-api-token'] === 'string') return;
+  /**
+   * Bearer-authenticated calls are exempt, and safely so: CSRF exists because a browser
+   * attaches cookies to requests the page did not intend to make. A token sent explicitly
+   * in a header is never attached by anything but the client that holds it.
+   */
+  if (typeof request.headers.authorization === 'string') return;
 
   const sessionCookie = request.cookies[config.security.sessionCookie];
   if (!sessionCookie) return; // unauthenticated endpoints handle their own protection

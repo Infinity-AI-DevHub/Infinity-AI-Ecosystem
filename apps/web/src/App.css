@@ -2060,3 +2060,24 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   .bar-list li { grid-template-columns: 1fr auto; }
   .bar-track { grid-column: 1 / -1; }
 }
+
+/* A version notice sits above the content rather than over it: it is information, not an
+   interruption, and an app people leave open for days should not ambush them with a modal. */
+.update-banner {
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-4);
+  border-bottom: 1px solid var(--a-200);
+  background: var(--a-50);
+  color: var(--a-700);
+  font-size: var(--text-sm);
+}
+.update-banner > span { flex: 1; min-width: 0; }
+
+/* The sign-in heading is the brand lockup, so it inherits that scale rather than the
+   page-title scale an h1 would otherwise take. */
+.brand-heading {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+  color: var(--fg-primary);
+  letter-spacing: var(--tracking-snug);
+}

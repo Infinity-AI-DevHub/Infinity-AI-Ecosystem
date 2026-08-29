@@ -9,6 +9,8 @@ import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { KeyRound } from 'lucide-react';
 import { api, ApiError, NetworkError } from '../lib/api';
 import { useSession } from '../lib/session';
+import { isDesktop } from '../lib/desktop';
+import { setGrant, type Grant } from '../lib/tokens';
 import { clearNotice, readNotice } from '../lib/notice';
 import { FieldMessage } from '../components/States';
 
@@ -37,10 +39,24 @@ export default function SignIn() {
     setPending(true);
     setError(null);
     try {
-      await api.post<{ status: 'authenticated'; csrfToken: string }>('/auth/login', {
-        email,
-        password,
-      });
+      /**
+       * Two sign-in endpoints for two credential shapes. The desktop exchange returns a
+       * token pair which goes straight to the OS keystore; the browser one sets a cookie
+       * the client never reads.
+       */
+      if (isDesktop) {
+        const grant = await api.post<Grant>('/auth/token', {
+          email,
+          password,
+          device: navigator.platform || 'Desktop',
+        });
+        await setGrant(grant);
+      } else {
+        await api.post<{ status: 'authenticated'; csrfToken: string }>('/auth/login', {
+          email,
+          password,
+        });
+      }
       // The password is discarded as soon as it is no longer needed.
       setPassword('');
       clearNotice();
@@ -59,7 +75,10 @@ export default function SignIn() {
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true">IW</span>
           <div>
-            <strong>Infinity Workspace</strong>
+            {/* The product name is the page's heading, not decoration. Every other route
+                carries exactly one h1; without this the first screen anyone sees is the
+                only one a screen reader cannot announce the purpose of. */}
+            <h1 className="brand-heading">Infinity Workspace</h1>
             <span>Sign in to your company workspace</span>
           </div>
         </div>

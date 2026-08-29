@@ -48,11 +48,28 @@ export async function buildServer(): Promise<FastifyInstance> {
     origin: (origin, callback) => {
       // Same-origin and server-to-server calls carry no Origin header.
       if (!origin) return callback(null, true);
-      const allowed = [config.publicUrl, config.apiUrl].filter(Boolean);
+      /**
+       * The desktop client is served from its own registered scheme, so its origin is
+       * `app://…` rather than a host. Permitting it is safe in a way permitting an
+       * arbitrary website would not be: it authenticates with a bearer token, so there is
+       * no ambient cookie for another origin to borrow.
+       */
+      if (origin.startsWith('app://')) return callback(null, true);
+      const allowed = [config.publicUrl, config.apiUrl, ...config.extraOrigins].filter(Boolean);
       callback(null, allowed.includes(origin));
     },
     credentials: true,
-    allowedHeaders: ['content-type', 'x-csrf-token', 'x-api-token', 'idempotency-key', 'if-match', 'x-correlation-id'],
+    // `authorization` is a non-simple header: without it here the preflight rejects every
+    // bearer-authenticated request before it is ever sent.
+    allowedHeaders: [
+      'authorization',
+      'content-type',
+      'x-csrf-token',
+      'x-api-token',
+      'idempotency-key',
+      'if-match',
+      'x-correlation-id',
+    ],
     exposedHeaders: ['etag', 'x-correlation-id', 'retry-after', 'idempotent-replay'],
     maxAge: 600,
   });
@@ -61,7 +78,18 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(multipart, {
     limits: { fileSize: config.limits.uploadMaxBytes, files: 1 },
   });
-  await app.register(websocket, { options: { maxPayload: 256 * 1024 } });
+  await app.register(websocket, {
+    options: {
+      maxPayload: 256 * 1024,
+      /**
+       * The desktop client carries its bearer token in the subprotocol, because a
+       * renderer cannot set headers on a WebSocket. A server that ignores an offered
+       * subprotocol fails the handshake, so the scheme name is echoed back - never the
+       * token itself, which would put the credential in the response headers.
+       */
+      handleProtocols: (protocols: Set<string>) => (protocols.has('bearer') ? 'bearer' : false),
+    },
+  });
 
   // ------------------------------------------------------------- hooks
 

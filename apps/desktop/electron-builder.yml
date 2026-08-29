@@ -1,0 +1,57 @@
+# Packaging for macOS and Windows.
+#
+# Both are unsigned by decision: this ships to a handful of employees, and an Apple
+# Developer account and a Windows certificate are not worth their cost at that size. The
+# consequences are real and are documented in docs/deployment.md - Gatekeeper needs an
+# override on first launch, SmartScreen warns on first install, and macOS cannot apply an
+# update to itself.
+appId: com.iinfinityai.workspace
+productName: Infinity Workspace
+copyright: Infinity AI (Pvt) Ltd
+
+directories:
+  output: release
+  buildResources: build
+
+# Only what the application actually runs. The renderer is copied in by the build script
+# rather than being a dependency, so it is listed explicitly.
+files:
+  - dist/**/*
+  - package.json
+  - '!**/*.map'
+
+extraMetadata:
+  main: dist/main/index.js
+
+mac:
+  category: public.app-category.business
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  # Nothing to sign with, and asking electron-builder to try produces a confusing failure
+  # rather than an unsigned build.
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+
+dmg:
+  title: Infinity Workspace
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  # A per-user install needs no administrator rights, which matters when the installer is
+  # unsigned and an elevation prompt on an unrecognised publisher is what makes people
+  # abandon it.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Infinity Workspace
+
+# The updater reads a static latest.json from the update host rather than a release
+# service, so there is nothing extra to run or keep patched.
+publish: null
