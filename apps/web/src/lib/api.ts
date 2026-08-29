@@ -7,6 +7,9 @@
  * readable CSRF cookie back as a header.
  */
 
+import { isDesktop } from './desktop';
+import { accessTokenForRequest, clearGrant, refresh as refreshGrant } from './tokens';
+
 export const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 const BASE = `${API_URL}/api/v1`;
 
@@ -105,22 +108,51 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
   if (options.ifMatch !== undefined) headers['if-match'] = `"${options.ifMatch}"`;
 
-  // Double-submit CSRF: the cookie is readable, the header proves same-origin script.
-  if (!['GET', 'HEAD'].includes(method)) {
+  /**
+   * Two authentication schemes, chosen by host rather than by configuration.
+   *
+   * The desktop client carries a bearer token and needs no CSRF header: that defence
+   * exists because a browser attaches cookies to requests the page never made, which
+   * never happens to a header the client sets itself. The web build keeps the cookie and
+   * double-submit pair exactly as before.
+   */
+  if (isDesktop) {
+    const token = await accessTokenForRequest(BASE);
+    if (token) headers.authorization = `Bearer ${token}`;
+  } else if (!['GET', 'HEAD'].includes(method)) {
     const csrf = readCookie('iw_csrf');
     if (csrf) headers['x-csrf-token'] = csrf;
   }
 
-  let response: Response;
-  try {
-    response = await fetch(`${BASE}${path}`, {
+  const send = async (): Promise<Response> =>
+    fetch(`${BASE}${path}`, {
       method,
       headers,
-      // Cookies carry the session; they are never read by JavaScript.
-      credentials: 'include',
+      // Cookies carry the session on the web; on the desktop there are none to send.
+      credentials: isDesktop ? 'omit' : 'include',
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       signal: options.signal,
     });
+
+  let response: Response;
+  try {
+    response = await send();
+
+    /**
+     * One retry after a refresh.
+     *
+     * A token can expire between the check above and the request arriving, and a clock
+     * that is slightly out makes that likelier. Retrying once on a 401 covers it; the
+     * refresh itself is single-flight, so a screen loading several queries at once
+     * performs exactly one rotation rather than racing itself into a revoked chain.
+     */
+    if (response.status === 401 && isDesktop) {
+      const renewed = await refreshGrant(BASE);
+      if (renewed) {
+        headers.authorization = `Bearer ${renewed.accessToken}`;
+        response = await send();
+      }
+    }
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err;
     throw new NetworkError();
@@ -145,6 +177,9 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     );
     // A revoked session must drop the user to sign-in immediately, wherever they are.
     if (error.isUnauthenticated) {
+      // The grant is gone as well as the session, so a stale token is not presented again
+      // on the next screen and does not look like a fresh failure.
+      if (isDesktop) clearGrant();
       for (const handler of sessionLostHandlers) handler();
     }
     throw error;

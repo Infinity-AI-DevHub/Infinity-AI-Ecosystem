@@ -1,0 +1,1505 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Infinity Workspace — User Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  @page {
+    size: A4;
+    margin: 18mm 16mm 20mm;
+  }
+
+  :root {
+    --ink:      #12161d;
+    --ink-2:    #3f4753;
+    --ink-3:    #6b7484;
+    --line:     #dfe3ea;
+    --line-2:   #eef0f4;
+    --sunken:   #f5f6f9;
+    --accent:   #4f46e5;
+    --accent-s: #eef2ff;
+    --accent-l: #c7d2fe;
+    --warn:     #b45309;
+    --warn-s:   #fffbeb;
+    --warn-l:   #fde68a;
+    --good:     #047857;
+    --good-s:   #ecfdf5;
+    --good-l:   #a7f3d0;
+    --sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    font-size: 10.2pt;
+    line-height: 1.55;
+    color: var(--ink);
+    background: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ---------- cover ---------- */
+  .cover {
+    height: 247mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    page-break-after: always;
+  }
+  .cover .mark {
+    font-family: var(--mono);
+    font-size: 9pt;
+    font-weight: 600;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 18mm;
+  }
+  .cover h1 {
+    font-size: 34pt;
+    line-height: 1.05;
+    letter-spacing: -.025em;
+    font-weight: 700;
+    margin: 0 0 6mm;
+  }
+  .cover .sub {
+    font-size: 13pt;
+    color: var(--ink-2);
+    max-width: 120mm;
+    margin: 0 0 16mm;
+    line-height: 1.5;
+  }
+  .cover .foot {
+    margin-top: auto;
+    padding-top: 8mm;
+    border-top: 1px solid var(--line);
+    font-size: 9pt;
+    color: var(--ink-3);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* ---------- contents ---------- */
+  .toc { page-break-after: always; }
+  .toc h2 { margin-top: 0; }
+  .toc ol { list-style: none; padding: 0; margin: 0; column-count: 2; column-gap: 12mm; }
+  .toc li {
+    display: grid;
+    grid-template-columns: 9mm 1fr;
+    gap: 2mm;
+    font-size: 10pt;
+    padding: 1.6mm 0;
+    break-inside: avoid;
+  }
+  .toc .n { font-family: var(--mono); font-size: 8.5pt; color: var(--ink-3); font-weight: 600; }
+
+  /* ---------- structure ---------- */
+  h2 {
+    font-size: 17pt;
+    letter-spacing: -.02em;
+    font-weight: 700;
+    margin: 0 0 3mm;
+    padding-top: 2mm;
+  }
+  section.chapter { page-break-before: always; }
+  section.chapter:first-of-type { page-break-before: avoid; }
+
+  .chapter-eyebrow {
+    font-family: var(--mono);
+    font-size: 8pt;
+    font-weight: 600;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 2mm;
+  }
+  .chapter-intro {
+    font-size: 11pt;
+    color: var(--ink-2);
+    margin: 0 0 6mm;
+    padding-bottom: 5mm;
+    border-bottom: 1px solid var(--line);
+    line-height: 1.5;
+  }
+
+  h3 {
+    font-size: 11.5pt;
+    font-weight: 600;
+    letter-spacing: -.008em;
+    margin: 6mm 0 2mm;
+    break-after: avoid;
+  }
+  h4 {
+    font-size: 10.2pt;
+    font-weight: 600;
+    margin: 4mm 0 1.5mm;
+    color: var(--ink);
+    break-after: avoid;
+  }
+  p { margin: 0 0 2.6mm; }
+  ul, ol { margin: 0 0 3mm; padding-left: 5mm; }
+  li { margin-bottom: 1.2mm; }
+  strong { font-weight: 600; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 8.8pt;
+    background: var(--sunken);
+    border: 1px solid var(--line-2);
+    border-radius: 2px;
+    padding: 0 1mm;
+  }
+
+  /* ---------- how-to steps ---------- */
+  .howto {
+    background: var(--sunken);
+    border: 1px solid var(--line-2);
+    border-left: 2px solid var(--accent);
+    border-radius: 3px;
+    padding: 3mm 4mm;
+    margin: 0 0 3.5mm;
+    break-inside: avoid;
+  }
+  .howto .t {
+    font-family: var(--mono);
+    font-size: 8pt;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 1.5mm;
+  }
+  .howto ol { margin: 0; padding-left: 4.5mm; }
+  .howto li { margin-bottom: 1mm; }
+  .howto p { margin: 0; }
+
+  /* ---------- callouts ---------- */
+  .note, .warn, .good {
+    padding: 2.5mm 3.5mm;
+    border-radius: 3px;
+    border: 1px solid;
+    margin: 0 0 3.5mm;
+    font-size: 9.6pt;
+    break-inside: avoid;
+  }
+  .note { background: var(--accent-s); border-color: var(--accent-l); }
+  .warn { background: var(--warn-s); border-color: var(--warn-l); }
+  .good { background: var(--good-s); border-color: var(--good-l); }
+  .note p:last-child, .warn p:last-child, .good p:last-child { margin: 0; }
+  .lbl {
+    display: block;
+    font-family: var(--mono);
+    font-size: 7.6pt;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    margin-bottom: 1mm;
+  }
+  .note .lbl { color: var(--accent); }
+  .warn .lbl { color: var(--warn); }
+  .good .lbl { color: var(--good); }
+
+  /* ---------- tables ---------- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.4pt;
+    margin: 0 0 3.5mm;
+    break-inside: avoid;
+  }
+  th, td { text-align: left; padding: 1.8mm 2.5mm; border-bottom: 1px solid var(--line-2); vertical-align: top; }
+  th {
+    font-family: var(--mono);
+    font-size: 7.8pt;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    border-bottom: 1px solid var(--line);
+  }
+  tr { break-inside: avoid; }
+
+  .who {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 7.6pt;
+    font-weight: 600;
+    padding: .6mm 1.6mm;
+    border-radius: 2px;
+    background: var(--accent-s);
+    color: var(--accent);
+    border: 1px solid var(--accent-l);
+    margin-left: 1.5mm;
+    vertical-align: 1px;
+    letter-spacing: .04em;
+  }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <p class="mark">Infinity AI (Pvt) Ltd</p>
+  <h1>Infinity Workspace<br>User Guide</h1>
+  <p class="sub">
+    Every module, every screen and every operation in the system — what it does, who can
+    use it, and how to do it.
+  </p>
+  <div class="foot">
+    <span>Version 1.0</span>
+    <span>Desktop application · macOS and Windows</span>
+  </div>
+</div>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><span class="n">01</span><span>Getting started</span></li>
+    <li><span class="n">02</span><span>Finding your way around</span></li>
+    <li><span class="n">03</span><span>Command — your dashboard</span></li>
+    <li><span class="n">04</span><span>Meetings</span></li>
+    <li><span class="n">05</span><span>Chat</span></li>
+    <li><span class="n">06</span><span>Tasks</span></li>
+    <li><span class="n">07</span><span>Files</span></li>
+    <li><span class="n">08</span><span>Documents</span></li>
+    <li><span class="n">09</span><span>Announcements</span></li>
+    <li><span class="n">10</span><span>Approvals</span></li>
+    <li><span class="n">11</span><span>Leave</span></li>
+    <li><span class="n">12</span><span>Finance</span></li>
+    <li><span class="n">13</span><span>Growth</span></li>
+    <li><span class="n">14</span><span>People</span></li>
+    <li><span class="n">15</span><span>Clients</span></li>
+    <li><span class="n">16</span><span>Reports</span></li>
+    <li><span class="n">17</span><span>Administration</span></li>
+    <li><span class="n">18</span><span>Your settings</span></li>
+    <li><span class="n">19</span><span>For people outside the company</span></li>
+    <li><span class="n">20</span><span>Search</span></li>
+    <li><span class="n">21</span><span>When something goes wrong</span></li>
+    <li><span class="n">22</span><span>Who can do what</span></li>
+  </ol>
+</nav>
+
+<!-- 01 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 01</p>
+  <h2>Getting started</h2>
+  <p class="chapter-intro">
+    Installing the application, activating your account, and what to expect the first time
+    you open it.
+  </p>
+
+  <h3>Installing</h3>
+  <p>
+    Download the installer for your machine from the address your administrator gives you.
+    The application is not code-signed, so both operating systems will warn you the first
+    time. This is expected and happens once per version.
+  </p>
+
+  <div class="howto">
+    <p class="t">macOS</p>
+    <ol>
+      <li>Open the <code>.dmg</code> and drag Infinity Workspace to Applications.</li>
+      <li>Open it. macOS says it cannot verify the developer.</li>
+      <li>Go to <strong>System Settings → Privacy &amp; Security</strong>, scroll down, and click <strong>Open Anyway</strong>.</li>
+      <li>Open the app again and confirm.</li>
+    </ol>
+  </div>
+
+  <div class="howto">
+    <p class="t">Windows</p>
+    <ol>
+      <li>Run <code>Infinity Workspace Setup.exe</code>.</li>
+      <li>SmartScreen warns the publisher is unrecognised. Click <strong>More info</strong>, then <strong>Run anyway</strong>.</li>
+      <li>Follow the installer. It installs for you only and needs no administrator rights.</li>
+    </ol>
+  </div>
+
+  <h3>Activating your account</h3>
+  <p>
+    You cannot create your own account. An administrator adds you, and you receive an email
+    with a single-use activation link that expires in 72 hours.
+  </p>
+  <div class="howto">
+    <p class="t">First sign-in</p>
+    <ol>
+      <li>Open the activation link from your email. It opens in your browser, not the app.</li>
+      <li>Choose a password — at least 12 characters.</li>
+      <li>Open the desktop application and sign in with your work email and that password.</li>
+    </ol>
+  </div>
+  <div class="note">
+    <span class="lbl">If the link has expired</span>
+    <p>Ask an administrator to send a new one. They can do this from <strong>People</strong>.</p>
+  </div>
+
+  <h3>How long you stay signed in</h3>
+  <p>
+    The desktop app keeps you signed in for <strong>five days</strong> from when you sign in.
+    After that it asks for your password again, however much you have been using it. There
+    is no idle timeout — the app relies on your computer's own lock screen.
+  </p>
+  <p>
+    Signing in on the website (share links, activation, reset) works differently: that
+    session ends after <strong>30 minutes</strong> of inactivity.
+  </p>
+
+  <h3>Forgotten password</h3>
+  <div class="howto">
+    <p class="t">Resetting</p>
+    <ol>
+      <li>On the sign-in screen, click <strong>Forgot password?</strong></li>
+      <li>Enter your work email address and submit.</li>
+      <li>Open the link in the email that arrives. It works once and expires in an hour.</li>
+      <li>Choose a new password. This signs you out on every device.</li>
+    </ol>
+  </div>
+  <div class="note">
+    <span class="lbl">The same message either way</span>
+    <p>
+      The screen says the same thing whether or not the address has an account. That is
+      deliberate — it stops anyone using the page to discover who works here.
+    </p>
+  </div>
+</section>
+
+<!-- 02 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 02</p>
+  <h2>Finding your way around</h2>
+  <p class="chapter-intro">
+    The parts of the window that stay the same wherever you are.
+  </p>
+
+  <h3>The sidebar</h3>
+  <p>
+    Every module you have access to. You only see what your role permits — if a module is
+    missing from your sidebar, you do not have access to it, and that is not a fault.
+  </p>
+
+  <h3>Search</h3>
+  <p>
+    The bar at the top searches across chat messages, files, tasks, meetings, announcements
+    and documents. Press <code>/</code> from anywhere to jump into it. Results only ever
+    include things you are already allowed to see.
+  </p>
+
+  <h3>Notifications</h3>
+  <p>
+    The bell shows unread notifications. On the desktop these also appear as system
+    notifications, and the number appears on the dock or taskbar icon, so you see them
+    without the window open. Clicking a notification brings the window forward and takes
+    you to whatever it is about.
+  </p>
+  <div class="howto">
+    <p class="t">Managing them</p>
+    <ol>
+      <li>Click the bell to open the panel.</li>
+      <li>Click any notification to go to what it refers to; it is marked read.</li>
+      <li>Use <strong>Mark all read</strong> to clear the badge.</li>
+    </ol>
+  </div>
+
+  <h3>The connection indicator</h3>
+  <p>
+    At the bottom of the sidebar. <strong>Live</strong> means the app is connected and
+    updates arrive instantly. <strong>Reconnecting</strong> means it has lost the connection
+    and is retrying — usually a network blip. Nothing is lost while disconnected, but you
+    will not see other people's changes until it reconnects.
+  </p>
+
+  <h3>Updates</h3>
+  <p>
+    When a new version is released, a bar appears at the top of the window. On Windows the
+    update installs when you restart the app. On macOS you download and install it yourself —
+    an unsigned Mac application is not allowed to replace itself.
+  </p>
+</section>
+
+<!-- 03 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 03</p>
+  <h2>Command — your dashboard</h2>
+  <p class="chapter-intro">
+    The screen you land on. It answers one question: what needs you today.
+  </p>
+
+  <table>
+    <thead><tr><th>Panel</th><th>What it shows</th></tr></thead>
+    <tbody>
+      <tr><td>Awaiting your decision</td><td>Approval requests waiting on you specifically.</td></tr>
+      <tr><td>Open tasks assigned to you</td><td>Everything assigned to you that is not done or cancelled.</td></tr>
+      <tr><td>Files stored</td><td>How much storage the company is using.</td></tr>
+      <tr><td>Next 24 hours</td><td>Your meetings, in your own time zone.</td></tr>
+      <tr><td>Your tasks</td><td>A shortcut into the task board.</td></tr>
+      <tr><td>Announcements</td><td>Recent company announcements, most urgent first.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Everything here is a link into the module it came from. Nothing is edited on this screen.
+  </p>
+</section>
+
+<!-- 04 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 04</p>
+  <h2>Meetings</h2>
+  <p class="chapter-intro">
+    Scheduling, responding to and joining meetings. Times are always shown in your own time
+    zone, set in Settings.
+  </p>
+
+  <h3>Seeing your schedule</h3>
+  <p>
+    The left panel lists the next two weeks, grouped by day. Click any meeting to see its
+    detail. You only see meetings you are invited to.
+  </p>
+
+  <h3>Scheduling a meeting</h3>
+  <div class="howto">
+    <p class="t">Create a meeting</p>
+    <ol>
+      <li>Click <strong>Schedule a meeting</strong>.</li>
+      <li>Give it a title, a date and a start time.</li>
+      <li>Choose a duration and, if you need one, a room.</li>
+      <li>Tick the colleagues to invite.</li>
+      <li>Click <strong>Schedule meeting</strong>.</li>
+    </ol>
+  </div>
+  <p>
+    Everyone invited is notified and the meeting appears in their schedule. You are recorded
+    as accepted automatically, since you organised it.
+  </p>
+
+  <h3>Responding to an invitation</h3>
+  <p>
+    Open the meeting and choose <strong>Accepted</strong>, <strong>Tentative</strong> or
+    <strong>Declined</strong>. Everyone invited can see who has responded and how.
+  </p>
+
+  <h3>Joining</h3>
+  <p>
+    Meetings with video show a <strong>Join video meeting</strong> button. If video has not
+    been configured for the company, the meeting still schedules normally and the join
+    button explains that it is unavailable rather than failing silently.
+  </p>
+
+  <h3>Changing or cancelling</h3>
+  <p>
+    The organiser can edit the time, room, agenda and attendee list, or cancel it entirely.
+    Everyone invited is notified of either.
+  </p>
+  <div class="note">
+    <span class="lbl">Rooms</span>
+    <p>
+      A room can only be booked by one meeting at a time. If it is taken, you are told
+      when you try to save rather than after the fact.
+    </p>
+  </div>
+</section>
+
+<!-- 05 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 05</p>
+  <h2>Chat</h2>
+  <p class="chapter-intro">
+    Channels for teams and direct messages between two people.
+  </p>
+
+  <h3>Channels and direct messages</h3>
+  <p>
+    The left panel lists everything you are a member of. A number beside a room means unread
+    messages. Selecting a room marks it read.
+  </p>
+
+  <h3>Starting a conversation</h3>
+  <div class="howto">
+    <p class="t">A new channel</p>
+    <ol>
+      <li>Click <strong>New channel</strong>.</li>
+      <li>Name it and add a topic if useful.</li>
+      <li>Choose whether it is private (invited members only) or open to the company.</li>
+      <li>Add the people who should be in it.</li>
+    </ol>
+  </div>
+  <div class="howto">
+    <p class="t">A direct message</p>
+    <ol>
+      <li>Click <strong>Message someone</strong>.</li>
+      <li>Search for the colleague and select them.</li>
+    </ol>
+    <p style="margin-top:1.5mm">
+      If you already have a conversation with that person, you are taken to it rather than
+      starting a second one.
+    </p>
+  </div>
+
+  <h3>Sending and editing</h3>
+  <ul>
+    <li>Type in the box at the bottom and press <strong>Enter</strong> to send.</li>
+    <li>You can edit or delete your own messages. An edited message is marked as edited.</li>
+    <li>React to a message to acknowledge it without adding to the conversation.</li>
+    <li>Mention a colleague to notify them specifically.</li>
+    <li>Attach a file — it goes through the same storage and virus scanning as Files.</li>
+  </ul>
+  <div class="note">
+    <span class="lbl">Moderation</span>
+    <p>
+      Administrators can delete any message. Deletion is recorded in the audit trail, so it
+      is visible that something was removed and by whom.
+    </p>
+  </div>
+</section>
+
+<!-- 06 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 06</p>
+  <h2>Tasks</h2>
+  <p class="chapter-intro">
+    Work organised into projects and tracked on a board.
+  </p>
+
+  <h3>Projects</h3>
+  <p>
+    Choose a project from the dropdown at the top. Each project has its own board and its
+    own members. Anyone who can create projects can start one.
+  </p>
+  <div class="howto">
+    <p class="t">Create a project</p>
+    <ol>
+      <li>Click <strong>New project</strong>.</li>
+      <li>Give it a name and a short key — the key prefixes every task reference, for example <code>Q3P-14</code>.</li>
+      <li>Add members.</li>
+    </ol>
+  </div>
+
+  <h3>The board</h3>
+  <p>
+    Five columns: <strong>Todo</strong>, <strong>In Progress</strong>, <strong>Review</strong>,
+    <strong>Blocked</strong> and <strong>Done</strong>. Each card shows its reference, its due
+    date, and a coloured dot for priority.
+  </p>
+
+  <h3>Creating and updating tasks</h3>
+  <div class="howto">
+    <p class="t">Add a task</p>
+    <ol>
+      <li>Click <strong>New task</strong>.</li>
+      <li>Enter a title, and optionally a description, assignee, priority and due date.</li>
+      <li>Save.</li>
+    </ol>
+  </div>
+  <p>
+    To move a task, use the status dropdown on its card. To see everything about it, click
+    the title.
+  </p>
+
+  <h3>Inside a task</h3>
+  <ul>
+    <li><strong>Comments</strong> — discussion attached to the work rather than in chat.</li>
+    <li><strong>History</strong> — who changed what, and when.</li>
+    <li><strong>Dependencies</strong> — other tasks this one waits on.</li>
+    <li><strong>Watchers</strong> — people notified of changes without being assigned.</li>
+  </ul>
+  <div class="note">
+    <span class="lbl">Two people editing at once</span>
+    <p>
+      If someone else saves a task while you have it open, your save is refused and you are
+      asked to reload. Nothing you typed is lost, and neither is their change.
+    </p>
+  </div>
+</section>
+
+<!-- 07 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 07</p>
+  <h2>Files</h2>
+  <p class="chapter-intro">
+    Company file storage, with folders, version history and a recycle bin.
+  </p>
+
+  <h3>Browsing and uploading</h3>
+  <p>Folders are on the left; the files in the selected folder fill the table.</p>
+  <div class="howto">
+    <p class="t">Upload a file</p>
+    <ol>
+      <li>Select the folder you want it in.</li>
+      <li>Click <strong>Upload</strong> and choose the file.</li>
+      <li>Wait for it to finish — it is scanned before it becomes available.</li>
+    </ol>
+  </div>
+  <div class="warn">
+    <span class="lbl">If an upload is rejected</span>
+    <p>
+      Files are scanned for malware. A file found to be infected is quarantined and cannot
+      be downloaded by anyone. You are told plainly rather than the upload appearing to fail.
+    </p>
+  </div>
+
+  <h3>What you can do with a file</h3>
+  <table>
+    <thead><tr><th>Action</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td>Download</td><td>Opens your computer's save dialog so you choose where it goes.</td></tr>
+      <tr><td>Version history</td><td>Every version ever uploaded, with who uploaded it. Older versions stay downloadable.</td></tr>
+      <tr><td>Share outside <span class="who">Manager+</span></td><td>Creates an expiring link for someone with no account. See chapter 15.</td></tr>
+      <tr><td>Move to recycle bin</td><td>Removes it from the folder without destroying it.</td></tr>
+      <tr><td>Restore</td><td>Brings a recycled file back.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>New versions</h3>
+  <p>
+    Uploading a file with the same name into the same folder creates a new version rather
+    than a duplicate. The previous version is kept.
+  </p>
+
+  <h3>Folders</h3>
+  <p>
+    Click <strong>New folder</strong> to add one. Folders can be nested.
+  </p>
+</section>
+
+<!-- 08 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 08</p>
+  <h2>Documents</h2>
+  <p class="chapter-intro">
+    The company's written knowledge — policies, runbooks, decision records, onboarding
+    notes. Anything worth writing down and keeping.
+  </p>
+
+  <h3>Spaces</h3>
+  <p>
+    A space groups related pages. Most should be readable by everyone; restricted spaces
+    exist for the few things that genuinely are not, such as board papers.
+  </p>
+  <div class="howto">
+    <p class="t">Create a space <span class="who">Manager+</span></p>
+    <ol>
+      <li>Click <strong>New space</strong>.</li>
+      <li>Name it and describe what lives there.</li>
+      <li>Choose <strong>Everyone in the company</strong> or <strong>Only people I grant access to</strong>.</li>
+    </ol>
+  </div>
+
+  <h3>Writing a page</h3>
+  <div class="howto">
+    <p class="t">Create and publish</p>
+    <ol>
+      <li>Select the space, then click <strong>New page</strong>.</li>
+      <li>Give it a title and click <strong>Create and edit</strong>.</li>
+      <li>Write in the content box. Basic HTML works: headings, paragraphs, lists, links, tables and code.</li>
+      <li>Add a note saying what changed — the next reader will thank you.</li>
+      <li>Click <strong>Save as draft</strong> to keep it private, or <strong>Publish</strong> to make it visible and searchable.</li>
+    </ol>
+  </div>
+  <div class="note">
+    <span class="lbl">Drafts are invisible</span>
+    <p>
+      A draft does not appear in search. Unpublishing a page removes it from search again.
+    </p>
+  </div>
+
+  <h3>History</h3>
+  <p>
+    Every save is kept. Click <strong>History</strong> to see the versions, who wrote each one
+    and why. <strong>Restore</strong> puts an old version back as a new version — nothing is
+    ever erased.
+  </p>
+
+  <h3>Two people editing at once</h3>
+  <div class="warn">
+    <span class="lbl">Your work is not lost</span>
+    <p>
+      If someone saves while you are editing, your save is refused and a message appears.
+      Your text stays in the box. Copy what you need, reload, and reapply it. The system
+      will not merge two people's prose automatically, because doing so silently produces
+      something neither person wrote.
+    </p>
+  </div>
+</section>
+
+<!-- 09 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 09</p>
+  <h2>Announcements</h2>
+  <p class="chapter-intro">
+    Company-wide notices. One-way — for discussion, use chat.
+  </p>
+
+  <h3>Reading</h3>
+  <p>
+    Unread announcements are shown in bold. Opening one marks it read. Priority is shown by
+    a coloured bar: normal, <strong>important</strong>, or <strong>critical</strong>.
+  </p>
+
+  <h3>Acknowledging</h3>
+  <p>
+    Some announcements require acknowledgement. Open it and click the acknowledge button.
+    Whoever published it can see who has and has not.
+  </p>
+
+  <h3>Publishing <span class="who">Manager+</span></h3>
+  <div class="howto">
+    <p class="t">Publish an announcement</p>
+    <ol>
+      <li>Click <strong>New announcement</strong>.</li>
+      <li>Write a title and the body.</li>
+      <li>Set the priority.</li>
+      <li>Choose the audience: everyone, specific departments, or specific groups.</li>
+      <li>Tick <strong>Requires acknowledgement</strong> if people must confirm they have read it.</li>
+      <li>Publish now, or schedule it for later.</li>
+    </ol>
+  </div>
+  <p>
+    After publishing you can see acknowledgement statistics, and delete an announcement if
+    it was sent in error.
+  </p>
+</section>
+
+<!-- 10 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 10</p>
+  <h2>Approvals</h2>
+  <p class="chapter-intro">
+    Requests that need someone's decision — expenses, purchases, leave and anything else
+    configured for your company.
+  </p>
+
+  <h3>The three tabs</h3>
+  <table>
+    <thead><tr><th>Tab</th><th>What is in it</th></tr></thead>
+    <tbody>
+      <tr><td>Awaiting me</td><td>Requests where the decision is yours right now.</td></tr>
+      <tr><td>Raised by me</td><td>Everything you have submitted, and where it has got to.</td></tr>
+      <tr><td>All requests</td><td>Everything you are permitted to see.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Raising a request</h3>
+  <div class="howto">
+    <p class="t">Submit for approval</p>
+    <ol>
+      <li>Click <strong>New request</strong>.</li>
+      <li>Choose the type — the form changes to match it.</li>
+      <li>Fill it in and submit.</li>
+    </ol>
+  </div>
+  <p>
+    Each request gets a reference such as <code>EXPENSE-00014</code>. The route it will take
+    is shown on the request itself, so you can see who it goes to and in what order.
+  </p>
+
+  <h3>Deciding</h3>
+  <p>
+    Open a request from <strong>Awaiting me</strong> and choose:
+  </p>
+  <ul>
+    <li><strong>Approve</strong> — it moves to the next step, or completes.</li>
+    <li><strong>Return for changes</strong> — it goes back to whoever raised it.</li>
+    <li><strong>Reject</strong> — it ends.</li>
+  </ul>
+  <p>Add a comment explaining your decision. Every decision is recorded permanently.</p>
+  <div class="note">
+    <span class="lbl">Why you sometimes see no buttons</span>
+    <p>
+      Decision buttons only appear if the decision is genuinely yours. You cannot approve
+      your own request, and you cannot approve on someone else's behalf.
+    </p>
+  </div>
+
+  <h3>Cancelling</h3>
+  <p>Whoever raised a request can cancel it while it is still pending.</p>
+
+  <h3>If the approver is away</h3>
+  <p>
+    Approvals automatically route to whoever is covering them. See chapter 18 for arranging
+    cover for yourself.
+  </p>
+</section>
+
+<!-- 11 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 11</p>
+  <h2>Leave</h2>
+  <p class="chapter-intro">
+    Booking time off, and seeing what you have left.
+  </p>
+
+  <h3>Your balance</h3>
+  <p>
+    The cards at the top show each leave type. The large number is what you have
+    <strong>left</strong>, and beneath it the breakdown: days taken, days awaiting approval,
+    and your total entitlement. Booked-but-unapproved days are already counted against you,
+    so the number is what you can actually still book.
+  </p>
+
+  <h3>Booking leave</h3>
+  <div class="howto">
+    <p class="t">Book time off</p>
+    <ol>
+      <li>Click <strong>Book leave</strong>.</li>
+      <li>Choose the type — annual, sick, unpaid and so on.</li>
+      <li>Pick the first day and the last day. For a single day, leave the last day blank.</li>
+      <li>Tick <strong>Half day</strong> on either end if you only need part of that day.</li>
+      <li>Add a note if it helps your approver.</li>
+      <li>Click <strong>Book leave</strong>.</li>
+    </ol>
+  </div>
+  <div class="good">
+    <span class="lbl">Weekends and holidays are free</span>
+    <p>
+      Only working days count. A week off that contains a public holiday costs you four
+      days, not five.
+    </p>
+  </div>
+  <p>
+    Most types go to your manager for approval and appear in your Approvals list. Some types,
+    such as sick leave, are recorded immediately without approval.
+  </p>
+
+  <h3>Things that will be refused</h3>
+  <ul>
+    <li>Dates that overlap leave you have already booked.</li>
+    <li>A range containing no working days.</li>
+    <li>More days than you have left — the message tells you both numbers.</li>
+  </ul>
+
+  <h3>Cancelling</h3>
+  <p>
+    Click <strong>Cancel</strong> on any pending or approved booking. The days go straight
+    back to your balance.
+  </p>
+
+  <h3>Who is away <span class="who">Manager+</span></h3>
+  <p>
+    Managers see a panel listing everyone off in the next four weeks — worth checking before
+    planning anything.
+  </p>
+</section>
+
+<!-- 12 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 12</p>
+  <h2>Finance</h2>
+  <p class="chapter-intro">
+    Four tabs: expense claims, budgets, suppliers and company equipment. You see only the
+    tabs your role permits.
+  </p>
+
+  <h3>Expense claims</h3>
+  <div class="howto">
+    <p class="t">Make a claim</p>
+    <ol>
+      <li>Click <strong>New claim</strong>.</li>
+      <li>Say what it is for, and pick a budget if it belongs to one.</li>
+      <li>Fill in the first line: date, category, merchant, amount and any tax.</li>
+      <li>Attach the receipt. Some categories require one above a certain amount.</li>
+      <li>Click <strong>Add line</strong> for each further receipt.</li>
+      <li>Click <strong>Save draft</strong>.</li>
+    </ol>
+  </div>
+  <p>
+    The running total is shown as you type, but the figure that counts is worked out from
+    the lines when you save.
+  </p>
+  <div class="howto">
+    <p class="t">Submit it</p>
+    <ol>
+      <li>Open the claim from the list.</li>
+      <li>Check the lines.</li>
+      <li>Click <strong>Submit for approval</strong>.</li>
+    </ol>
+  </div>
+  <p>
+    A claim moves through <strong>Draft → Submitted → Approved → Reimbursed</strong>, or is
+    rejected. Approved and paid are separate on purpose, so an approved claim nobody has
+    paid is visible rather than forgotten.
+  </p>
+
+  <h4>Recording payment <span class="who">Admin</span></h4>
+  <p>
+    Open an approved claim, enter the payment reference and mark it paid.
+  </p>
+  <div class="warn">
+    <span class="lbl">Separation of duties</span>
+    <p>
+      Whoever approved a claim cannot also record its payment, and nobody can pay their own
+      claim. This is enforced, not a convention.
+    </p>
+  </div>
+
+  <h3>Budgets <span class="who">Admin</span></h3>
+  <p>
+    Each card shows what is left, with a bar splitting money already <strong>spent</strong>
+    from money <strong>committed</strong> — approved but not yet paid. Committed money is
+    gone for planning purposes even though it has not left the account.
+  </p>
+  <div class="howto">
+    <p class="t">Create a budget</p>
+    <ol>
+      <li>Click <strong>New budget</strong>.</li>
+      <li>Name it, set the period and the amount.</li>
+    </ol>
+  </div>
+
+  <h3>Suppliers <span class="who">Manager+</span></h3>
+  <p>
+    Companies you buy from. Add one with <strong>Add supplier</strong>. A supplier can be
+    linked to a client organisation so both screens refer to the same company.
+  </p>
+
+  <h3>Equipment <span class="who">Manager+ to view, Admin to change</span></h3>
+  <p>
+    The register of laptops, phones, monitors and anything else worth tracking.
+  </p>
+  <div class="howto">
+    <p class="t">Add equipment</p>
+    <ol>
+      <li>Click <strong>Add equipment</strong>.</li>
+      <li>Give it an asset tag, a name and a category.</li>
+      <li>Record the serial number and purchase cost if you have them.</li>
+    </ol>
+  </div>
+  <div class="howto">
+    <p class="t">Assign or return it</p>
+    <ol>
+      <li>Click <strong>Assign</strong> beside the item.</li>
+      <li>Choose who is taking it, or <strong>Nobody — back in stock</strong> to return it.</li>
+      <li>Note its condition.</li>
+    </ol>
+  </div>
+  <p>
+    Every assignment is kept, so "who had this in March" has an answer. Search by tag, name
+    or serial number.
+  </p>
+</section>
+
+<!-- 13 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 13</p>
+  <h2>Growth</h2>
+  <p class="chapter-intro">
+    Performance reviews and personal goals.
+  </p>
+
+  <h3>Reviews</h3>
+  <p>
+    Split into <strong>About you</strong> and <strong>Yours to write</strong>, so what you owe
+    is obvious.
+  </p>
+  <div class="howto">
+    <p class="t">Write your self-assessment</p>
+    <ol>
+      <li>Open your review from <strong>About you</strong>.</li>
+      <li>Write in the self-assessment box.</li>
+      <li>Click <strong>Save self-assessment</strong>.</li>
+    </ol>
+  </div>
+  <div class="howto">
+    <p class="t">Review someone <span class="who">Manager+</span></p>
+    <ol>
+      <li>Open the review from <strong>Yours to write</strong>.</li>
+      <li>Read their self-assessment — visible to you, but not editable.</li>
+      <li>Write your assessment and choose an overall rating.</li>
+      <li>Click <strong>Save without sharing</strong> to keep working, or <strong>Save and share</strong> to release it.</li>
+    </ol>
+  </div>
+  <div class="note">
+    <span class="lbl">Nothing is seen before you share it</span>
+    <p>
+      The person being reviewed cannot see your assessment until you share it. Until then
+      they are told only that it has not been shared yet.
+    </p>
+  </div>
+
+  <h3>Goals</h3>
+  <div class="howto">
+    <p class="t">Set and track a goal</p>
+    <ol>
+      <li>Type it into the box and click <strong>Add</strong>.</li>
+      <li>Drag the slider as you make progress.</li>
+      <li>Set the status separately: active, at risk, achieved or dropped.</li>
+    </ol>
+  </div>
+  <p>
+    Progress and status are separate because "eighty percent done but at risk" is a real
+    state and the one worth flagging. The percentage turns amber when a goal is at risk.
+  </p>
+
+  <h3>Review cycles <span class="who">Admin</span></h3>
+  <div class="howto">
+    <p class="t">Open a cycle</p>
+    <ol>
+      <li>Go to the <strong>Cycles</strong> tab.</li>
+      <li>Name it, set when it opens and closes.</li>
+      <li>Click <strong>Open cycle</strong>.</li>
+    </ol>
+  </div>
+  <div class="warn">
+    <span class="lbl">Check the reporting line first</span>
+    <p>
+      A review is created for everyone who has a manager set. Anyone without one gets no
+      review at all.
+    </p>
+  </div>
+</section>
+
+<!-- 14 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 14</p>
+  <h2>People</h2>
+  <p class="chapter-intro">
+    The company directory, and the administrative operations that go with it.
+  </p>
+
+  <h3>Finding someone</h3>
+  <p>
+    Search by name or email, and filter by status. Select anyone to see their profile.
+    Guests from client companies never appear here — they are in Clients.
+  </p>
+
+  <h3>Adding someone <span class="who">Admin</span></h3>
+  <div class="howto">
+    <p class="t">Add a colleague</p>
+    <ol>
+      <li>Click <strong>Add someone</strong>.</li>
+      <li>Enter their work email — it must be on a verified company domain.</li>
+      <li>Enter their name, job title, access level and department.</li>
+      <li>Click <strong>Create account</strong>.</li>
+      <li>Send them the activation link that appears. It is single-use and expires in 72 hours.</li>
+    </ol>
+  </div>
+  <p>
+    You never set a password for someone else. If the link expires, issue a new one from
+    their profile.
+  </p>
+
+  <h3>Changing someone's access <span class="who">Admin</span></h3>
+  <p>
+    On their profile, change the access level dropdown. Only a super administrator can grant
+    or remove administrator access, and nobody can change their own.
+  </p>
+
+  <h3>Suspending <span class="who">Admin</span></h3>
+  <p>
+    Suspending closes every session and live connection immediately. It is reversible —
+    use <strong>Reactivate</strong>. Files and history are kept. A reason is required and
+    recorded.
+  </p>
+
+  <h3>Offboarding <span class="who">Admin</span></h3>
+  <p>
+    For someone leaving for good. This is permanent.
+  </p>
+  <div class="howto">
+    <p class="t">Offboard someone</p>
+    <ol>
+      <li>Open their profile and click <strong>Offboard</strong>.</li>
+      <li>Choose who takes over their work.</li>
+      <li>Give a reason and their last day.</li>
+      <li>Confirm.</li>
+    </ol>
+  </div>
+  <p>
+    Their projects, open tasks, files, folders, direct reports and any approval waiting on
+    them all move to the successor in one step. Finished tasks stay with them, because
+    reassigning those would misattribute the work.
+  </p>
+  <div class="warn">
+    <span class="lbl">Equipment does not move by itself</span>
+    <p>
+      If they are holding company equipment, the dialog lists it. Closing the account does
+      not collect a laptop — arrange the return, then mark each item back into stock in
+      Finance.
+    </p>
+  </div>
+
+  <h3>Employment records <span class="who">Admin</span></h3>
+  <p>
+    Their profile shows their employment history: job titles, dates, employment type and the
+    reason for each change. Older records stay visible, dimmed.
+  </p>
+  <div class="howto">
+    <p class="t">Record a change of terms</p>
+    <ol>
+      <li>Click <strong>Record change</strong>.</li>
+      <li>Enter the new job title, type and effective date.</li>
+      <li>Enter the salary if you are permitted to see pay.</li>
+      <li>Give a reason, such as "Promotion".</li>
+    </ol>
+  </div>
+  <div class="note">
+    <span class="lbl">Pay is separately restricted</span>
+    <p>
+      Seeing an employment history does not mean seeing salaries. Where pay is withheld the
+      row says so rather than showing a blank, so it is never mistaken for "nothing
+      recorded". Salaries are encrypted and never written to the audit trail.
+    </p>
+  </div>
+  <p>
+    A change cannot be back-dated over terms someone was already paid under. That would be a
+    correction rather than an edit, and it should be visible as one.
+  </p>
+</section>
+
+<!-- 15 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 15</p>
+  <h2>Clients</h2>
+  <p class="chapter-intro">
+    The organisations you work with, and everyone outside the company who can reach your
+    work. Two ways to share: a guest account for an ongoing relationship, a link for a
+    one-off handover.
+  </p>
+
+  <h3>Organisations</h3>
+  <div class="howto">
+    <p class="t">Add an organisation <span class="who">Manager+</span></p>
+    <ol>
+      <li>Click <strong>Add organisation</strong>.</li>
+      <li>Name it and choose the relationship: client, vendor, partner or contractor.</li>
+      <li>Add a website and notes if useful.</li>
+    </ol>
+  </div>
+
+  <h3>Guest accounts</h3>
+  <p>
+    A guest is a named person at a client who signs in with their own work address. They
+    never appear in the People directory and can reach <strong>nothing</strong> until you
+    share something specific with them.
+  </p>
+  <div class="howto">
+    <p class="t">Invite a guest <span class="who">Manager+</span></p>
+    <ol>
+      <li>Select the organisation and click <strong>Invite guest</strong>.</li>
+      <li>Enter their work email, name and role.</li>
+      <li>Set when their access ends. Leave blank for 90 days.</li>
+      <li>Send them the activation link that appears.</li>
+    </ol>
+  </div>
+  <p>
+    Expand any guest to see exactly what they can reach. Their access end date is shown
+    beside their name, and turns amber as it approaches.
+  </p>
+  <div class="howto">
+    <p class="t">Remove a guest's access</p>
+    <ol>
+      <li>Expand the guest.</li>
+      <li>Click <strong>Revoke all access</strong>.</li>
+    </ol>
+    <p style="margin-top:1.5mm">
+      This closes their sessions and expires everything shared with them at once.
+    </p>
+  </div>
+  <div class="note">
+    <span class="lbl">A colleague cannot be a guest</span>
+    <p>
+      An email on your own company domain is refused here. Colleagues are added through
+      People.
+    </p>
+  </div>
+
+  <h3>Share links</h3>
+  <p>
+    For sending a file to someone who should not need an account at all.
+  </p>
+  <div class="howto">
+    <p class="t">Share a file outside the company <span class="who">Manager+</span></p>
+    <ol>
+      <li>In <strong>Files</strong>, click the share icon on the file.</li>
+      <li>Choose how long the link lasts — 1 to 90 days.</li>
+      <li>Optionally limit how many times it can be opened.</li>
+      <li>Optionally set a password, and send it separately from the link.</li>
+      <li>Record who it is for, then create and copy the link.</li>
+    </ol>
+  </div>
+  <div class="warn">
+    <span class="lbl">A link is a key</span>
+    <p>
+      Anyone holding the link has the access. Keep them short-lived, and use a password for
+      anything sensitive. You can withdraw a link at any time, and every use is recorded.
+    </p>
+  </div>
+</section>
+
+<!-- 16 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 16</p>
+  <h2>Reports <span class="who">Manager+</span></h2>
+  <p class="chapter-intro">
+    Where the company stands, and what needs attention.
+  </p>
+
+  <h3>Needs attention</h3>
+  <p>
+    At the top, because these cost money quietly if nobody looks:
+  </p>
+  <ul>
+    <li><strong>Approved but unpaid</strong> — expense claims nobody has reimbursed, oldest first.</li>
+    <li><strong>Equipment with people who have left</strong> — the standing list of what was missed at offboarding.</li>
+    <li><strong>Overdue approvals</strong> — requests past their due date, and who they are with.</li>
+  </ul>
+
+  <h3>The rest</h3>
+  <table>
+    <thead><tr><th>Report</th><th>What it answers</th></tr></thead>
+    <tbody>
+      <tr><td>People</td><td>Headcount by status and department, plus external guests with access.</td></tr>
+      <tr><td>Time to a decision</td><td>How long approvals take on average, and how many were decided.</td></tr>
+      <tr><td>Equipment at cost</td><td>Total value of the register, broken down by status.</td></tr>
+      <tr><td>Spend by category</td><td>Where approved money has gone.</td></tr>
+      <tr><td>Budgets</td><td>How much of each budget is used, flagged when nearly exhausted.</td></tr>
+      <tr><td>Leave taken</td><td>Days off by type over the past year.</td></tr>
+      <tr><td>Barely taken any leave</td><td>People still holding most of their entitlement — a December problem, and often a signal before that.</td></tr>
+      <tr><td>Away in the next month</td><td>Who is off, and when.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 17 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 17</p>
+  <h2>Administration <span class="who">Admin</span></h2>
+  <p class="chapter-intro">
+    Five tabs covering the health of the system and the settings behind it.
+  </p>
+
+  <h3>Operations</h3>
+  <p>
+    Background work — events waiting, the oldest one, and dead letters over the past week.
+    Also account counts. Dead letters mean something failed repeatedly and needs
+    investigation.
+  </p>
+
+  <h3>Audit trail</h3>
+  <p>
+    Every significant action: who did what, to what, from which address and when. It cannot
+    be edited or deleted by anyone, including administrators — the database itself refuses.
+  </p>
+  <div class="howto">
+    <p class="t">Export it</p>
+    <ol>
+      <li>Filter by date, actor or action.</li>
+      <li>Click <strong>Export</strong> for a file you can keep or hand to an auditor.</li>
+    </ol>
+  </div>
+
+  <h3>Groups</h3>
+  <p>
+    Named sets of people, used for announcement audiences and access grants. Create a group,
+    then manage its members.
+  </p>
+
+  <h3>Company</h3>
+  <p>
+    The company name and legal name, and the verified email domains. Only addresses on a
+    verified domain can be given accounts.
+  </p>
+  <div class="warn">
+    <span class="lbl">Domains matter more than they look</span>
+    <p>
+      Removing a domain stops new accounts being created on it. Get this wrong and nobody
+      can be added.
+    </p>
+  </div>
+
+  <h3>Leave</h3>
+  <p>Three things to configure before anyone books time off:</p>
+  <ul>
+    <li><strong>Leave types</strong> — whether each is paid, needs approval, and deducts from a balance.</li>
+    <li><strong>Public holidays</strong> — the calendar for the year.</li>
+    <li><strong>Entitlement</strong> — days per person per type, edited directly in the grid.</li>
+  </ul>
+  <div class="warn">
+    <span class="lbl">Set the holidays before anyone books</span>
+    <p>
+      A missing public holiday does not fail loudly. It silently charges every employee a
+      day of their own entitlement for a day the office was shut.
+    </p>
+  </div>
+</section>
+
+<!-- 18 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 18</p>
+  <h2>Your settings</h2>
+  <p class="chapter-intro">
+    Everything about your own account.
+  </p>
+
+  <h3>Profile</h3>
+  <p>
+    Your display name, job title and time zone. The time zone matters — every meeting time
+    you see is converted into it. Use an identifier such as <code>Asia/Colombo</code>.
+  </p>
+
+  <h3>Password</h3>
+  <div class="howto">
+    <p class="t">Change your password</p>
+    <ol>
+      <li>Enter your current password, then the new one — at least 12 characters.</li>
+      <li>Click <strong>Change password</strong>.</li>
+    </ol>
+  </div>
+  <p>
+    Changing it signs you out everywhere, including this device, and you sign in again with
+    the new one. Getting the current password wrong just shows an error — it does not sign
+    you out.
+  </p>
+
+  <h3>Cover while you are away</h3>
+  <p>
+    Approvals routed to you go to whoever is covering, for as long as the window lasts. It
+    ends by itself.
+  </p>
+  <div class="howto">
+    <p class="t">Arrange cover</p>
+    <ol>
+      <li>Choose the colleague covering for you.</li>
+      <li>Set the dates.</li>
+      <li>Leave <strong>hand over decisions already waiting on me</strong> ticked unless you intend to come back to them.</li>
+      <li>Click <strong>Arrange cover</strong>.</li>
+    </ol>
+  </div>
+  <p>Withdraw cover early with <strong>Withdraw</strong>. Ended cover stays listed, dimmed.</p>
+
+  <h3>Signed-in devices</h3>
+  <p>
+    Every session on your account, with the device, address and when it was last used. Click
+    <strong>Revoke</strong> on anything you do not recognise — that session ends immediately.
+  </p>
+</section>
+
+<!-- 19 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 19</p>
+  <h2>For people outside the company</h2>
+  <p class="chapter-intro">
+    What clients and new joiners see. They use a website, never the desktop app.
+  </p>
+
+  <h3>Opening a share link</h3>
+  <p>
+    The page shows the file name, its size, and when the link stops working — nothing else
+    about your company. If a password was set, they enter it. Then they download.
+  </p>
+  <p>
+    Expired, withdrawn, used-up and never-existed links all show the same message. That is
+    deliberate: telling them apart would let someone confirm a guessed link.
+  </p>
+
+  <h3>Activating an account</h3>
+  <p>
+    Both colleagues and guests activate the same way — open the emailed link, choose a
+    password. Guests then sign in on the website; colleagues install the desktop app.
+  </p>
+
+  <h3>Resetting a password</h3>
+  <p>
+    Anyone with an account can reset from the website, whether or not they can get into the
+    app.
+  </p>
+</section>
+
+<!-- 20 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 20</p>
+  <h2>Search</h2>
+  <p class="chapter-intro">
+    One search across everything you are allowed to see.
+  </p>
+  <p>
+    Press <code>/</code> anywhere, or click the search bar. Results are grouped by type —
+    chat, files, tasks, meetings, announcements and documents — and you can filter to one
+    type. Matching words are highlighted in the snippet.
+  </p>
+  <div class="note">
+    <span class="lbl">You cannot search your way into something</span>
+    <p>
+      Search results respect the same permissions as everything else. A private channel you
+      are not in, or a restricted document space, will never appear.
+    </p>
+  </div>
+</section>
+
+<!-- 21 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 21</p>
+  <h2>When something goes wrong</h2>
+
+  <h3>The app says it cannot connect</h3>
+  <p>
+    Check your internet connection. The indicator at the bottom of the sidebar shows whether
+    the app is reaching the server. If it stays on <strong>Reconnecting</strong> for more than
+    a minute or two, tell your administrator.
+  </p>
+
+  <h3>You were signed out unexpectedly</h3>
+  <p>Usually one of:</p>
+  <ul>
+    <li>Five days have passed since you signed in.</li>
+    <li>You changed your password — that signs out every device.</li>
+    <li>An administrator suspended the account.</li>
+    <li>Someone revoked the session from Settings.</li>
+  </ul>
+
+  <h3>A button you expect is missing</h3>
+  <p>
+    Almost always permissions. Actions only appear when they are genuinely available to you —
+    the system does not show buttons that would fail. Ask an administrator if you think your
+    access is wrong.
+  </p>
+
+  <h3>You did not receive an email</h3>
+  <p>
+    Check spam first. Activation links expire after 72 hours and password reset links after
+    an hour. Ask for a new one rather than waiting.
+  </p>
+
+  <h3>Everyone is locked out</h3>
+  <p>
+    There is a recovery path that needs access to the server itself. Your administrator has
+    the procedure in the deployment guide. It records itself in the audit trail, so a
+    recovery is always visible afterwards.
+  </p>
+</section>
+
+<!-- 22 -->
+<section class="chapter">
+  <p class="chapter-eyebrow">Chapter 22</p>
+  <h2>Who can do what</h2>
+  <p class="chapter-intro">
+    Six access levels. Each includes everything below it unless stated otherwise.
+  </p>
+
+  <table>
+    <thead><tr><th>Level</th><th>Intended for</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Staff</strong></td><td>Everyone. Chat, tasks, files, documents, meetings, own leave and expenses, own goals.</td></tr>
+      <tr><td><strong>Manager</strong></td><td>Team leads. Approve requests, see who is away, publish announcements, manage clients and guests, share files externally, conduct reviews, view reports and equipment.</td></tr>
+      <tr><td><strong>Auditor</strong></td><td>Read-only oversight. The audit trail, employment histories and reports — but never salaries.</td></tr>
+      <tr><td><strong>Admin</strong></td><td>Runs the company day to day. Accounts, offboarding, employment records including pay, budgets, reimbursement, leave configuration, review cycles, groups, company settings.</td></tr>
+      <tr><td><strong>Super admin</strong></td><td>Everything an admin can do, plus granting and removing administrator access.</td></tr>
+      <tr><td><strong>Guest</strong></td><td>External. Only what has been explicitly shared, and only until their access expires.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <span class="lbl">Two rules that apply to everyone</span>
+    <p>
+      Nobody can approve their own request, and whoever approves an expense cannot also
+      record its payment. These hold regardless of access level, including for super
+      administrators.
+    </p>
+  </div>
+</section>
+
+</body>
+</html>

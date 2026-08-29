@@ -69,6 +69,16 @@ services:
       S3_SECRET_ACCESS_KEY: infinity_dev_only
       CLAMAV_HOST: clamav
       CLAMAV_PORT: '3310'
+      # Every system message goes out from this address. The password is deliberately not
+      # written here - it is read from the operator's environment, so the committed file
+      # never carries a mailbox credential.
+      NOTIFY_DRIVER: smtp
+      NOTIFY_DEFAULT_DOMAIN: iinfinityai.com
+      NOTIFY_FROM_ADDRESS: noreply@iinfinityai.com
+      SMTP_HOST: mail.iinfinityai.com
+      SMTP_PORT: '587'
+      SMTP_USER: noreply@iinfinityai.com
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?set SMTP_PASSWORD in your shell or a .env beside this file}
       # Development-only value. Production supplies this from a secret store; the
       # application refuses to start if it is missing or under 32 characters. It also
       # signs object download URLs, so rotating it invalidates any still in flight.

@@ -31,6 +31,8 @@ import {
   X,
 } from 'lucide-react';
 import { useSession } from '../lib/session';
+import { desktop, isDesktop } from '../lib/desktop';
+import { UpdateBanner } from './UpdateBanner';
 import { api, type Notification, type Paged } from '../lib/api';
 import { useQuery, invalidate, clearCache } from '../lib/query';
 import { realtime, type ConnectionState } from '../lib/realtime';
@@ -80,7 +82,23 @@ export function Shell({ children }: { children: ReactNode }) {
     const offFrame = realtime.on((frame) => {
       // Reconcile rather than trust: the frame tells us what changed, then the cache
       // refetches the authoritative record.
-      if (frame.type === 'notification.created') invalidate('/me/notifications');
+      if (frame.type === 'notification.created') {
+        invalidate('/me/notifications');
+        /**
+         * On the desktop a notification should reach someone who is not looking at the
+         * window - that is most of the point of leaving the browser. The payload carries
+         * its own route, and the main process validates it before navigating, so a
+         * notification cannot be used to send the window somewhere unexpected.
+         */
+        if (isDesktop) {
+          const payload = frame.data as { title?: string; body?: string; link?: string };
+          void desktop?.notify({
+            title: payload.title ?? 'Infinity Workspace',
+            body: payload.body ?? '',
+            deepLink: payload.link,
+          });
+        }
+      }
       if (frame.type.startsWith('message.')) invalidate('/chat');
       if (frame.type.startsWith('task.')) invalidate('/tasks');
       if (frame.type === 'session.revoked') void signOut();
@@ -116,6 +134,26 @@ export function Shell({ children }: { children: ReactNode }) {
     api.get('/me/notifications?limit=15', signal),
   );
   const unread = (notifications.data?.items ?? []).filter((n) => !n.read_at).length;
+
+  // The dock or taskbar badge is the only signal someone gets with the window closed.
+  useEffect(() => {
+    if (isDesktop) void desktop?.setBadge(unread);
+  }, [unread]);
+
+  /**
+   * A notification click asks the main process to bring the window forward and hands the
+   * route back here. Listening on the window keeps the preload free of any knowledge of
+   * the router.
+   */
+  useEffect(() => {
+    if (!isDesktop) return;
+    const handler = (event: Event) => {
+      const route = (event as CustomEvent<string>).detail;
+      if (typeof route === 'string') navigate(route);
+    };
+    window.addEventListener('infinity:navigate', handler);
+    return () => window.removeEventListener('infinity:navigate', handler);
+  }, [navigate]);
 
   const handleSignOut = useCallback(async () => {
     await signOut();
@@ -260,6 +298,7 @@ export function Shell({ children }: { children: ReactNode }) {
         ) : null}
 
         <main id="main-content" className="workspace-content" tabIndex={-1}>
+          <UpdateBanner />
           {children}
         </main>
       </div>

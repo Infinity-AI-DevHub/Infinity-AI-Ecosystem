@@ -9,6 +9,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Download, FolderPlus, History, Link2, RotateCcw, ShieldAlert, Trash2, Upload } from 'lucide-react';
 import { api, API_URL, ApiError, idempotencyKey, NetworkError } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
+import { saveDownload } from '../lib/desktop';
 import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatBytes, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -93,8 +94,13 @@ export default function Files() {
 
   const download = useMutation(async (fileId: string) => {
     const result = await api.get<{ url: string; filename: string }>(`/files/${fileId}/download`);
-    // The signed URL is used immediately and never stored.
-    window.location.assign(result.url);
+    /**
+     * The signed URL is used immediately and never stored. On the desktop this opens the
+     * OS save dialog rather than navigating - navigating would be caught by the window's
+     * own guard and handed to the system browser, so the file would arrive in Safari
+     * instead of where the person asked for it.
+     */
+    await saveDownload(result.url, result.filename);
     return result;
   });
 

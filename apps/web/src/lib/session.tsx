@@ -15,6 +15,8 @@ import {
   type ReactNode,
 } from 'react';
 import { api, ApiError, onSessionLost, type Capabilities, type Session } from './api';
+import { isDesktop } from './desktop';
+import { clearGrant, restoreGrant } from './tokens';
 
 type SessionState = {
   status: 'loading' | 'authenticated' | 'anonymous';
@@ -35,6 +37,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const load = useCallback(async () => {
     try {
+      /**
+       * On the desktop the session lives in the OS keystore rather than a cookie, so it
+       * has to be lifted into memory before the first request goes out. Without this the
+       * app would show the sign-in screen on every launch despite holding a perfectly
+       * valid five-day grant.
+       */
+      if (isDesktop) await restoreGrant();
+
       const [me, caps] = await Promise.all([
         api.get<Session>('/me'),
         api.get<Capabilities>('/me/capabilities'),
@@ -75,6 +85,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       await api.post('/auth/logout');
     } finally {
+      // The keystore is cleared whatever the server said. A logout that failed to reach
+      // the API still means the person intended to leave this machine.
+      if (isDesktop) clearGrant();
       setSession(null);
       setCapabilities(null);
       setStatus('anonymous');

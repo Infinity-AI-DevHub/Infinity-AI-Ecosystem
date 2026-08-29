@@ -62,12 +62,47 @@ function secret(name: string): string {
   return randomBytes(32).toString('hex');
 }
 
+/**
+ * The notification driver, refusing the no-op in production.
+ *
+ * 'log' accepts a message and delivers nothing. That is right for development and
+ * catastrophic in production: activation invitations and password resets would be
+ * swallowed silently, and the first sign of trouble is a new joiner who cannot get in.
+ * The documentation already promised this was refused; it was not.
+ */
+function notifyDriver(): 'log' | 'smtp' | 'provider' {
+  const driver = (process.env.NOTIFY_DRIVER ?? 'log') as 'log' | 'smtp' | 'provider';
+  if (isProd && driver === 'log') {
+    throw new Error(
+      'NOTIFY_DRIVER=log delivers nothing and is refused in production. ' +
+        'Set it to smtp or provider so invitations and password resets actually arrive.',
+    );
+  }
+  if (isProd && driver === 'smtp' && !process.env.SMTP_HOST) {
+    throw new Error('NOTIFY_DRIVER=smtp requires SMTP_HOST');
+  }
+  return driver;
+}
+
 export const config = {
   env: nodeEnv,
   isProd,
   port: int('PORT', 4000),
   host: process.env.HOST ?? '0.0.0.0',
   publicUrl: url('PUBLIC_URL', 'http://localhost:5173', { httpsInProd: true }),
+  /**
+   * Additional browser origins permitted to call the API.
+   *
+   * The desktop client is served from its own scheme and is handled separately, but there
+   * is more than one browser origin in play: the public surface on its own host, and in
+   * development a second Vite server for it. Listing them beats widening the check,
+   * because a wildcard here would let any site the employee visits call the API with
+   * their cookies attached.
+   */
+  extraOrigins: (process.env.CORS_EXTRA_ORIGINS ?? '')
+    .split(',')
+    .map((value) => value.trim().replace(/\/$/, ''))
+    .filter(Boolean),
   apiUrl: url('API_URL', 'http://localhost:4000', { httpsInProd: true }),
   logLevel: process.env.LOG_LEVEL ?? (isProd ? 'info' : 'debug'),
   trustProxy: bool('TRUST_PROXY', isProd),
@@ -85,7 +120,17 @@ export const config = {
     sessionCookie: process.env.SESSION_COOKIE_NAME ?? 'iw_session',
     csrfCookie: process.env.CSRF_COOKIE_NAME ?? 'iw_csrf',
     sessionTtlMinutes: int('SESSION_TTL_MINUTES', 12 * 60),
-    sessionIdleMinutes: int('SESSION_IDLE_MINUTES', 60),
+    // Browser sessions end after this long without activity.
+    sessionIdleMinutes: int('SESSION_IDLE_MINUTES', 30),
+    /**
+     * Desktop access tokens are short and refresh silently; the refresh itself is capped
+     * by desktopSessionDays, which is not extended by use. A desktop session therefore
+     * ends five days after sign-in no matter how continuously it has been used, and there
+     * is deliberately no idle timeout - an application left open on a locked laptop is a
+     * different risk from a browser tab left open on a shared machine.
+     */
+    desktopAccessMinutes: int('DESKTOP_ACCESS_MINUTES', 15),
+    desktopSessionDays: int('DESKTOP_SESSION_DAYS', 5),
     invitationTtlHours: int('INVITATION_TTL_HOURS', 72),
     cookieDomain: process.env.COOKIE_DOMAIN || undefined,
     /** scrypt work factor. 2^17 keeps hashing near 100ms on modern hardware. */
@@ -123,7 +168,7 @@ export const config = {
    */
   notifications: {
     /** 'log' prints messages (development only); 'smtp' and 'provider' really deliver. */
-    driver: (process.env.NOTIFY_DRIVER ?? 'log') as 'log' | 'smtp' | 'provider',
+    driver: notifyDriver(),
     smtpHost: process.env.SMTP_HOST ?? '',
     smtpPort: int('SMTP_PORT', 587),
     smtpUser: process.env.SMTP_USER ?? '',

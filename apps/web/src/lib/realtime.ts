@@ -7,6 +7,8 @@
  * trigger reconciliation, they are not treated as the source of truth.
  */
 import { API_URL } from './api';
+import { isDesktop } from './desktop';
+import { currentAccessToken } from './tokens';
 
 export type RealtimeFrame = {
   channel: string;
@@ -39,7 +41,16 @@ class RealtimeClient {
     const url = `${API_URL.replace(/^http/, 'ws')}/api/v1/ws`;
     let socket: WebSocket;
     try {
-      socket = new WebSocket(url);
+      /**
+       * A WebSocket cannot carry an Authorization header - neither a browser nor Electron
+       * will set one - so the desktop client passes its token as a subprotocol instead.
+       * That keeps the credential out of the URL, and therefore out of access logs, proxy
+       * logs and history, where it would outlive the session it belongs to.
+       *
+       * The web build sends nothing extra: its cookie travels with the handshake.
+       */
+      const token = isDesktop ? currentAccessToken() : null;
+      socket = token ? new WebSocket(url, ['bearer', token]) : new WebSocket(url);
     } catch {
       this.scheduleReconnect();
       return;

@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "lint": "tsc -b",
     "preview": "vite preview",
-    "typecheck": "tsc -b --force"
+    "typecheck": "tsc -b --force",
+    "build:public": "tsc -b && vite build --config vite.public.config.ts",
+    "dev:public": "vite --config vite.public.config.ts"
   },
   "dependencies": {
     "lucide-react": "^1.34.0",

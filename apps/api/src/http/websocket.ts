@@ -10,7 +10,7 @@ import { one } from '../core/db.js';
 import { config } from '../core/config.js';
 import { logger } from '../core/logger.js';
 import { register, subscribe, unregister, unsubscribe, type Connection } from '../core/realtime.js';
-import { resolveActor } from './context.js';
+import { bearerToken, resolveActor } from './context.js';
 import type { Actor } from '../core/authz.js';
 
 type ClientFrame =
@@ -62,7 +62,20 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/ws', { websocket: true }, async (socket, request) => {
     const originHeader = request.headers.origin;
     const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
-    if (config.isProd && origin !== config.publicUrl && origin !== config.apiUrl) {
+    /**
+     * The desktop client connects from its own `app://` scheme and authenticates with a
+     * bearer token in the subprotocol rather than a cookie. The origin check exists to
+     * stop another website opening an authenticated socket using the browser's cookies -
+     * a risk that does not exist where there is no cookie to borrow, so a token-carrying
+     * connection is judged on the token alone.
+     */
+    const usesBearer = bearerToken(request) !== null;
+    const originAllowed =
+      !config.isProd ||
+      usesBearer ||
+      origin === config.publicUrl ||
+      origin === config.apiUrl;
+    if (!originAllowed) {
       socket.close(4403, 'origin_not_allowed');
       return;
     }
