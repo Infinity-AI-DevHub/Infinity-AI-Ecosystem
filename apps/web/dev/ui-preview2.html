@@ -1,0 +1,62 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Feature preview</title>
+<link rel="stylesheet" href="/src/index.css">
+<link rel="stylesheet" href="/src/styles/tokens.css">
+<link rel="stylesheet" href="/src/App.css">
+<style>.pv{padding:20px;background:var(--bg-app)}
+.pvl{font:600 11px/1 var(--font-sans);letter-spacing:.09em;text-transform:uppercase;
+ color:var(--fg-tertiary);margin:22px 0 10px}</style></head>
+<body class="pv">
+<p class="pvl">Notification banners</p>
+<div style="position:relative;height:250px;background:var(--bg-surface);border-radius:12px;border:1px solid var(--border-default)">
+ <div class="toast-stack" style="position:absolute">
+  <div class="toast toast-critical"><span class="toast-icon">!</span>
+   <div class="toast-text"><strong>Invoice INV-2026-0012 is overdue</strong><span>Acme Holdings · 15 days · LKR 128,000.00</span><a href="#">Open</a></div>
+   <button class="toast-close">×</button></div>
+  <div class="toast toast-warning"><span class="toast-icon">!</span>
+   <div class="toast-text"><strong>Approval waiting on you</strong><span>Expense claim from Kasun R.</span></div>
+   <button class="toast-close">×</button></div>
+  <div class="toast toast-success"><span class="toast-icon">✓</span>
+   <div class="toast-text"><strong>Payment recorded</strong><span>Receipt RCP-2026-0004 sent to the client</span></div>
+   <button class="toast-close">×</button></div>
+  <div class="toast toast-info"><span class="toast-icon">i</span>
+   <div class="toast-text"><strong>Meeting in 10 minutes</strong><span>Client sync · Join online</span></div>
+   <button class="toast-close">×</button></div>
+ </div>
+</div>
+
+<p class="pvl">Shell — redesigned surfaces</p>
+<div style="border:1px solid var(--border-default);border-radius:12px;overflow:hidden">
+<div class="workspace-shell" style="height:430px">
+  <aside class="sidebar">
+    <div class="brand-lockup">
+      <svg width="30" height="30" viewBox="0 0 512 512" style="display:block;color:#fff">
+        <g transform="translate(102.4,52.4) scale(0.6)"><path d="M256,256 C300,160 420,160 420,256 C420,352 300,352 256,256 C212,160 92,160 92,256 C92,352 212,352 256,256" fill="none" stroke="currentColor" stroke-width="73.33" stroke-linecap="round" stroke-linejoin="round"/></g>
+        <rect x="86" y="352" width="340" height="36" rx="18" fill="currentColor" opacity=".55"/></svg>
+      <span class="brand-heading">Infinity Workspace</span>
+    </div>
+    <nav class="nav-list">
+      <a class="nav-item nav-item-active" href="#">Dashboard</a><a class="nav-item" href="#">Tasks</a>
+      <a class="nav-item" href="#">Approvals</a><a class="nav-item" href="#">Finance</a>
+      <a class="nav-item" href="#">Documents</a><a class="nav-item" href="#">People</a>
+    </nav>
+    <div class="sidebar-footer"><span class="connection-pill connection-open"><i class="connection-dot"></i>Connected</span></div>
+  </aside>
+  <div class="workspace-main">
+    <header class="top-bar"><input class="global-search" placeholder="Search everything…  /">
+      <div class="top-bar-actions"><button class="ghost-button">Notifications</button></div></header>
+    <main class="workspace-content"><div class="module-page">
+      <div class="module-header"><div><h1>Dashboard</h1><p>What needs you today</p></div>
+        <div class="header-controls"><button class="ghost-button">Export</button><button class="primary-button">New task</button></div></div>
+      <div class="tab-row"><button class="tab tab-active">Overview</button><button class="tab">Mine</button><button class="tab">Team</button></div>
+      <div class="dashboard-grid">
+        <div class="panel metric-card"><span class="panel-title">Open approvals</span><strong>12</strong><span class="field-hint">3 waiting on you</span></div>
+        <div class="panel metric-card"><span class="panel-title">Overdue invoices</span><strong class="value-warn">LKR 128,000</strong><span class="field-hint">3 clients</span></div>
+        <div class="panel metric-card"><span class="panel-title">Tasks due</span><strong>7</strong><span class="field-hint">2 today</span></div>
+      </div>
+    </div></main>
+  </div>
+</div>
+</div>
+
+
+</body></html>

@@ -6,6 +6,7 @@
  * multi-instance deployment runs it once, not once per instance.
  */
 import { many, pool } from '../core/db.js';
+import { emit } from '../core/outbox.js';
 import { logger } from '../core/logger.js';
 import { config } from '../core/config.js';
 import * as notifications from '../domains/notifications.js';
@@ -154,12 +155,63 @@ async function queueHealth(): Promise<void> {
   }
 }
 
+
+/**
+ * Overdue invoice reminders.
+ *
+ * The cadence is per invoice, so a client on 30-day terms and one who always pays late
+ * can be chased differently without a global setting that suits neither.
+ *
+ * The claim is the UPDATE, not the SELECT. Stamping reminder_last_sent_at in the same
+ * statement that re-checks the condition means two workers cannot both pick up the same
+ * invoice and send a client the same chase twice - which is the failure people notice.
+ */
+async function invoiceReminders(): Promise<void> {
+  const due = await many<{ id: string; company_id: string; days_late: number }>(
+    `SELECT id, company_id, DATEDIFF(CURDATE(), due_date) AS days_late
+       FROM invoices
+      WHERE reminders_enabled = 1
+        AND status IN ('open','partially_paid')
+        AND due_date < CURDATE()
+        AND (total - amount_paid) > 0
+        AND (reminder_last_sent_at IS NULL
+             OR reminder_last_sent_at < DATE_SUB(NOW(3), INTERVAL reminder_interval_days DAY))
+      ORDER BY due_date
+      LIMIT 200`,
+  );
+
+  for (const invoice of due) {
+    // Re-check inside the claim: between the read above and here the client may have
+    // paid, and nobody should be chased for an invoice that is already settled.
+    const claimed = await pool.query(
+      `UPDATE invoices
+          SET reminder_last_sent_at = NOW(3), reminder_count = reminder_count + 1
+        WHERE id = $1
+          AND reminders_enabled = 1
+          AND status IN ('open','partially_paid')
+          AND (total - amount_paid) > 0
+          AND (reminder_last_sent_at IS NULL
+               OR reminder_last_sent_at < DATE_SUB(NOW(3), INTERVAL reminder_interval_days DAY))`,
+      [invoice.id],
+    );
+    if ((claimed.rowCount ?? 0) === 0) continue;
+
+    await emit({
+      companyId: invoice.company_id,
+      type: 'invoice.reminder_due',
+      payload: { invoiceId: invoice.id, daysLate: Number(invoice.days_late) },
+    });
+  }
+}
+
 const jobs: Job[] = [
   { name: 'meeting-reminders', intervalMs: 60_000, lockKey: 'iw_meeting_reminders', run: meetingReminders },
   { name: 'retention', intervalMs: 3_600_000, lockKey: 'iw_retention', run: enforceRetention },
   { name: 'housekeeping', intervalMs: 900_000, lockKey: 'iw_housekeeping', run: housekeeping },
   { name: 'approval-escalation', intervalMs: 600_000, lockKey: 'iw_approval_escalation', run: escalateApprovals },
   { name: 'queue-health', intervalMs: 60_000, lockKey: 'iw_queue_health', run: queueHealth },
+  // Hourly: the cadence is measured in days, so a tighter tick only adds load.
+  { name: 'invoice-reminders', intervalMs: 3_600_000, lockKey: 'iw_invoice_reminders', run: invoiceReminders },
 ];
 
 const timers: NodeJS.Timeout[] = [];

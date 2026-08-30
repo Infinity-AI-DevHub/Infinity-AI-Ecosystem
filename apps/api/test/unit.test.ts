@@ -299,3 +299,56 @@ describe('output encoding', () => {
     assert.equal(escapeHtml('<script>&"\''), '&lt;script&gt;&amp;&quot;&#39;');
   });
 });
+
+/**
+ * SQL portability.
+ *
+ * The schema and queries have to run on both MySQL 8 and MariaDB. Three separate
+ * outages this project has already had came from constructs that exist in only one of
+ * them - a multi-valued index, SELECT ... FOR UPDATE SKIP LOCKED, and the `->` / `->>`
+ * JSON operators - and each was found by a person hitting a 500, not by a test.
+ *
+ * A grep is a crude check, but it runs in milliseconds without a database and it fails
+ * on the developer's machine rather than in production. The constructs below are all
+ * avoidable: JSON_EXTRACT and JSON_UNQUOTE say the same thing and parse on both.
+ */
+describe('SQL portability', () => {
+  const FORBIDDEN: { pattern: RegExp; why: string }[] = [
+    { pattern: /->>/, why: 'the ->> operator is MySQL-only; use JSON_UNQUOTE(JSON_EXTRACT(col, path))' },
+    { pattern: /->'\$\./, why: "the -> operator is MySQL-only; use JSON_EXTRACT(col, '$.path')" },
+    { pattern: /SKIP\s+LOCKED/i, why: 'SKIP LOCKED is MySQL-only; claim rows with a lock token' },
+    { pattern: /JSON_OVERLAPS/i, why: 'JSON_OVERLAPS is MySQL-only; use jsonArrayOverlaps() from core/db' },
+    { pattern: /CAST\([^)]*AS\s+CHAR\([^)]*\)\s+ARRAY/i, why: 'multi-valued indexes are MySQL-only' },
+    { pattern: /utf8mb4_0900/i, why: 'utf8mb4_0900_ai_ci does not exist in MariaDB; use utf8mb4_unicode_ci' },
+  ];
+
+  it('uses no MySQL-only syntax in source or migrations', async () => {
+    const { readdirSync, readFileSync, statSync } = await import('node:fs');
+    const { join } = await import('node:path');
+
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (/\.(ts|sql)$/.test(entry) && !full.includes('/test/')) files.push(full);
+      }
+    };
+    walk('src');
+    walk('migrations');
+
+    const failures: string[] = [];
+    for (const file of files) {
+      const lines = readFileSync(file, 'utf8').split('\n');
+      lines.forEach((line, index) => {
+        // Comments explain these constructs on purpose; only real SQL counts.
+        const trimmed = line.trim();
+        if (trimmed.startsWith('*') || trimmed.startsWith('//') || trimmed.startsWith('--')) return;
+        for (const { pattern, why } of FORBIDDEN) {
+          if (pattern.test(line)) failures.push(`${file}:${index + 1} — ${why}\n    ${trimmed}`);
+        }
+      });
+    }
+    assert.equal(failures.length, 0, `MySQL-only SQL found:\n\n${failures.join('\n\n')}\n`);
+  });
+});

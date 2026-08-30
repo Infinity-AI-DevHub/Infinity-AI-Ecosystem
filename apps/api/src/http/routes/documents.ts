@@ -7,6 +7,7 @@ import { parse } from '../../core/validation.js';
 import { expectedVersion, requireActor, setVersionHeader } from '../context.js';
 import { badRequest } from '../../core/errors.js';
 import * as documents from '../../domains/documents.js';
+import * as attachments from '../../domains/attachments.js';
 
 const idParam = z.object({ id: z.string().uuid() });
 
@@ -122,4 +123,31 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
     await documents.archivePage(actor, id);
     return reply.code(204).send();
   });
+
+  /* ------------------------------------------------------- page attachments */
+
+  app.get('/docs/pages/:id/attachments', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
+    return { items: await attachments.list(actor, id) };
+  });
+
+  app.post('/docs/pages/:id/attachments', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
+    const { fileId } = parse(z.object({ fileId: z.string().uuid() }), request.body);
+    reply.code(201);
+    return attachments.attach(actor, id, fileId);
+  });
+
+  app.delete('/docs/pages/:id/attachments/:attachmentId', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id, attachmentId } = parse(
+      z.object({ id: z.string().uuid(), attachmentId: z.string().uuid() }),
+      request.params,
+    );
+    await attachments.detach(actor, id, attachmentId);
+    reply.code(204);
+  });
+
 }

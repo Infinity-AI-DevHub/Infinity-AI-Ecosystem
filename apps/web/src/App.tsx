@@ -7,6 +7,8 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider, useSession } from './lib/session';
+import { NotifyProvider } from './lib/notify';
+import { Toasts } from './components/Toasts';
 import { Loading } from './components/States';
 import { Shell } from './components/Shell';
 import SignIn from './routes/SignIn';
@@ -115,9 +117,14 @@ function UnknownRoute() {
 export default function App() {
   return (
     <BrowserRouter>
-      <SessionProvider>
+      <NotifyProvider>
+        <SessionProvider>
         <AppRoutes />
-      </SessionProvider>
+        </SessionProvider>
+        {/* Outside the session provider: a banner must still be able to say the
+            session ended, which is exactly when that provider has no session. */}
+        <Toasts />
+      </NotifyProvider>
     </BrowserRouter>
   );
 }

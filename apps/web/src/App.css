@@ -2118,3 +2118,292 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   color: var(--fg-primary);
   letter-spacing: var(--tracking-snug);
 }
+
+/* ------------------------------------------------------------------ rich text
+   The editing surface is styled as the finished document, so what someone writes
+   looks like what a reader gets rather than like a form field. */
+.rich-text {
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+.rich-text-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-wrap: wrap;
+  padding: var(--sp-2);
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.rich-text-tool {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 var(--sp-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--fg-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.rich-text-tool:hover { background: var(--bg-hover); color: var(--fg-primary); }
+.rich-text-tool:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.rich-text-surface {
+  min-height: 260px;
+  padding: var(--sp-4) var(--sp-5);
+  overflow-y: auto;
+  line-height: var(--leading-normal);
+}
+.rich-text-surface:focus { outline: none; box-shadow: inset var(--ring-focus); }
+.rich-text-source {
+  width: 100%;
+  border: 0;
+  padding: var(--sp-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  background: var(--bg-surface);
+  color: var(--fg-primary);
+  resize: vertical;
+}
+.rich-text-source:focus { outline: none; }
+
+/* --------------------------------------------------------------- invoicing */
+.claim-total {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--sp-1) var(--sp-6);
+  margin: var(--sp-4) 0;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--bg-sunken);
+  border-radius: var(--r-md);
+  font-variant-numeric: tabular-nums;
+}
+.claim-total dt { color: var(--fg-secondary); font-size: var(--text-sm); }
+.claim-total dd { margin: 0; text-align: right; font-size: var(--text-sm); }
+/* A figure that needs attention is the only place colour appears in a table of numbers.
+   Specificity is deliberate: `.metric-card strong` is 0,1,1 and would otherwise win,
+   silently repainting every warning figure back to the default text colour. */
+.value-warn,
+.metric-card strong.value-warn { color: var(--dan-600); }
+
+/* A row of chips is not a row of form fields: .filter-row is a 220px-minimum grid,
+   which stretches each chip to the width of an input. These size to their label. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+/* ------------------------------------------------------------------- toasts
+   Anchored bottom-right and above every other layer: a banner that a dialog can
+   cover is a banner nobody reads. */
+.toast-stack {
+  position: fixed;
+  right: var(--sp-5);
+  bottom: var(--sp-5);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  width: min(380px, calc(100vw - var(--sp-8)));
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--border-default);
+  border-left-width: 3px;
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-lg);
+  pointer-events: auto;
+  animation: toast-in var(--dur-slow) var(--ease-out);
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}
+.toast-icon {
+  display: grid;
+  place-items: center;
+  width: 20px; height: 20px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  border-radius: var(--r-full);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  color: var(--fg-on-accent);
+}
+.toast-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.toast-text strong { font-size: var(--text-sm); color: var(--fg-primary); }
+.toast-text span { font-size: var(--text-xs); color: var(--fg-secondary); }
+.toast-text a { font-size: var(--text-xs); color: var(--fg-accent); align-self: flex-start; }
+.toast-close {
+  border: 0; background: transparent; cursor: pointer;
+  color: var(--fg-muted); font-size: var(--text-lg); line-height: 1;
+  padding: 0 var(--sp-1);
+}
+.toast-close:hover { color: var(--fg-primary); }
+
+.toast-info     { border-left-color: var(--info-600); }
+.toast-info     .toast-icon { background: var(--info-600); }
+.toast-success  { border-left-color: var(--ok-600); }
+.toast-success  .toast-icon { background: var(--ok-600); }
+.toast-warning  { border-left-color: var(--warn-600); }
+.toast-warning  .toast-icon { background: var(--warn-600); }
+.toast-critical { border-left-color: var(--dan-600); }
+.toast-critical .toast-icon { background: var(--dan-600); }
+
+
+/* ============================================================== surfaces pass
+   Density and hierarchy across the screens that predate the redesign. These are
+   the shared classes every route already uses, so the changes reach all of them
+   without touching a route file. */
+
+/* Panels: a header that reads as a header, and content that is not adrift in it. */
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin: calc(var(--sp-5) * -1) calc(var(--sp-5) * -1) var(--sp-4);
+  padding: var(--sp-3) var(--sp-5);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-sunken);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+.panel-title {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semi);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--fg-tertiary);
+}
+
+/* Metric cards were tall and mostly empty. The figure leads, the label supports. */
+.metric-card { gap: 0; }
+.metric-card .panel-title { margin-bottom: var(--sp-2); }
+.metric-card strong {
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-tight);
+  line-height: 1.1;
+  color: var(--fg-primary);
+}
+.metric-card .field-hint { margin-top: var(--sp-1); }
+/* A hairline of colour ties the card to the module without a coloured panel. */
+.metric-card::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--brand-400), transparent 70%);
+  opacity: 0.7;
+}
+
+/* Page headings: the title should outrank the controls beside it. */
+.module-header h1, .module-header h2 {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-tight);
+  margin: 0;
+}
+.module-header p {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--fg-secondary);
+}
+.module-page { display: flex; flex-direction: column; gap: var(--sp-5); }
+
+/* Tables: denser rows, a sticky header, and figures that line up. */
+.data-table thead th { position: sticky; top: 0; z-index: 1; }
+.data-table td { padding: var(--sp-3); border-bottom: 1px solid var(--border-subtle); }
+.data-table tbody tr:last-child td { border-bottom: 0; }
+
+/* Tabs: a selected tab should look selected, not merely bolder. */
+.tab-row { gap: var(--sp-1); border-bottom: 1px solid var(--border-subtle); }
+.tab {
+  position: relative;
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  background: transparent;
+  color: var(--fg-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+.tab::after {
+  content: '';
+  position: absolute;
+  left: var(--sp-3); right: var(--sp-3); bottom: -1px;
+  height: 2px;
+  background: var(--brand-500);
+  transform: scaleX(0);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.tab-active { color: var(--fg-primary); }
+.tab-active::after { transform: scaleX(1); }
+
+/* Chips read as toggles rather than labels. */
+.chip-active {
+  background: var(--brand-500);
+  border-color: var(--brand-500);
+  color: var(--fg-on-accent);
+}
+
+/* Status tags: a dot carries the state for anyone who cannot rely on the colour. */
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-full);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semi);
+}
+.status-tag::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: var(--r-full);
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+/* Inputs: a visible focus ring and a resting border that is actually visible. */
+input, select, textarea {
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  color: var(--fg-primary);
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: none;
+  border-color: var(--border-accent);
+  box-shadow: var(--ring-focus);
+}
+
+/* Empty states should suggest the next action, not just report absence. */
+.state-block {
+  display: grid;
+  place-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-10) var(--sp-5);
+  text-align: center;
+  color: var(--fg-secondary);
+  background: var(--bg-surface);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--r-lg);
+}
