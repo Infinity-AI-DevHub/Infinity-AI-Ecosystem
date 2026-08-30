@@ -22,22 +22,39 @@ files:
 
 extraMetadata:
   main: dist/main/index.js
+  # Electron derives app.getName() from this, and getName() decides the userData path.
+  # Without it the packaged app inherits the workspace package name (@infinity/desktop)
+  # and shares userData with `npm run dev` - which means one single-instance lock and one
+  # token vault between them. A dev instance left running then silently prevents the
+  # installed app from starting at all, and the two builds can overwrite each other's
+  # session tokens.
+  productName: Infinity Workspace
 
 mac:
   category: public.app-category.business
+  # Inset to 824 of 1024 so it sits level with its neighbours on the macOS icon grid.
+  # A full-bleed icon is not clipped, it just looks oversized next to everything else.
+  icon: build/icon-mac.png
   target:
     - target: dmg
       arch: [arm64, x64]
-  # Nothing to sign with, and asking electron-builder to try produces a confusing failure
-  # rather than an unsigned build.
+  # No Apple Developer identity to sign with, and asking electron-builder to try produces
+  # a confusing failure rather than an unsigned build.
   identity: null
   hardenedRuntime: false
   gatekeeperAssess: false
+
+# Apple Silicon refuses to execute an unsigned arm64 binary - the app launches and
+# vanishes with no visible error. An ad-hoc signature carries no identity and satisfies no
+# Gatekeeper check; it only makes the code loadable at all. Required, not optional.
+afterPack: scripts/adhoc-sign.mjs
 
 dmg:
   title: Infinity Workspace
 
 win:
+  # Full bleed: Windows draws icons edge to edge and adds no margin of its own.
+  icon: build/icon.png
   target:
     - target: nsis
       arch: [x64]
@@ -51,6 +68,10 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   shortcutName: Infinity Workspace
+
+# Both PNGs are generated from build/icon.svg by scripts/make-icons.mjs, which
+# electron-builder then converts to .icns and .ico at package time. Run `npm run icons`
+# after editing the SVG - the PNGs are build output, not artwork to edit by hand.
 
 # The updater reads a static latest.json from the update host rather than a release
 # service, so there is nothing extra to run or keep patched.

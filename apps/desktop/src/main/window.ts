@@ -59,6 +59,31 @@ export function createWindow(): BrowserWindow {
   });
 
   /**
+   * Console output from the renderer, mirrored to the terminal.
+   *
+   * A failed request inside the renderer - a blocked origin, a rejected preflight, a CSP
+   * refusal - is written to a console nobody can open in a packaged build. Without this,
+   * the only symptom is the app saying it cannot reach the server, with no way to tell
+   * which of those causes it was.
+   */
+  window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (level >= 2) console.error(`[renderer] ${message}  (${sourceId}:${line})`);
+  });
+
+  /**
+   * Developer tools, off unless explicitly asked for.
+   *
+   * Packaged builds ship without them, so a support problem cannot be inspected at all.
+   * Gating on an environment variable keeps them out of ordinary use while making them
+   * one command away when something needs diagnosing:
+   *
+   *   INFINITY_DEBUG=1 "/Applications/Infinity Workspace.app/Contents/MacOS/Infinity Workspace"
+   */
+  if (process.env.INFINITY_DEBUG === '1') {
+    window.webContents.openDevTools({ mode: 'detach' });
+  }
+
+  /**
    * Navigation is pinned to the application itself.
    *
    * Without this, a link in a document or a chat message could navigate the whole window

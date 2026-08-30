@@ -1,0 +1,34 @@
+<!--
+  Infinity Workspace application icon — master artwork.
+
+  Everything else (icon.png, the .icns and .ico electron-builder derives from it, and the
+  web favicon) is generated from this file by scripts/make-icons.mjs. Edit here, re-run
+  the script; never hand-edit a generated PNG.
+
+  Composition is "Keystone": the mark resting on a base. Colours are the brand blues.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0"   stop-color="#1A6288"/>
+      <stop offset=".55" stop-color="#0D4260"/>
+      <stop offset="1"   stop-color="#082D42"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="114.5" fill="url(#tile)"/>
+
+  <!--
+    The lemniscate. Wide lobes and a light stroke are deliberate: a heavier stroke closes
+    the counters and the mark turns into a solid lump below 32px.
+  -->
+  <g transform="translate(102.4,38.4) scale(0.6)">
+    <path d="M256,256 C300,160 420,160 420,256 C420,352 300,352 256,256
+             C212,160 92,160 92,256 C92,352 212,352 256,256"
+          fill="none" stroke="#FFFFFF" stroke-width="73.33"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- The base, wider than the mark so it reads as ground rather than a second object. -->
+  <rect x="86" y="352" width="340" height="36" rx="18" fill="#8FC3E4"/>
+</svg>
