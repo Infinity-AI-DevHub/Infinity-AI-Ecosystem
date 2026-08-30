@@ -105,8 +105,10 @@ code, pre { font-family: var(--font-mono); font-size: 0.92em; }
   display: flex;
   flex-direction: column;
   gap: var(--sp-5);
-  padding: var(--sp-5) var(--sp-3);
-  background: var(--nav-bg);
+  padding: var(--sp-5) var(--sp-3) var(--sp-4);
+  /* A vertical fall from the accent to the deep ground: the plane reads as lit from
+     above, which separates it from the content beside it without a heavy border. */
+  background: linear-gradient(180deg, var(--nav-bg) 0%, var(--nav-bg-accent) 100%);
   color: var(--nav-fg);
   border-right: 1px solid var(--nav-border);
 }
@@ -154,12 +156,30 @@ code, pre { font-family: var(--font-mono); font-size: 0.92em; }
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--r-sm);
+  margin-inline: var(--sp-1);
+  border-radius: var(--r-md);
   color: var(--nav-fg);
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-snug);
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
+
+/* The marker, not the fill, is what carries "you are here" at a glance. It is drawn
+   collapsed and scales up, so switching sections reads as movement rather than a jump. */
+.nav-item::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--sp-1) * -1);
+  top: 50%;
+  width: 3px;
+  height: 18px;
+  border-radius: 0 3px 3px 0;
+  background: var(--nav-marker);
+  transform: translateY(-50%) scaleY(0);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.nav-item-active::before { transform: translateY(-50%) scaleY(1); }
 .nav-item svg { flex-shrink: 0; opacity: 0.85; }
 .nav-item:hover { background: var(--nav-hover); color: var(--nav-fg-strong); }
 .nav-item-active { background: var(--nav-active); color: var(--nav-fg-strong); font-weight: var(--weight-semi); }
@@ -234,11 +254,16 @@ code, pre { font-family: var(--font-mono); font-size: 0.92em; }
   align-items: center;
   gap: var(--sp-4);
   height: var(--topbar-height);
-  padding: 0 var(--sp-6);
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: saturate(180%) blur(12px);
+  padding: 0 var(--sp-5);
+  /* color-mix keeps the translucency while still resolving through the theme. The
+     previous literal white rendered white-on-white the moment dark mode applied. */
+  background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
+  backdrop-filter: saturate(180%) blur(14px);
   border-bottom: 1px solid var(--border-subtle);
 }
+/* Search takes the slack so the actions sit hard right instead of colliding with it. */
+.top-bar .global-search { flex: 1 1 auto; max-width: 460px; }
+.top-bar-actions { margin-left: auto; display: flex; align-items: center; gap: var(--sp-2); }
 .top-bar .page-title {
   font-size: var(--text-md);
   font-weight: var(--weight-semi);
@@ -337,9 +362,11 @@ code, pre { font-family: var(--font-mono); font-size: 0.92em; }
 .primary-button svg, .ghost-button svg, .danger-button svg { flex-shrink: 0; }
 
 .primary-button {
-  background: var(--a-600);
-  color: var(--fg-inverse);
-  box-shadow: var(--shadow-xs), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, var(--brand-500), var(--brand-600));
+  /* Explicitly white, not --fg-inverse: that token flips with the theme and would
+     put dark text on the brand fill the moment dark mode applied. */
+  color: var(--fg-on-accent);
+  box-shadow: var(--shadow-xs), inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
 .primary-button:hover:not(:disabled) { background: var(--a-700); }
 .primary-button:active:not(:disabled) { transform: translateY(0.5px); }
@@ -729,12 +756,14 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 .metric-card {
   position: relative;
   display: grid; gap: var(--sp-1);
-  padding: var(--sp-4) var(--sp-5);
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
+  /* Figures are for comparing down a column, so they need to align on the digit. */
+  font-variant-numeric: tabular-nums;
   transition: border-color var(--dur-base) var(--ease), box-shadow var(--dur-base) var(--ease),
               transform var(--dur-base) var(--ease);
 }
@@ -853,7 +882,15 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 .thread-flag-warn { background: var(--warn-50); border-color: var(--warn-200); color: var(--warn-700); }
 
 .table-scroll { min-width: 0; overflow-x: auto; }
-.data-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+/* A row highlight is what makes a wide table readable across its width. */
+.data-table tbody tr { transition: background var(--dur-fast) var(--ease); }
+.data-table tbody tr:hover { background: var(--bg-hover); }
 .data-table thead th {
   padding: var(--sp-2) var(--sp-3);
   background: var(--bg-surface);

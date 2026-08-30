@@ -113,6 +113,12 @@ npm run package               # macOS .dmg (arm64 + x64) and Windows .exe
 npm run feed > release/latest.json
 ```
 
+The application icon is drawn in `apps/desktop/build/icon.svg` and everything else is
+generated from it — `npm run icons` renders the two PNGs (full-bleed for Windows, inset
+to the macOS icon grid for the .icns) and rewrites the web favicon so the desktop app and
+the public site cannot drift apart. `package` runs it first, so a fresh clone cannot
+produce an unbranded build. Edit the SVG, never the PNGs.
+
 Builds are **unsigned** by decision. Consequences, both documented in the deployment
 guide: macOS needs a one-time Gatekeeper override per version and cannot self-update,
 so that path notifies and hands off to the download page; Windows shows a SmartScreen

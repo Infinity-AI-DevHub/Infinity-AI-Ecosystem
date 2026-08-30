@@ -1,0 +1,94 @@
+<!doctype html><html><head><meta charset="utf-8"><title>UI preview</title>
+<link rel="stylesheet" href="/src/index.css">
+<link rel="stylesheet" href="/src/styles/tokens.css">
+<link rel="stylesheet" href="/src/App.css">
+<style>
+  /* Harness only — not part of the app. */
+  .pv-label{position:sticky;top:0;z-index:99;background:var(--bg-app);color:var(--fg-tertiary);
+    font:600 11px/1 var(--font-sans);letter-spacing:.09em;text-transform:uppercase;
+    padding:14px 16px;border-bottom:1px solid var(--border-subtle)}
+  .pv-frame{border:1px solid var(--border-default);border-radius:12px;overflow:hidden;margin:0 16px 28px}
+</style></head>
+<body style="background:var(--bg-app)">
+
+<p class="pv-label">Workspace shell</p>
+<div class="pv-frame">
+<div class="workspace-shell" style="height:560px">
+  <aside class="sidebar">
+    <div class="brand-lockup">
+      <svg width="34" height="34" viewBox="0 0 512 512" aria-hidden="true" style="display:block;color:#fff">
+        <g transform="translate(102.4,52.4) scale(0.6)"><path d="M256,256 C300,160 420,160 420,256 C420,352 300,352 256,256 C212,160 92,160 92,256 C92,352 212,352 256,256" fill="none" stroke="currentColor" stroke-width="73.33" stroke-linecap="round" stroke-linejoin="round"/></g>
+        <rect x="86" y="352" width="340" height="36" rx="18" fill="currentColor" opacity=".55"/>
+      </svg>
+      <span class="brand-heading">Infinity Workspace</span>
+    </div>
+    <nav class="nav-list">
+      <a class="nav-item nav-item-active" href="#">Dashboard</a>
+      <a class="nav-item" href="#">Tasks</a>
+      <a class="nav-item" href="#">Chat</a>
+      <a class="nav-item" href="#">Meetings</a>
+      <a class="nav-item" href="#">Approvals</a>
+      <a class="nav-item" href="#">Documents</a>
+      <a class="nav-item" href="#">Finance</a>
+      <a class="nav-item" href="#">People</a>
+    </nav>
+    <div class="sidebar-footer">
+      <span class="connection-pill connection-open"><i class="connection-dot"></i>Connected</span>
+      <div class="account-chip"><span class="avatar">TD</span><span class="account-name">Thinula D.</span></div>
+    </div>
+  </aside>
+  <div class="workspace-main">
+    <header class="top-bar">
+      <input class="global-search" placeholder="Search everything…  /">
+      <div class="top-bar-actions">
+        <button class="icon-button">Notifications</button>
+        <button class="ghost-button">Help</button>
+      </div>
+    </header>
+    <main class="workspace-content">
+      <div class="module-page">
+        <div class="module-header">
+          <div><h1>Dashboard</h1><p class="auth-lead">What needs you today</p></div>
+          <div class="header-controls">
+            <button class="ghost-button">Export</button>
+            <button class="primary-button">New task</button>
+          </div>
+        </div>
+        <div class="dashboard-grid">
+          <section class="panel metric-card"><span class="panel-title">Open approvals</span><strong style="font-size:var(--text-3xl)">12</strong></section>
+          <section class="panel metric-card"><span class="panel-title">Tasks due</span><strong style="font-size:var(--text-3xl)">7</strong></section>
+          <section class="panel metric-card"><span class="panel-title">Leave pending</span><strong style="font-size:var(--text-3xl)">3</strong></section>
+        </div>
+        <section class="panel">
+          <header class="panel-header"><span class="panel-title">Recent expenses</span><button class="ghost-button">View all</button></header>
+          <div class="table-scroll"><table class="data-table">
+            <thead><tr><th>Reference</th><th>Employee</th><th>Amount</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>EXP-1042</td><td>Nadeesha P.</td><td>LKR 24,500</td><td><span class="status-tag status-active">Approved</span></td></tr>
+              <tr><td>EXP-1041</td><td>Kasun R.</td><td>LKR 8,900</td><td><span class="status-tag status-invited">Pending</span></td></tr>
+              <tr><td>EXP-1039</td><td>Ishara W.</td><td>LKR 61,200</td><td><span class="status-tag status-suspended">Rejected</span></td></tr>
+            </tbody>
+          </table></div>
+        </section>
+      </div>
+    </main>
+  </div>
+</div>
+</div>
+
+<p class="pv-label">Forms, chips, states</p>
+<div class="pv-frame" style="padding:20px;background:var(--bg-surface)">
+  <div class="field"><label>Work email address</label><input placeholder="you@iinfinityai.com"></div>
+  <div class="field"><label>Notes</label><textarea rows="2" placeholder="Optional"></textarea></div>
+  <div class="filter-row" style="margin:12px 0">
+    <span class="chip chip-active">All</span><span class="chip">Mine</span><span class="chip">Overdue</span>
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:16px">
+    <button class="primary-button">Save</button>
+    <button class="ghost-button">Cancel</button>
+    <button class="danger-button">Delete</button>
+  </div>
+  <div class="state-block"><span class="state-icon">!</span><p>Nothing here yet.</p></div>
+</div>
+
+</body></html>
