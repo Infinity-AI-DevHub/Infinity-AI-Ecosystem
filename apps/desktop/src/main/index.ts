@@ -21,6 +21,16 @@ let mainWindow: BrowserWindow | null = null;
  * second process that would race the first for the same token vault.
  */
 if (!app.requestSingleInstanceLock()) {
+  /**
+   * Say so before leaving. A silent exit here is indistinguishable from a crash: the app
+   * appears to open and vanish, with nothing in the interface, the logs or a crash report
+   * to explain it. An orphaned `npm run dev` instance is enough to cause it.
+   */
+  console.error(
+    '[startup] another instance already holds the lock - exiting. ' +
+      'If no window is visible, a previous instance may still be running: ' +
+      'pkill -f "Infinity Workspace" (or quit the dev instance) and try again.',
+  );
   app.quit();
 } else {
   app.on('second-instance', () => {
@@ -60,6 +70,18 @@ if (!app.requestSingleInstanceLock()) {
         url.protocol === 'blob:' ||
         url.protocol === 'data:' ||
         [...networkAllowList()].includes(origin);
+      /**
+       * A cancelled request reaches the renderer as a bare network failure, identical to
+       * the server being down - so a blocked origin and an unreachable server look the
+       * same to the person using the app. Saying which origin was refused, and what was
+       * permitted, turns a support conversation into one line of log.
+       */
+      if (!permitted) {
+        console.error(
+          `[network] blocked ${details.method ?? 'GET'} ${url.origin}${url.pathname} ` +
+            `- not in allow list [${[...networkAllowList()].join(', ')}]`,
+        );
+      }
       callback({ cancel: !permitted });
     });
 
