@@ -221,10 +221,10 @@ export async function setEntitlement(
   await transaction(async (tx) => {
     await tx.query(
       `INSERT INTO leave_balances (id, company_id, user_id, leave_type_id, year, entitled_days, carried_days)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) AS incoming
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON DUPLICATE KEY UPDATE
-         entitled_days = incoming.entitled_days,
-         carried_days = incoming.carried_days`,
+         entitled_days = VALUES(entitled_days),
+         carried_days = VALUES(carried_days)`,
       [
         newId(),
         actor.companyId,

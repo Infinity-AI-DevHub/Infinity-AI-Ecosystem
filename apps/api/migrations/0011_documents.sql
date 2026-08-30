@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS doc_spaces (
   CONSTRAINT doc_spaces_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
   CONSTRAINT doc_spaces_creator_fk FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT doc_spaces_visibility_chk CHECK (visibility IN ('company','restricted'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS doc_pages (
   id           CHAR(36)     NOT NULL PRIMARY KEY,
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS doc_pages (
   CONSTRAINT doc_pages_creator_fk FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT doc_pages_updater_fk FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT doc_pages_state_chk CHECK (state IN ('draft','published','archived'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- Every save keeps the version it replaced. A wiki without history is a wiki nobody
 -- trusts enough to edit, because there is no way back from a mistake.
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS doc_page_versions (
   KEY doc_versions_page (page_id, created_at),
   CONSTRAINT doc_versions_page_fk FOREIGN KEY (page_id) REFERENCES doc_pages(id) ON DELETE CASCADE,
   CONSTRAINT doc_versions_author_fk FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 INSERT INTO role_capabilities (role, capability) VALUES
   ('super_admin', 'doc.read'), ('admin', 'doc.read'), ('manager', 'doc.read'),

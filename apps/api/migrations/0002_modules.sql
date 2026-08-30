@@ -456,7 +456,10 @@ CREATE TABLE search_documents (
                      ON UPDATE CURRENT_TIMESTAMP(3),
   UNIQUE KEY search_documents_resource (doc_type, resource_id),
   KEY search_company (company_id),
-  -- Multi-valued index so an ACL membership test can use an index rather than a scan.
-  KEY search_acl_users ((CAST(acl_user_ids AS CHAR(36) ARRAY))),
+  -- The ACL test is a JSON_CONTAINS against acl_user_ids rather than an indexed lookup.
+  -- A multi-valued index would serve it, but that syntax is MySQL 8.0.17+ and exists in
+  -- no version of MariaDB, and this schema has to install on both. The full-text match
+  -- below already narrows the candidate set to a handful of rows before the ACL is
+  -- checked, so the index would not be doing meaningful work here anyway.
   FULLTEXT KEY search_fulltext (title, body)
 ) ENGINE=InnoDB;

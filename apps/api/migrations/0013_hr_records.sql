@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS employment_records (
   CONSTRAINT employment_recorder_fk FOREIGN KEY (recorded_by) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT employment_type_chk CHECK (employment_type IN ('permanent','fixed_term','contractor','intern','part_time')),
   CONSTRAINT employment_period_chk CHECK (effective_to IS NULL OR effective_to >= effective_from)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- A review cycle is the container: "H1 2026", open between two dates, covering everyone
 -- or one department. Reviews hang off it so a cycle can be closed as a unit.
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS review_cycles (
   CONSTRAINT review_cycles_creator_fk FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT review_cycles_state_chk CHECK (state IN ('draft','open','closed')),
   CONSTRAINT review_cycles_period_chk CHECK (closes_on >= opens_on)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- Self-assessment and manager assessment are separate columns on one row rather than two
 -- rows, because they are two halves of one conversation and a review with only one half
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS performance_reviews (
   CONSTRAINT performance_subject_fk FOREIGN KEY (subject_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT performance_reviewer_fk FOREIGN KEY (reviewer_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT performance_state_chk CHECK (state IN ('pending','self_done','manager_done','shared','closed'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS goals (
   id           CHAR(36)     NOT NULL PRIMARY KEY,
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS goals (
   CONSTRAINT goals_cycle_fk FOREIGN KEY (cycle_id) REFERENCES review_cycles(id) ON DELETE SET NULL,
   CONSTRAINT goals_progress_chk CHECK (progress BETWEEN 0 AND 100),
   CONSTRAINT goals_status_chk CHECK (status IN ('active','at_risk','achieved','dropped'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 INSERT INTO role_capabilities (role, capability) VALUES
   -- Reading your own record needs nothing special; reading everyone's is an HR act.

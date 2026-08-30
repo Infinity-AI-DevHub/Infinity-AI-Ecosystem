@@ -277,3 +277,23 @@ export function jsonArray(value: unknown): string[] {
   const parsed = parseJson<unknown>(value, []);
   return Array.isArray(parsed) ? parsed.map(String) : [];
 }
+
+/**
+ * Portable "does this JSON array share any element with these ids".
+ *
+ * `JSON_OVERLAPS` says this in one call, but it arrived in MySQL 8.0.17 and MariaDB 10.9,
+ * so depending on it pins a deployment to recent versions of both - and the failure is a
+ * runtime error in whichever screen uses it, not something the migration catches.
+ * `JSON_CONTAINS` exists in every version, so the question is asked once per id instead.
+ *
+ * The lists here are a person's group memberships: a handful of entries, not a scan, so
+ * the expansion costs nothing worth measuring.
+ *
+ * Returns `FALSE` when the caller belongs to no groups. That is the correct answer, and
+ * it keeps the surrounding statement valid rather than emitting an empty `()`.
+ */
+export function jsonArrayOverlaps(column: string, ids: string[], firstIndex: number): string {
+  if (ids.length === 0) return 'FALSE';
+  const tests = ids.map((_, offset) => `JSON_CONTAINS(${column}, JSON_QUOTE($${firstIndex + offset}))`);
+  return `(${tests.join(' OR ')})`;
+}

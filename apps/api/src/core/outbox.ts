@@ -3,6 +3,7 @@
  * transaction as the state change; the dispatcher publishes them afterwards, so the
  * database and the event stream cannot diverge.
  */
+import { randomUUID } from 'node:crypto';
 import { pool, transaction, type Queryable } from './db.js';
 
 export type DomainEventType =
@@ -70,40 +71,49 @@ export type StoredEvent = {
 };
 
 /**
- * Claims a batch of due events using SKIP LOCKED so multiple worker instances can run
- * concurrently without processing the same event twice.
+ * How long a claim is honoured before another worker may take the row back.
  *
- * MySQL offers neither UPDATE ... RETURNING nor a self-referencing subquery in UPDATE,
- * so the claim is a select-then-update inside one transaction. The row locks taken by
- * SELECT ... FOR UPDATE SKIP LOCKED are held until commit, which is what stops a second
- * worker claiming the same rows in the window between the two statements.
+ * Long enough that a slow delivery is never stolen mid-flight, short enough that a worker
+ * killed by a deploy does not strand its batch until someone notices.
+ */
+const CLAIM_TTL_MINUTES = 5;
+
+/**
+ * Claims a batch of due events for this worker.
+ *
+ * The obvious spelling is SELECT ... FOR UPDATE SKIP LOCKED, but that needs MySQL 8.0 or
+ * MariaDB 10.6, and this has to run on whatever database the deployment already has. A
+ * claim token needs nothing beyond an UPDATE with a LIMIT.
+ *
+ * It is also the better mechanism. SKIP LOCKED holds its locks only until the transaction
+ * commits, so a worker that crashed after claiming rows left them looking free while its
+ * delivery might still have been in flight - two workers, one event, no way to tell. A
+ * token with a staleness window says who holds a row and for how long, so a crashed
+ * worker's batch is reclaimed on a known schedule rather than immediately or never.
  */
 export async function claimBatch(limit: number): Promise<StoredEvent[]> {
-  return transaction(async (tx) => {
-    const claimed = await tx.query<{ id: number }>(
-      `SELECT id FROM outbox_events
-        WHERE processed_at IS NULL AND available_at <= NOW(3)
-        ORDER BY id
-        LIMIT $1
-        FOR UPDATE SKIP LOCKED`,
-      [limit],
-    );
-    const ids = claimed.rows.map((row) => row.id);
-    if (ids.length === 0) return [];
+  const token = randomUUID();
 
-    const placeholders = ids.map((_, index) => `$${index + 1}`).join(',');
-    await tx.query(
-      `UPDATE outbox_events SET locked_at = NOW(3), attempts = attempts + 1
-        WHERE id IN (${placeholders})`,
-      ids,
-    );
-    const rows = await tx.query<StoredEvent>(
-      `SELECT id, company_id, type, version, payload, actor_id, correlation_id, attempts
-         FROM outbox_events WHERE id IN (${placeholders}) ORDER BY id`,
-      ids,
-    );
-    return rows.rows.map((row) => ({ ...row, payload: parsePayload(row.payload) }));
-  });
+  // A single UPDATE is the claim. Whichever worker's statement lands first owns the rows;
+  // the other simply matches fewer, with no lock contention between them.
+  const claimed = await pool.query(
+    `UPDATE outbox_events
+        SET locked_at = NOW(3), lock_token = $1, attempts = attempts + 1
+      WHERE processed_at IS NULL
+        AND available_at <= NOW(3)
+        AND (locked_at IS NULL OR locked_at < DATE_SUB(NOW(3), INTERVAL ${CLAIM_TTL_MINUTES} MINUTE))
+      ORDER BY id
+      LIMIT $2`,
+    [token, limit],
+  );
+  if ((claimed.rowCount ?? 0) === 0) return [];
+
+  const rows = await pool.query<StoredEvent>(
+    `SELECT id, company_id, type, version, payload, actor_id, correlation_id, attempts
+       FROM outbox_events WHERE lock_token = $1 ORDER BY id`,
+    [token],
+  );
+  return rows.rows.map((row) => ({ ...row, payload: parsePayload(row.payload) }));
 }
 
 /** JSON columns arrive as a string or an object depending on driver version. */
@@ -120,7 +130,7 @@ function parsePayload(value: unknown): Record<string, unknown> {
 
 export async function markProcessed(id: number): Promise<void> {
   await pool.query(
-    'UPDATE outbox_events SET processed_at = NOW(3), locked_at = NULL WHERE id = $1',
+    'UPDATE outbox_events SET processed_at = NOW(3), locked_at = NULL, lock_token = NULL WHERE id = $1',
     [id],
   );
 }
@@ -138,7 +148,7 @@ export async function markFailed(
       error.slice(0, 2000),
     ]);
     await pool.query(
-      `UPDATE outbox_events SET processed_at = NOW(3), locked_at = NULL, last_error = $2 WHERE id = $1`,
+      `UPDATE outbox_events SET processed_at = NOW(3), locked_at = NULL, lock_token = NULL, last_error = $2 WHERE id = $1`,
       [event.id, error.slice(0, 2000)],
     );
     return;
@@ -147,6 +157,7 @@ export async function markFailed(
   await pool.query(
     `UPDATE outbox_events
         SET locked_at = NULL,
+            lock_token = NULL,
             last_error = $2,
             available_at = DATE_ADD(NOW(3), INTERVAL $3 SECOND)
       WHERE id = $1`,

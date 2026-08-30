@@ -8,6 +8,12 @@
 -- Single-use, short-lived password reset tokens. Only the hash is stored, so a database
 -- reader cannot mint a session; the plaintext exists only in the message sent to the
 -- address on file.
+-- Tables here name no charset or collation of their own. Writing `DEFAULT CHARSET=utf8mb4`
+-- without a collation takes the *charset's* default rather than the database's, which
+-- differs between MySQL 8 (utf8mb4_0900_ai_ci) and MariaDB (utf8mb4_general_ci) - so the
+-- CHAR(36) keys created here stop matching the ones created earlier, and every foreign
+-- key across the boundary is rejected as incompatible. Inheriting from the database keeps
+-- one collation throughout, whichever the operator chose.
 CREATE TABLE IF NOT EXISTS password_resets (
   id            CHAR(36)     NOT NULL PRIMARY KEY,
   company_id    CHAR(36)     NOT NULL,
@@ -23,7 +29,7 @@ CREATE TABLE IF NOT EXISTS password_resets (
   KEY password_resets_expiry (expires_at),
   CONSTRAINT password_resets_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
   CONSTRAINT password_resets_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- Offboarding is a record, not just a status flag. It names who inherited the departing
 -- person's work, so "who owns this now?" has an answer months later, and so the transfer
@@ -45,7 +51,7 @@ CREATE TABLE IF NOT EXISTS offboardings (
   CONSTRAINT offboardings_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT offboardings_successor_fk FOREIGN KEY (successor_id) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT offboardings_actor_fk FOREIGN KEY (performed_by) REFERENCES users(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- 'offboarded' is distinct from 'suspended': suspension is reversible and says nothing
 -- about where the work went, whereas offboarding is terminal and always has a record.
@@ -63,4 +69,4 @@ CREATE TABLE IF NOT EXISTS break_glass_events (
   operator    VARCHAR(200) NOT NULL,
   created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   KEY break_glass_created (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;

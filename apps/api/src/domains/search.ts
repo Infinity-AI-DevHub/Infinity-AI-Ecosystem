@@ -5,7 +5,7 @@
  * tokens. The query layer computes access filters server-side, so an unauthorized hit
  * is never returned and then hidden in the client. Snippets are HTML-escaped.
  */
-import { many, newId, pool, type Queryable } from '../core/db.js';
+import { jsonArrayOverlaps, many, newId, pool, type Queryable } from '../core/db.js';
 import { escapeHtml } from '../core/validation.js';
 import type { Actor } from '../core/authz.js';
 
@@ -29,15 +29,15 @@ export async function index(input: IndexInput, db: Queryable = pool): Promise<vo
     `INSERT INTO search_documents
        (id, company_id, doc_type, resource_id, title, body, classification,
         acl_user_ids, acl_group_ids, acl_company_wide, link)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) AS incoming
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      ON DUPLICATE KEY UPDATE
-       title = incoming.title,
-       body = incoming.body,
-       classification = incoming.classification,
-       acl_user_ids = incoming.acl_user_ids,
-       acl_group_ids = incoming.acl_group_ids,
-       acl_company_wide = incoming.acl_company_wide,
-       link = incoming.link`,
+       title = VALUES(title),
+       body = VALUES(body),
+       classification = VALUES(classification),
+       acl_user_ids = VALUES(acl_user_ids),
+       acl_group_ids = VALUES(acl_group_ids),
+       acl_company_wide = VALUES(acl_company_wide),
+       link = VALUES(link)`,
     [
       newId(),
       input.companyId,
@@ -117,6 +117,8 @@ export async function search(
   if (terms.length === 0) return { hits: [], facets: {}, total: 0 };
   const booleanQuery = terms.map((term) => `+${term}*`).join(' ');
 
+  // Placeholders 1-6 are fixed; the group ids occupy 7 onwards.
+  const groupClause = jsonArrayOverlaps('acl_group_ids', actor.groupIds, 7);
   const rows = await many<{
     doc_type: DocType;
     resource_id: string;
@@ -133,22 +135,23 @@ export async function search(
       WHERE company_id = $1
         AND MATCH(title, body) AGAINST ($2 IN BOOLEAN MODE)
         AND ($3 IS NULL OR JSON_CONTAINS($3, JSON_QUOTE(doc_type)))
-        AND ($6 OR classification <> 'restricted')
+        AND ($5 OR classification <> 'restricted')
         AND (
           acl_company_wide = 1
           OR JSON_CONTAINS(acl_user_ids, JSON_QUOTE($4))
-          OR JSON_OVERLAPS(acl_group_ids, CAST($5 AS JSON))
+          OR ${groupClause}
         )
       ORDER BY score DESC
-      LIMIT $7`,
+      LIMIT $6`,
     [
       actor.companyId,
       booleanQuery,
       opts.types && opts.types.length > 0 ? JSON.stringify(opts.types) : null,
       actor.userId,
-      JSON.stringify(actor.groupIds),
       canSeeRestricted,
       opts.limit,
+      // Group ids last, so expanding them cannot shift the placeholders before them.
+      ...actor.groupIds,
     ],
   );
 

@@ -21,7 +21,7 @@ and retention are enforced on the server; no client is trusted.
 
 ```
 apps/
-  api/            Node + TypeScript + Fastify + MySQL 8
+  api/            Node + TypeScript + Fastify + MySQL 8 / MariaDB
     migrations/     Versioned, checksum-guarded SQL migrations
     src/core/       Config, database, authorization, audit, outbox, crypto, realtime
     src/domains/    Identity, calendar, chat, tasks, files, documents, approvals,
@@ -48,14 +48,20 @@ docs/             Architecture, security, operations, API, deployment, user guid
 
 ## Running it locally
 
-You need Node 20+ and MySQL 8.0+ (8.0 is required for `SKIP LOCKED`, JSON functions,
-CHECK constraints and multi-valued indexes).
+You need Node 20+ and **MySQL 8.0+ or MariaDB 10.4+**. The schema and queries avoid
+everything that exists in only one of them — no multi-valued indexes, no `JSON_OVERLAPS`,
+no `SKIP LOCKED`, no row-alias upserts — so the same migrations install on either.
 
 ```bash
 # 1. Database — create it once
 mysql -h 127.0.0.1 -P 8889 -u root -proot \
   -e "CREATE DATABASE IF NOT EXISTS ecosystem
-      CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
+      CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+
+# utf8mb4_unicode_ci because both databases have it. Tables inherit the database's
+# collation rather than naming their own — a table that says CHARSET without COLLATE
+# takes the charset's default, which differs between the two, and foreign keys across
+# that boundary are then rejected as incompatible.
 
 # 2. API
 cd apps/api

@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS expense_categories (
   created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   UNIQUE KEY expense_categories_key (company_id, `key`),
   CONSTRAINT expense_categories_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- A claim is the unit that gets approved and paid; items are what it is made of. Kept
 -- apart because a trip is one decision and eleven receipts, and approving each receipt
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS expense_claims (
   CONSTRAINT expense_claims_approval_fk FOREIGN KEY (approval_request_id) REFERENCES approval_requests(id) ON DELETE SET NULL,
   CONSTRAINT expense_claims_payer_fk FOREIGN KEY (reimbursed_by) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT expense_claims_status_chk CHECK (status IN ('draft','submitted','approved','rejected','reimbursed','cancelled'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS expense_items (
   id           CHAR(36)     NOT NULL PRIMARY KEY,
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS expense_items (
   CONSTRAINT expense_items_category_fk FOREIGN KEY (category_id) REFERENCES expense_categories(id) ON DELETE SET NULL,
   CONSTRAINT expense_items_receipt_fk FOREIGN KEY (receipt_file_id) REFERENCES files(id) ON DELETE SET NULL,
   CONSTRAINT expense_items_amount_chk CHECK (amount >= 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- Budgets are per department per period. Committed and spent are held apart for the same
 -- reason as leave: an approved-but-unpaid claim has already consumed the budget in every
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS budgets (
   CONSTRAINT budgets_department_fk FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL,
   CONSTRAINT budgets_creator_fk FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT budgets_period_chk CHECK (period_end >= period_start)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS vendors (
   id          CHAR(36)     NOT NULL PRIMARY KEY,
@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS vendors (
   CONSTRAINT vendors_org_fk FOREIGN KEY (organization_id) REFERENCES external_organizations(id) ON DELETE SET NULL,
   CONSTRAINT vendors_creator_fk FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT vendors_status_chk CHECK (status IN ('active','archived'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- The asset register. Laptops walk out of companies with departing employees more often
 -- than anything else, which is why assignment is a history rather than a column.
@@ -147,7 +147,7 @@ CREATE TABLE IF NOT EXISTS assets (
   CONSTRAINT assets_vendor_fk FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE SET NULL,
   CONSTRAINT assets_assignee_fk FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT assets_status_chk CHECK (status IN ('in_stock','assigned','repair','retired','lost'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS asset_assignments (
   id          CHAR(36)     NOT NULL PRIMARY KEY,
@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS asset_assignments (
   CONSTRAINT asset_assignments_asset_fk FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE,
   CONSTRAINT asset_assignments_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT asset_assignments_recorder_fk FOREIGN KEY (recorded_by) REFERENCES users(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 INSERT INTO role_capabilities (role, capability) VALUES
   ('super_admin', 'expense.submit'), ('admin', 'expense.submit'),

@@ -92,6 +92,9 @@ npm install -g pm2
 
 ## Step 3 — Create the database
 
+Either **MySQL 8.0+ or MariaDB 10.4+** works. aaPanel installs MariaDB by default, which
+is fine — nothing here needs MySQL-only syntax.
+
 In **aaPanel → Databases → Add database**:
 
 - Database name: `ecosystem`
@@ -102,6 +105,13 @@ In **aaPanel → Databases → Add database**:
 > Leaving the database open to the internet is the single most common way a small
 > deployment gets compromised. Local-only means it can only be reached by software running
 > on this same machine.
+
+If you already run MariaDB for other sites, use it — a second database engine is not
+needed. Check the version if you want to be sure:
+
+```bash
+mysql -V
+```
 
 ---
 
