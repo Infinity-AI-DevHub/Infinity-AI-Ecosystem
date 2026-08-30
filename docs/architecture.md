@@ -17,7 +17,7 @@ Fastify API  ──────────────┐
    ├── domains/            ▼
    │     identity      outbox_events (MySQL)
    │     calendar           │
-   │     chat               │  claimed with SKIP LOCKED
+   │     chat               │  claimed with a lock token
    │     tasks              ▼
    │     files         Worker: dispatcher + scheduler
    │     approvals          │
@@ -66,8 +66,15 @@ product, so a valid session reaches everything its role permits. See
 - Queries are written with `$1`-style placeholders and translated to `?` in `core/db.ts`.
   One placeholder style across the codebase keeps a repeated parameter a single logical
   argument instead of a positional duplicate the caller has to maintain.
-- Arrays are JSON columns, tested with `JSON_CONTAINS` / `JSON_OVERLAPS`, with
-  multi-valued indexes where the lookup is hot (search ACLs).
+- Arrays are JSON columns, tested with `JSON_CONTAINS`. Neither `JSON_OVERLAPS` nor
+  multi-valued indexes are used: both are MySQL-only, and the schema installs on MariaDB
+  too. An overlap test is expanded into one `JSON_CONTAINS` per candidate id by
+  `jsonArrayOverlaps` in `core/db.ts`, which also keeps the placeholder numbering stable.
+- The outbox is claimed with a lock token rather than `SELECT ... FOR UPDATE SKIP LOCKED`,
+  which MariaDB lacks. A worker stamps rows with a UUID, then reads back what it stamped.
+  This is also the stronger mechanism: `SKIP LOCKED` holds its locks only for the life of
+  the transaction, so a worker that dies mid-dispatch releases them instantly, while a
+  token carries a visible expiry that another worker can reclaim.
 - Every pooled connection is pinned to UTC. The driver writes JS Dates as UTC while
   MySQL's `NOW()` answers in the server's zone; unpinned, every expiry comparison
   drifts by the host's offset.

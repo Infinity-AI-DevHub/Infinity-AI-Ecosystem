@@ -102,6 +102,19 @@ In **aaPanel → Databases → Add database**:
 - Password: click **Generate**, then **copy it somewhere safe** — you need it shortly
 - Access: **Local server** only
 
+**Then set the collation.** aaPanel does not ask, and its default differs between MySQL
+and MariaDB. Run this once:
+
+```bash
+mysql -u root -p -e "ALTER DATABASE ecosystem CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+```
+
+`utf8mb4_unicode_ci` because both engines have it — MariaDB has no `utf8mb4_0900_ai_ci`.
+The tables inherit the database's collation rather than naming their own, and foreign
+keys between tables of different collations are rejected outright, so getting this wrong
+does not fail quietly. It fails midway through the migrations, leaving a half-built
+schema you have to drop and recreate.
+
 > Leaving the database open to the internet is the single most common way a small
 > deployment gets compromised. Local-only means it can only be reached by software running
 > on this same machine.
@@ -186,6 +199,16 @@ SMTP_PASSWORD=YOUR_MAILBOX_PASSWORD
 
 ## Step 6 — Build and start the API
 
+First check nothing else already holds the port. This server runs other
+applications, and two processes cannot share one:
+
+```bash
+ss -ltnp | grep 3500
+```
+
+No output is what you want. If something answers, pick another free port and set it as
+`PORT` in `.env` **and** in `proxy_pass` in `deploy/nginx-app-api.conf`.
+
 ```bash
 cd /www/wwwroot/infinity/apps/api
 npm ci
@@ -194,6 +217,9 @@ npm run migrate
 ```
 
 `migrate` creates every table. It is safe to run again; it skips what is already applied.
+
+> If it fails partway through, do not re-run it and hope. Fix the cause, then drop and
+> recreate the database — a half-applied schema is not a state the runner can repair.
 
 Create the first administrator:
 
@@ -270,17 +296,36 @@ For each site: **Settings → SSL → Let's Encrypt → Apply**, then switch on 
 
 ### Apply the configuration
 
-For each site: **Settings → Configuration File**, and paste the contents of the matching
-file from `/www/wwwroot/infinity/deploy/`:
+For each site: **Settings → Configuration File**. Select everything already in the
+editor, delete it, and paste the matching file from `/www/wwwroot/infinity/deploy/`:
 
-| Site | File to paste from |
+| Site | File to paste |
 |---|---|
 | `app-api.iinfinityai.com` | `deploy/nginx-app-api.conf` |
 | `app.iinfinityai.com` | `deploy/nginx-app.conf` |
 | `updates.iinfinityai.com` | `deploy/nginx-updates.conf` |
 
-Paste the contents **inside** the existing `server { ... }` block, replacing any
-`location /` block aaPanel created. Save, then **reload nginx**.
+These are **complete `server` blocks**, not snippets — replace the whole file rather than
+pasting inside the existing block, which would nest one `server` inside another and fail
+to load. Every section aaPanel manages (`#SSL-START`, `#REWRITE-START`, `#PHP-INFO-START`)
+is preserved in them, so certificate renewal keeps working.
+
+Two things in these files are deliberate and worth knowing before you edit them:
+
+- **aaPanel's default static-cache blocks are removed.** In nginx a regex `location`
+  outranks a prefix one, so aaPanel's `location ~ .*\.(js|css)?$` would capture
+  `/assets/*.js` before the block written for it — serving the bundle with the wrong
+  cache lifetime and none of its security headers. If you re-add those blocks, you undo
+  this silently.
+- **TLS 1.1 is switched off.** aaPanel enables it by default; no current browser will
+  negotiate it, so it only leaves a weak option available.
+
+Then check the syntax and reload — never reload without testing first, since a bad
+config takes every site on the server down, not just this one:
+
+```bash
+nginx -t && nginx -s reload
+```
 
 ### Check it worked
 
@@ -288,7 +333,26 @@ Paste the contents **inside** the existing `server { ... }` block, replacing any
 curl https://app-api.iinfinityai.com/health
 ```
 
-You should see `{"status":"ok",...}`. And:
+You want `{"status":"ok","version":"1.0.0","env":"production"}`.
+
+**Read the `env` field.** If it says `development`, `NODE_ENV` is not reaching the
+application — and in that state it does not enforce HTTPS, does not check the length of
+your encryption key, and accepts a mail driver that silently delivers nothing. Fix that
+before going further.
+
+**If you get a 404 in JSON**, something is running, but it may not be this application.
+That error shape comes from the API framework, and other Node applications produce an
+identical one — so a 404 here often means nginx is proxying to a *different* app that
+happens to hold the port. Compare:
+
+```bash
+ss -ltnp | grep 3500
+pm2 status
+```
+
+If `infinity-api` is not the process on that port, change `PORT` in `.env` and
+`proxy_pass` to a free one. Until then that hostname serves someone else's application
+under your certificate.
 
 ```bash
 curl https://app-api.iinfinityai.com/ready
@@ -371,6 +435,11 @@ cd apps/api && npm ci && npm run build && npm run migrate
 cd /www/wwwroot/infinity && pm2 restart ecosystem.config.cjs
 ```
 
+> **Migrate before restarting, never after.** The migration runner is checksum-guarded
+> and safe to re-run, but new code against an old schema is not safe. Run the commands
+> in the order above and stop if `migrate` fails — a failed migration followed by a
+> restart is how a working deployment becomes a broken one.
+
 If the change touched the public website:
 
 ```bash
@@ -403,6 +472,9 @@ pm2 status
 
 If `/health` fails but pm2 says online, the problem is nginx. If pm2 shows `errored`, read
 `pm2 logs infinity-api`.
+
+If `/health` returns a **JSON 404**, the port is answering but possibly from another
+application — see the check in Step 8.
 
 **Nobody is receiving email**
 
