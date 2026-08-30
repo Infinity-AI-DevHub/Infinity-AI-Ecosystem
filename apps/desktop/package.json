@@ -8,7 +8,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build:main": "tsc -p tsconfig.json && npm run build:preload",
-    "build:renderer": "npm --prefix ../web run build",
+    "build:renderer": "node scripts/build-renderer.mjs",
     "build": "npm run build:renderer && node scripts/copy-renderer.mjs && npm run build:main",
     "dev": "npm run build:main && cross-env INFINITY_DEV_SERVER=http://localhost:4600 electron .",
     "start": "npm run build && electron .",

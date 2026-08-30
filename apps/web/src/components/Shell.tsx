@@ -37,6 +37,7 @@ import { api, type Notification, type Paged } from '../lib/api';
 import { useQuery, invalidate, clearCache } from '../lib/query';
 import { realtime, type ConnectionState } from '../lib/realtime';
 import { initials, relativeTime } from '../lib/format';
+import { Logo } from './Logo';
 
 type NavItem = {
   to: string;
@@ -184,7 +185,7 @@ export function Shell({ children }: { children: ReactNode }) {
         id="module-navigation"
       >
         <div className="brand-lockup">
-          <span className="brand-mark" aria-hidden="true">IW</span>
+          <Logo size={34} tone="inverse" />
           <div>
             <strong>Infinity Workspace</strong>
             <span>{session?.company?.name ?? 'Workspace'}</span>

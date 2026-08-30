@@ -13,6 +13,7 @@ import { isDesktop } from '../lib/desktop';
 import { setGrant, type Grant } from '../lib/tokens';
 import { clearNotice, readNotice } from '../lib/notice';
 import { FieldMessage } from '../components/States';
+import { Logo } from '../components/Logo';
 
 function safeReturnPath(value: unknown): string {
   if (typeof value !== 'string') return '/command';
@@ -73,7 +74,7 @@ export default function SignIn() {
     <main className="auth-page">
       <section className="auth-card">
         <div className="brand-lockup">
-          <span className="brand-mark" aria-hidden="true">IW</span>
+          <Logo size={34} tone="brand" />
           <div>
             {/* The product name is the page's heading, not decoration. Every other route
                 carries exactly one h1; without this the first screen anyone sees is the
