@@ -149,7 +149,7 @@ export function verifyLocalObjectSignature(
 
 // ------------------------------------------------------------------ s3 driver
 
-/** Minimal AWS SigV4 presigner - no SDK dependency, works with MinIO/R2/S3. */
+/** Minimal AWS SigV4 presigner - no SDK dependency, works with R2 and any S3-compatible service. */
 class S3Storage implements StorageDriver {
   readonly name = 's3';
 

@@ -146,6 +146,11 @@ Now edit the file — in aaPanel, **Files → /www/wwwroot/infinity/apps/api →
 ```ini
 NODE_ENV=production
 
+# This server runs other applications. Pin the port rather than relying on the
+# default, so a future default change cannot silently collide with one of them.
+PORT=3500
+HOST=127.0.0.1
+
 PUBLIC_URL=https://app.iinfinityai.com
 API_URL=https://app-api.iinfinityai.com
 

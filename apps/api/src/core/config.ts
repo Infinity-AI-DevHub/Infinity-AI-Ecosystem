@@ -87,9 +87,9 @@ function notifyDriver(): 'log' | 'smtp' | 'provider' {
 export const config = {
   env: nodeEnv,
   isProd,
-  port: int('PORT', 4000),
+  port: int('PORT', 3500),
   host: process.env.HOST ?? '0.0.0.0',
-  publicUrl: url('PUBLIC_URL', 'http://localhost:5173', { httpsInProd: true }),
+  publicUrl: url('PUBLIC_URL', 'http://localhost:4600', { httpsInProd: true }),
   /**
    * Additional browser origins permitted to call the API.
    *
@@ -103,7 +103,7 @@ export const config = {
     .split(',')
     .map((value) => value.trim().replace(/\/$/, ''))
     .filter(Boolean),
-  apiUrl: url('API_URL', 'http://localhost:4000', { httpsInProd: true }),
+  apiUrl: url('API_URL', 'http://localhost:3500', { httpsInProd: true }),
   logLevel: process.env.LOG_LEVEL ?? (isProd ? 'info' : 'debug'),
   trustProxy: bool('TRUST_PROXY', isProd),
 

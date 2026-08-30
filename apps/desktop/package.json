@@ -10,7 +10,7 @@
     "build:main": "tsc -p tsconfig.json && npm run build:preload",
     "build:renderer": "npm --prefix ../web run build",
     "build": "npm run build:renderer && node scripts/copy-renderer.mjs && npm run build:main",
-    "dev": "npm run build:main && cross-env INFINITY_DEV_SERVER=http://localhost:5173 electron .",
+    "dev": "npm run build:main && cross-env INFINITY_DEV_SERVER=http://localhost:4600 electron .",
     "start": "npm run build && electron .",
     "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/preload/index.js --sourcemap",
     "package": "npm run build && electron-builder --mac --win --config electron-builder.yml",
