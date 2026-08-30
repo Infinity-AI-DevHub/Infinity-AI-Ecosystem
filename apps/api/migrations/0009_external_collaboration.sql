@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS external_organizations (
   CONSTRAINT external_org_creator_fk FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT external_org_kind_chk CHECK (kind IN ('client','vendor','partner','contractor')),
   CONSTRAINT external_org_status_chk CHECK (status IN ('active','archived'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- A guest belongs to exactly one organisation, and their access carries an end date by
 -- default. External access that never expires is how a finished engagement quietly
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS external_memberships (
   CONSTRAINT external_members_org_fk FOREIGN KEY (organization_id) REFERENCES external_organizations(id) ON DELETE CASCADE,
   CONSTRAINT external_members_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
   CONSTRAINT external_members_inviter_fk FOREIGN KEY (invited_by) REFERENCES users(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- A share link is a capability in a URL, so it is stored only as a hash, always expires,
 -- and counts its own use. Revocation is a column rather than a delete because who shared
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS share_links (
   CONSTRAINT share_links_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
   CONSTRAINT share_links_creator_fk FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT share_links_type_chk CHECK (resource_type IN ('file','folder'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- Every access through a link is recorded. The link itself is anonymous by design, so
 -- this is the only trace of what left the company and when.
@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS share_link_accesses (
   created_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   KEY share_access_link (share_link_id, created_at),
   CONSTRAINT share_access_link_fk FOREIGN KEY (share_link_id) REFERENCES share_links(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- Guests start with nothing that works on its own. Every capability here is useless
 -- without a matching resource grant, because the decision pipeline checks the capability

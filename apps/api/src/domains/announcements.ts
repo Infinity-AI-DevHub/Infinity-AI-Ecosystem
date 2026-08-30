@@ -2,7 +2,7 @@
  * Announcements (blueprint 04). Targeted company/department/group broadcasts with
  * scheduling, acknowledgements, expiry and administrator moderation.
  */
-import { many, newId, one, pool, reload, transaction } from '../core/db.js';
+import { jsonArrayOverlaps, many, newId, one, pool, reload, transaction } from '../core/db.js';
 import { notFound } from '../core/errors.js';
 import { authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
@@ -98,6 +98,7 @@ export async function create(
 
 /** Returns the announcements this specific person is targeted by. */
 export async function listForUser(actor: Actor, limit = 20) {
+  const groupClause = jsonArrayOverlaps("a.audience->'$.groupIds'", actor.groupIds, 5);
   return many(
     `SELECT a.id, a.title, a.body, a.priority, a.requires_ack, a.publish_at, a.expires_at,
             u.display_name AS author_name,
@@ -114,14 +115,14 @@ export async function listForUser(actor: Actor, limit = 20) {
           OR (a.audience->>'$.scope' = 'department'
               AND $3 IS NOT NULL
               AND JSON_CONTAINS(a.audience->'$.departmentIds', JSON_QUOTE($3)))
-          OR (a.audience->>'$.scope' = 'group'
-              AND JSON_OVERLAPS(a.audience->'$.groupIds', CAST($4 AS JSON)))
+          OR (a.audience->>'$.scope' = 'group' AND ${groupClause})
         )
       ORDER BY
         CASE a.priority WHEN 'critical' THEN 0 WHEN 'important' THEN 1 ELSE 2 END,
         a.publish_at DESC
-      LIMIT $5`,
-    [actor.companyId, actor.userId, actor.departmentId, JSON.stringify(actor.groupIds), limit],
+      LIMIT $4`,
+    // Group ids go last so expanding them cannot shift the placeholders before them.
+    [actor.companyId, actor.userId, actor.departmentId, limit, ...actor.groupIds],
   );
 }
 
@@ -134,6 +135,7 @@ export async function listForUser(actor: Actor, limit = 20) {
  * target group reads as not found rather than leaking the content.
  */
 export async function getForUser(actor: Actor, announcementId: string) {
+  const groupClause = jsonArrayOverlaps("a.audience->'$.groupIds'", actor.groupIds, 5);
   const row = await one(
     `SELECT a.id, a.title, a.body, a.priority, a.requires_ack, a.publish_at, a.expires_at,
             u.display_name AS author_name,
@@ -151,10 +153,10 @@ export async function getForUser(actor: Actor, announcementId: string) {
           OR (a.audience->>'$.scope' = 'department'
               AND $4 IS NOT NULL
               AND JSON_CONTAINS(a.audience->'$.departmentIds', JSON_QUOTE($4)))
-          OR (a.audience->>'$.scope' = 'group'
-              AND JSON_OVERLAPS(a.audience->'$.groupIds', CAST($5 AS JSON)))
+          OR (a.audience->>'$.scope' = 'group' AND ${groupClause})
         )`,
-    [actor.companyId, actor.userId, announcementId, actor.departmentId, JSON.stringify(actor.groupIds)],
+    // Group ids last, so expanding them cannot shift the placeholders before them.
+    [actor.companyId, actor.userId, announcementId, actor.departmentId, ...actor.groupIds],
   );
   if (!row) throw notFound('Announcement not found');
   return row;

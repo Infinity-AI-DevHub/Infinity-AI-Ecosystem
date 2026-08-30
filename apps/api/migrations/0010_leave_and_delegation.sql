@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS leave_types (
   created_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   UNIQUE KEY leave_types_key (company_id, `key`),
   CONSTRAINT leave_types_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- One row per person, per type, per leave year. Balances are held rather than derived so
 -- that a mid-year change to entitlement - a promotion, a contract change - does not
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS leave_balances (
   CONSTRAINT leave_balances_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
   CONSTRAINT leave_balances_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT leave_balances_type_fk FOREIGN KEY (leave_type_id) REFERENCES leave_types(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- The domain record. It points at the approval request rather than reimplementing
 -- routing, so leave inherits the manager fallback, separation of duties, escalation and
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS leave_requests (
   CONSTRAINT leave_requests_approval_fk FOREIGN KEY (approval_request_id) REFERENCES approval_requests(id) ON DELETE SET NULL,
   CONSTRAINT leave_requests_status_chk CHECK (status IN ('pending','approved','rejected','cancelled')),
   CONSTRAINT leave_requests_range_chk CHECK (end_date >= start_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- Public holidays are company data, not a library: they differ by country and by year,
 -- and a wrong list silently miscounts everyone's entitlement.
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS company_holidays (
   created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   UNIQUE KEY company_holidays_date (company_id, holiday_date),
   CONSTRAINT company_holidays_company_fk FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- Delegation: while this window is open, decisions routed to from_user go to to_user
 -- instead. Stored as a window rather than a flag so it can be arranged in advance and
@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS approval_delegations (
   CONSTRAINT delegations_window_chk CHECK (ends_at > starts_at),
   -- Self-delegation is a no-op that would silently swallow the request.
   CONSTRAINT delegations_distinct_chk CHECK (from_user_id <> to_user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 INSERT INTO role_capabilities (role, capability) VALUES
   ('super_admin', 'leave.request'), ('admin', 'leave.request'),

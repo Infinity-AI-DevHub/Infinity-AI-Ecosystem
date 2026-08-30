@@ -150,9 +150,9 @@ async function seed(): Promise<void> {
     for (const definition of APPROVAL_DEFINITIONS) {
       await tx.query(
         `INSERT INTO approval_definitions (id, company_id, \`key\`, name, form_schema, routing)
-         VALUES ($1,$2,$3,$4,$5,$6) AS incoming
+         VALUES ($1,$2,$3,$4,$5,$6)
          ON DUPLICATE KEY UPDATE
-           name = incoming.name, form_schema = incoming.form_schema, routing = incoming.routing`,
+           name = VALUES(name), form_schema = VALUES(form_schema), routing = VALUES(routing)`,
         [
           newId(),
           companyId,

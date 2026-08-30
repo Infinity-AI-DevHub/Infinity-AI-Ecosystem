@@ -10,7 +10,7 @@ services:
     command: >-
       --default-time-zone=+00:00
       --character-set-server=utf8mb4
-      --collation-server=utf8mb4_0900_ai_ci
+      --collation-server=utf8mb4_unicode_ci
     # 3307 avoids colliding with a locally installed MySQL (MAMP uses 8889).
     ports: ['3307:3306']
     volumes: ['mysqldata:/var/lib/mysql']
