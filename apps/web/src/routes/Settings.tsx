@@ -13,6 +13,7 @@ import { AsyncSection, FormError } from '../components/States';
 import { formatDateTime, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 import { setNotice } from '../lib/notice';
+import { NotificationSettings } from '../components/NotificationSettings';
 
 type Delegation = {
   id: string;
@@ -334,6 +335,8 @@ export default function Settings() {
           </AsyncSection>
           <FormError error={withdrawCover.error} />
         </section>
+
+        <NotificationSettings />
 
         <section className="panel" aria-labelledby="sessions-heading">
           <h3 id="sessions-heading">Signed-in devices</h3>

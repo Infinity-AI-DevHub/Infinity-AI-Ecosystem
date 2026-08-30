@@ -14,6 +14,8 @@ import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatDateTime, relativeTime } from '../lib/format';
 import { useSession } from '../lib/session';
+import { RichText } from '../components/RichText';
+import { Attachments } from '../components/Attachments';
 
 type Space = {
   id: string;
@@ -365,19 +367,15 @@ function PageEditor({ page, onDone }: { page: Page; onDone: () => void }) {
       </div>
 
       <div className="field">
-        <label htmlFor="doc-body">Content</label>
-        <textarea
-          id="doc-body"
-          className="doc-source"
-          rows={20}
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-        />
+        <span id="doc-body-label" className="label-row">Content</span>
+        <RichText value={body} onChange={setBody} ariaLabelledBy="doc-body-label" />
         <p className="field-hint">
-          Basic HTML: headings, paragraphs, lists, links, tables and code. Anything else is
-          stripped when it is saved.
+          Write directly, or switch to HTML to edit the markup. Headings, lists, links,
+          quotes, tables and code are kept; anything else is stripped when it is saved.
         </p>
       </div>
+
+      <Attachments pageId={page.id} />
 
       <div className="field">
         <label htmlFor="doc-note">What changed? (optional)</label>

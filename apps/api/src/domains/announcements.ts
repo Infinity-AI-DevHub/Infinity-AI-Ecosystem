@@ -98,7 +98,7 @@ export async function create(
 
 /** Returns the announcements this specific person is targeted by. */
 export async function listForUser(actor: Actor, limit = 20) {
-  const groupClause = jsonArrayOverlaps("a.audience->'$.groupIds'", actor.groupIds, 5);
+  const groupClause = jsonArrayOverlaps("JSON_EXTRACT(a.audience, '$.groupIds')", actor.groupIds, 5);
   return many(
     `SELECT a.id, a.title, a.body, a.priority, a.requires_ack, a.publish_at, a.expires_at,
             u.display_name AS author_name,
@@ -111,11 +111,11 @@ export async function listForUser(actor: Actor, limit = 20) {
         AND a.publish_at <= NOW(3)
         AND (a.expires_at IS NULL OR a.expires_at > NOW(3))
         AND (
-          a.audience->>'$.scope' = 'company'
-          OR (a.audience->>'$.scope' = 'department'
+          JSON_UNQUOTE(JSON_EXTRACT(a.audience, '$.scope')) = 'company'
+          OR (JSON_UNQUOTE(JSON_EXTRACT(a.audience, '$.scope')) = 'department'
               AND $3 IS NOT NULL
-              AND JSON_CONTAINS(a.audience->'$.departmentIds', JSON_QUOTE($3)))
-          OR (a.audience->>'$.scope' = 'group' AND ${groupClause})
+              AND JSON_CONTAINS(JSON_EXTRACT(a.audience, '$.departmentIds'), JSON_QUOTE($3)))
+          OR (JSON_UNQUOTE(JSON_EXTRACT(a.audience, '$.scope')) = 'group' AND ${groupClause})
         )
       ORDER BY
         CASE a.priority WHEN 'critical' THEN 0 WHEN 'important' THEN 1 ELSE 2 END,
@@ -135,7 +135,7 @@ export async function listForUser(actor: Actor, limit = 20) {
  * target group reads as not found rather than leaking the content.
  */
 export async function getForUser(actor: Actor, announcementId: string) {
-  const groupClause = jsonArrayOverlaps("a.audience->'$.groupIds'", actor.groupIds, 5);
+  const groupClause = jsonArrayOverlaps("JSON_EXTRACT(a.audience, '$.groupIds')", actor.groupIds, 5);
   const row = await one(
     `SELECT a.id, a.title, a.body, a.priority, a.requires_ack, a.publish_at, a.expires_at,
             u.display_name AS author_name,
@@ -149,11 +149,11 @@ export async function getForUser(actor: Actor, announcementId: string) {
         AND a.publish_at <= NOW(3)
         AND (a.expires_at IS NULL OR a.expires_at > NOW(3))
         AND (
-          a.audience->>'$.scope' = 'company'
-          OR (a.audience->>'$.scope' = 'department'
+          JSON_UNQUOTE(JSON_EXTRACT(a.audience, '$.scope')) = 'company'
+          OR (JSON_UNQUOTE(JSON_EXTRACT(a.audience, '$.scope')) = 'department'
               AND $4 IS NOT NULL
-              AND JSON_CONTAINS(a.audience->'$.departmentIds', JSON_QUOTE($4)))
-          OR (a.audience->>'$.scope' = 'group' AND ${groupClause})
+              AND JSON_CONTAINS(JSON_EXTRACT(a.audience, '$.departmentIds'), JSON_QUOTE($4)))
+          OR (JSON_UNQUOTE(JSON_EXTRACT(a.audience, '$.scope')) = 'group' AND ${groupClause})
         )`,
     // Group ids last, so expanding them cannot shift the placeholders before them.
     [actor.companyId, actor.userId, announcementId, actor.departmentId, ...actor.groupIds],

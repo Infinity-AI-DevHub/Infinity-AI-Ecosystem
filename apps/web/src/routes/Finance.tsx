@@ -12,8 +12,9 @@ import { useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatCurrency, formatDate, initials, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
+import { Invoices } from '../components/Invoices';
 
-type Tab = 'claims' | 'budgets' | 'assets' | 'vendors';
+type Tab = 'invoices' | 'claims' | 'budgets' | 'assets' | 'vendors';
 
 type Claim = {
   id: string;
@@ -59,6 +60,8 @@ export default function Finance() {
   const { can } = useSession();
   const tabs = (
     [
+      // Invoices lead: money owed to the company is the question this page is opened for.
+      ['invoices', 'Invoices', can('invoice.read')],
       ['claims', 'Expenses', can('expense.submit')],
       ['budgets', 'Budgets', can('budget.read')],
       ['assets', 'Assets', can('asset.read')],
@@ -73,7 +76,7 @@ export default function Finance() {
       <header className="module-header">
         <div>
           <h2>Finance</h2>
-          <p>Expense claims, budgets, suppliers and company equipment.</p>
+          <p>Invoices, payments, expense claims, budgets, suppliers and equipment.</p>
         </div>
       </header>
 
@@ -92,6 +95,7 @@ export default function Finance() {
         ))}
       </div>
 
+      {tab === 'invoices' ? <Invoices /> : null}
       {tab === 'claims' ? <Claims /> : null}
       {tab === 'budgets' ? <Budgets /> : null}
       {tab === 'assets' ? <Assets /> : null}

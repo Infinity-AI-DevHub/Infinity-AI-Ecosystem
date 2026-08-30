@@ -38,6 +38,7 @@ import { useQuery, invalidate, clearCache } from '../lib/query';
 import { realtime, type ConnectionState } from '../lib/realtime';
 import { initials, relativeTime } from '../lib/format';
 import { Logo } from './Logo';
+import { inQuietHours, useNotify } from '../lib/notify';
 
 type NavItem = {
   to: string;
@@ -69,6 +70,17 @@ export function Shell({ children }: { children: ReactNode }) {
   const { session, can, signOut } = useSession();
   const navigate = useNavigate();
   const location = useLocation();
+  const { notify, preferences, setBadgeCount } = useNotify();
+  /**
+   * The realtime subscription is opened once per session. Reading notify and
+   * preferences through a ref keeps them current inside that long-lived closure
+   * without making the socket depend on them - re-subscribing on a preference change
+   * would drop and re-open the connection for no reason.
+   */
+  const notifyRef = useRef(notify);
+  const prefsRef = useRef(preferences);
+  useEffect(() => { notifyRef.current = notify; }, [notify]);
+  useEffect(() => { prefsRef.current = preferences; }, [preferences]);
   const [navOpen, setNavOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionState>('closed');
@@ -85,14 +97,38 @@ export function Shell({ children }: { children: ReactNode }) {
       // refetches the authoritative record.
       if (frame.type === 'notification.created') {
         invalidate('/me/notifications');
+
+        const payload = frame.data as {
+          title?: string; body?: string; link?: string; severity?: string;
+        };
+        /**
+         * Severity decides how loud this gets. Anything the server did not classify is
+         * information, not an alarm - defaulting the other way trains people to ignore
+         * the banner that actually matters.
+         */
+        const severity =
+          payload.severity === 'critical' || payload.severity === 'warning'
+            || payload.severity === 'success'
+            ? payload.severity
+            : 'info';
+
+        if (prefsRef.current.bannersEnabled) {
+          notifyRef.current({
+            severity,
+            title: payload.title ?? 'Infinity Workspace',
+            body: payload.body,
+            link: payload.link,
+          });
+        }
         /**
          * On the desktop a notification should reach someone who is not looking at the
          * window - that is most of the point of leaving the browser. The payload carries
          * its own route, and the main process validates it before navigating, so a
          * notification cannot be used to send the window somewhere unexpected.
          */
-        if (isDesktop) {
-          const payload = frame.data as { title?: string; body?: string; link?: string };
+        // Quiet hours suppress the OS banner but never the record itself: the
+        // notification is still in the panel and still counted as unread.
+        if (isDesktop && prefsRef.current.bannersEnabled && !inQuietHours(prefsRef.current)) {
           void desktop?.notify({
             title: payload.title ?? 'Infinity Workspace',
             body: payload.body ?? '',
@@ -139,7 +175,9 @@ export function Shell({ children }: { children: ReactNode }) {
   // The dock or taskbar badge is the only signal someone gets with the window closed.
   useEffect(() => {
     if (isDesktop) void desktop?.setBadge(unread);
-  }, [unread]);
+    // The web build has no dock, so the count goes in the tab title instead.
+    setBadgeCount(unread);
+  }, [unread, setBadgeCount]);
 
   /**
    * A notification click asks the main process to bring the window forward and hands the

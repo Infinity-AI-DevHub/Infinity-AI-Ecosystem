@@ -12,12 +12,14 @@ import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, DegradedNotice, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { durationBetween, formatDate, formatTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
+import { openExternal } from '../lib/desktop';
 
 type Event = {
   id: string;
   title: string;
   description: string;
   location: string | null;
+  online_url: string | null;
   roomId: string | null;
   startsAt: string;
   endsAt: string;
@@ -168,6 +170,19 @@ export default function Meetings() {
               </p>
 
               {detail.data.location ? <p>{detail.data.location}</p> : null}
+              {detail.data.online_url ? (
+                <p>
+                  {/* Through the bridge: in the desktop client a bare target=_blank is
+                      caught by the navigation guard, so the link would do nothing. */}
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => void openExternal(detail.data!.online_url!)}
+                  >
+                    Join online
+                  </button>
+                </p>
+              ) : null}
               {detail.data.description ? <p>{detail.data.description}</p> : null}
 
               {detail.data.hasVideoRoom ? (
@@ -271,6 +286,8 @@ function ScheduleDialog({
   const [attendeeIds, setAttendeeIds] = useState<string[]>([]);
   const [roomId, setRoomId] = useState('');
   const [withVideo, setWithVideo] = useState(true);
+  const [onlineUrl, setOnlineUrl] = useState('');
+  const [agenda, setAgenda] = useState('');
   const key = useMemo(() => idempotencyKey(), []);
 
   const people = useQuery<{ items: Person[] }>('/users?limit=100', (signal) =>
@@ -295,6 +312,8 @@ function ScheduleDialog({
           attendeeIds,
           roomId: roomId || null,
           withVideoRoom: withVideo,
+          onlineUrl: onlineUrl.trim() || null,
+          agenda: agenda.trim() || undefined,
         },
         { idempotencyKey: key },
       );
@@ -388,6 +407,33 @@ function ScheduleDialog({
             <p className="field-hint">
               Double bookings are refused by the server, so a clash is reported immediately.
             </p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="meeting-link">Online meeting link</label>
+            <input
+              id="meeting-link"
+              type="url"
+              inputMode="url"
+              placeholder="https://meet.example.com/your-room"
+              value={onlineUrl}
+              onChange={(event) => setOnlineUrl(event.target.value)}
+            />
+            <p className="field-hint">
+              Sent to everyone invited. Must start with https.
+            </p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="meeting-agenda">Agenda and notes</label>
+            <textarea
+              id="meeting-agenda"
+              rows={3}
+              value={agenda}
+              onChange={(event) => setAgenda(event.target.value)}
+              placeholder={'1. Scope\n2. Timeline\n3. Next steps'}
+            />
+            <p className="field-hint">Included in the invitation email.</p>
           </div>
 
           <fieldset className="field">

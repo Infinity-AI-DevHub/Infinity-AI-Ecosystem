@@ -165,11 +165,50 @@ const onEventScheduled: Handler = async (event) => {
     attendeeIds: string[];
     organizerId: string;
   };
-  const meeting = await one<{ title: string; starts_at: Date; company_id: string; description: string }>(
-    'SELECT title, starts_at, company_id, description FROM calendar_events WHERE id = $1',
+  const meeting = await one<{
+    title: string; starts_at: Date; ends_at: Date; company_id: string; description: string;
+    online_url: string | null; location: string | null; agenda: string; notes: string; timezone: string;
+  }>(
+    `SELECT title, starts_at, ends_at, company_id, description, online_url, location,
+            agenda, notes, timezone
+       FROM calendar_events WHERE id = $1`,
     [eventId],
   );
   if (!meeting) return;
+
+  /**
+   * The invitation goes out by email as well as in-app, because a meeting is the one
+   * notification people act on away from the application - and an online meeting is
+   * useless without the link in reach.
+   */
+  const attendees = await many<{ email_display: string; display_name: string }>(
+    `SELECT email_display, display_name FROM users
+      WHERE id = ANY_PLACEHOLDER AND status = 'active'`.replace(
+        'ANY_PLACEHOLDER',
+        `(${attendeeIds.map((_, i) => `$${i + 1}`).join(',') || "''"})`,
+      ),
+    attendeeIds,
+  );
+  if (attendees.length > 0) {
+    const when = new Date(meeting.starts_at).toISOString().replace('T', ' ').slice(0, 16);
+    const lines = [
+      `You have been invited to "${meeting.title}".`,
+      '',
+      `When: ${when} UTC (${meeting.timezone})`,
+    ];
+    if (meeting.online_url) lines.push('', 'Join online:', meeting.online_url);
+    if (meeting.location) lines.push('', `Location: ${meeting.location}`);
+    if (meeting.agenda?.trim()) lines.push('', 'Agenda:', meeting.agenda.trim());
+    if (meeting.notes?.trim()) lines.push('', 'Notes:', meeting.notes.trim());
+    lines.push('', `Open it in Infinity Workspace: ${publicUrl}/meetings/${eventId}`);
+
+    await notifier.send({
+      from: { address: systemSender(), name: 'Infinity Workspace' },
+      to: attendees.map((a) => a.email_display),
+      subject: `Invitation: ${meeting.title}`,
+      text: lines.join('\n'),
+    });
+  }
 
   await notifications.createMany(
     attendeeIds,
@@ -418,6 +457,159 @@ const onApprovalProgressed: Handler = async (event) => {
 
 // ----------------------------------------------------------------- announcements
 
+/**
+ * An issued invoice reaches the client by email, with the figures in the body.
+ *
+ * The message is plain text on purpose: it has to survive every mail client a client
+ * company might use, and the authoritative copy always lives in the workspace.
+ */
+const onInvoiceIssued: Handler = async (event) => {
+  const { invoiceId } = event.payload as { invoiceId: string };
+  const invoice = await one<{
+    number: string; total: string; currency: string; due_date: string;
+    notes: string | null; terms: string | null; client_name: string; project_name: string | null;
+  }>(
+    `SELECT i.number, i.total, i.currency, i.due_date, i.notes, i.terms,
+            o.name AS client_name, p.name AS project_name
+       FROM invoices i
+       JOIN external_organizations o ON o.id = i.client_org_id
+       LEFT JOIN projects p ON p.id = i.project_id
+      WHERE i.id = $1`,
+    [invoiceId],
+  );
+  if (!invoice) return;
+
+  const recipients = await clientRecipients(invoiceId);
+  if (recipients.length === 0) return;
+
+  const lines = await many<{ description: string; quantity: string; unit_price: string; amount: string }>(
+    'SELECT description, quantity, unit_price, amount FROM invoice_lines WHERE invoice_id = $1 ORDER BY sort_order',
+    [invoiceId],
+  );
+
+  await notifier.send({
+    from: { address: systemSender(), name: 'Infinity Workspace' },
+    to: recipients,
+    subject: `Invoice ${invoice.number} from Infinity AI`,
+    text: [
+      `Invoice ${invoice.number}`,
+      invoice.project_name ? `Project: ${invoice.project_name}` : '',
+      `Due: ${String(invoice.due_date).slice(0, 10)}`,
+      '',
+      ...lines.map((l) => `  ${l.description} — ${Number(l.quantity)} x ${l.unit_price} = ${l.amount}`),
+      '',
+      `Total due: ${invoice.total} ${invoice.currency}`,
+      invoice.notes ? `\n${invoice.notes}` : '',
+      invoice.terms ? `\nTerms: ${invoice.terms}` : '',
+    ].filter(Boolean).join('\n'),
+  });
+};
+
+/** A payment is acknowledged immediately: a receipt the client can file. */
+const onInvoicePayment: Handler = async (event) => {
+  const { invoiceId, paymentId, receiptNumber, amount, fullySettled } = event.payload as {
+    invoiceId: string; paymentId: string; receiptNumber: string; amount: number; fullySettled: boolean;
+  };
+  const invoice = await one<{ number: string; currency: string; total: string; amount_paid: string }>(
+    'SELECT number, currency, total, amount_paid FROM invoices WHERE id = $1',
+    [invoiceId],
+  );
+  if (!invoice) return;
+  const recipients = await clientRecipients(invoiceId);
+  if (recipients.length === 0) return;
+
+  const balance = (Number(invoice.total) - Number(invoice.amount_paid)).toFixed(2);
+  await notifier.send({
+    from: { address: systemSender(), name: 'Infinity Workspace' },
+    to: recipients,
+    subject: `Receipt ${receiptNumber} for invoice ${invoice.number}`,
+    text: [
+      `Thank you — we have recorded your payment.`,
+      '',
+      `Receipt:  ${receiptNumber}`,
+      `Invoice:  ${invoice.number}`,
+      `Amount:   ${Number(amount).toFixed(2)} ${invoice.currency}`,
+      '',
+      fullySettled
+        ? 'This invoice is now settled in full. Nothing further is due.'
+        : `Remaining balance: ${balance} ${invoice.currency}`,
+    ].join('\n'),
+  });
+  await pool.query('UPDATE invoice_payments SET receipt_sent_at = NOW(3) WHERE id = $1', [paymentId]);
+};
+
+/**
+ * Overdue chasing.
+ *
+ * The reminder says what is owed and how late it is, and nothing else. Escalating tone
+ * is a decision for a person, not a cron job.
+ */
+const onInvoiceReminder: Handler = async (event) => {
+  const { invoiceId, daysLate } = event.payload as { invoiceId: string; daysLate: number };
+  const invoice = await one<{ number: string; currency: string; total: string; amount_paid: string; due_date: string }>(
+    'SELECT number, currency, total, amount_paid, due_date FROM invoices WHERE id = $1',
+    [invoiceId],
+  );
+  if (!invoice) return;
+  const recipients = await clientRecipients(invoiceId);
+  if (recipients.length === 0) return;
+
+  const balance = (Number(invoice.total) - Number(invoice.amount_paid)).toFixed(2);
+  await notifier.send({
+    from: { address: systemSender(), name: 'Infinity Workspace' },
+    to: recipients,
+    subject: `Reminder: invoice ${invoice.number} is overdue`,
+    text: [
+      `Invoice ${invoice.number} was due on ${String(invoice.due_date).slice(0, 10)}, ${daysLate} day(s) ago.`,
+      '',
+      `Outstanding: ${balance} ${invoice.currency}`,
+      '',
+      'If payment is already on its way, please ignore this message.',
+      'If something is wrong with the invoice, reply and we will sort it out.',
+    ].join('\n'),
+  });
+};
+
+/** Someone was given access to a folder, file or document: tell them it exists. */
+const onShareGranted: Handler = async (event) => {
+  const { resourceType, resourceName, recipients, url, grantedBy, message } = event.payload as {
+    resourceType: string; resourceName: string; recipients: string[];
+    url: string; grantedBy: string; message?: string | null;
+  };
+  if (!recipients || recipients.length === 0) return;
+
+  /**
+   * One message per recipient rather than one with everyone in To. A shared folder can
+   * be granted to the whole company, and disclosing that list to each of them is a
+   * privacy leak that is invisible until someone points it out.
+   */
+  for (const to of recipients) {
+    await notifier.send({
+      from: { address: systemSender(), name: 'Infinity Workspace' },
+      to: [to],
+      subject: `${grantedBy} shared a ${resourceType} with you: ${resourceName}`,
+      text: [
+        `${grantedBy} has given you access to the ${resourceType} "${resourceName}".`,
+        message ? `\n"${message}"\n` : '',
+        url,
+      ].filter(Boolean).join('\n'),
+    });
+  }
+};
+
+/** The client-side addresses an invoice should reach. */
+async function clientRecipients(invoiceId: string): Promise<string[]> {
+  const rows = await many<{ email_display: string }>(
+    `SELECT u.email_display
+       FROM invoices i
+       JOIN external_memberships m ON m.organization_id = i.client_org_id
+       JOIN users u ON u.id = m.user_id
+      WHERE i.id = $1 AND u.status = 'active'`,
+    [invoiceId],
+  );
+  return rows.map((r) => r.email_display).filter(Boolean);
+}
+
 const onAnnouncementPublished: Handler = async (event) => {
   const { announcementId, title, audience } = event.payload as {
     announcementId: string;
@@ -473,6 +665,10 @@ export const handlers: Record<string, Handler> = {
   'user.suspended': onAccessChanged,
   'user.reactivated': onAccessChanged,
   'user.password_reset_requested': onPasswordResetRequested,
+  'invoice.issued': onInvoiceIssued,
+  'invoice.payment_recorded': onInvoicePayment,
+  'invoice.reminder_due': onInvoiceReminder,
+  'share.granted': onShareGranted,
   'event.scheduled': onEventScheduled,
   'event.updated': onEventChanged,
   'event.cancelled': onEventChanged,

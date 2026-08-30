@@ -1,94 +1,129 @@
-<!doctype html><html><head><meta charset="utf-8"><title>UI preview</title>
+<!doctype html><html><head><meta charset="utf-8"><title>Feature preview</title>
 <link rel="stylesheet" href="/src/index.css">
 <link rel="stylesheet" href="/src/styles/tokens.css">
 <link rel="stylesheet" href="/src/App.css">
-<style>
-  /* Harness only — not part of the app. */
-  .pv-label{position:sticky;top:0;z-index:99;background:var(--bg-app);color:var(--fg-tertiary);
-    font:600 11px/1 var(--font-sans);letter-spacing:.09em;text-transform:uppercase;
-    padding:14px 16px;border-bottom:1px solid var(--border-subtle)}
-  .pv-frame{border:1px solid var(--border-default);border-radius:12px;overflow:hidden;margin:0 16px 28px}
-</style></head>
-<body style="background:var(--bg-app)">
+<style>.pv{padding:20px;background:var(--bg-app)}
+.pvl{font:600 11px/1 var(--font-sans);letter-spacing:.09em;text-transform:uppercase;
+ color:var(--fg-tertiary);margin:22px 0 10px}</style></head>
+<body class="pv">
+<div id="top"></div>
 
-<p class="pv-label">Workspace shell</p>
-<div class="pv-frame">
-<div class="workspace-shell" style="height:560px">
+<p class="pvl">Invoices — buckets and ledger</p>
+<div class="dashboard-grid">
+  <div class="panel metric-card"><span class="panel-title">Outstanding</span><strong>LKR 486,500.00</strong></div>
+  <div class="panel metric-card"><span class="panel-title">Overdue</span><strong class="value-warn">LKR 128,000.00</strong><span class="field-hint">3 invoice(s)</span></div>
+  <div class="panel metric-card"><span class="panel-title">Paid to date</span><strong>LKR 2,140,750.00</strong></div>
+</div>
+<div class="chip-row" style="margin-top:20px">
+  <span class="chip chip-active">Outstanding</span><span class="chip">Overdue</span>
+  <span class="chip">Drafts</span><span class="chip">Paid</span><span class="chip">All</span>
+  <button class="primary-button" style="margin-left:auto">New invoice</button>
+</div>
+<div class="panel" style="margin-top:16px"><div class="table-scroll"><table class="data-table">
+<thead><tr><th>Invoice</th><th>Client</th><th>Project</th><th>Due</th>
+<th style="text-align:right">Total</th><th style="text-align:right">Balance</th><th>Status</th><th></th></tr></thead>
+<tbody>
+<tr><td><strong>INV-2026-0012</strong></td><td>Acme Holdings</td><td>Website Rebuild</td><td>2026-08-15</td>
+<td style="text-align:right">LKR 340,000.00</td><td style="text-align:right">LKR 128,000.00</td>
+<td><span class="status-tag status-suspended">Overdue · 15d</span></td><td class="table-actions"><button class="ghost-button">Open</button></td></tr>
+<tr><td><strong>INV-2026-0013</strong></td><td>Beacon Labs</td><td>Mobile App</td><td>2026-09-20</td>
+<td style="text-align:right">LKR 210,500.00</td><td style="text-align:right">LKR 210,500.00</td>
+<td><span class="status-tag status-invited">Open</span></td><td class="table-actions"><button class="ghost-button">Open</button></td></tr>
+<tr><td><strong>INV-2026-0011</strong></td><td>Acme Holdings</td><td>—</td><td>2026-07-30</td>
+<td style="text-align:right">LKR 148,000.00</td><td style="text-align:right">—</td>
+<td><span class="status-tag status-active">Paid</span></td><td class="table-actions"><button class="ghost-button">Open</button></td></tr>
+</tbody></table></div></div>
+
+<p class="pvl">Invoice composer — line editor and running total</p>
+<div class="dialog dialog-wide" style="position:static;transform:none;max-width:100%">
+  <h3>New invoice</h3>
+  <div class="field-row">
+    <label class="field"><span>Client</span><select><option>Acme Holdings</option></select></label>
+    <label class="field"><span>Project <span class="field-hint">optional</span></span><select><option>Website Rebuild</option></select></label>
+  </div>
+  <div class="table-scroll"><table class="data-table">
+  <thead><tr><th style="min-width:220px">Description</th><th style="width:90px">Qty</th>
+  <th style="width:130px">Unit price</th><th style="width:90px">Tax %</th>
+  <th style="width:120px;text-align:right">Amount</th><th></th></tr></thead>
+  <tbody><tr><td><input value="Design retainer"></td><td><input type="number" value="10"></td>
+  <td><input type="number" value="150.50"></td><td><input type="number" value="15"></td>
+  <td style="text-align:right">1505.00</td><td><button class="ghost-button">Remove</button></td></tr></tbody>
+  </table></div>
+  <button class="ghost-button">Add line</button>
+  <dl class="claim-total"><dt>Subtotal</dt><dd>3505.00</dd><dt>Tax</dt><dd>225.75</dd>
+  <dt><strong>Total</strong></dt><dd><strong>3730.75</strong></dd></dl>
+  <div class="checkbox-row"><label><input type="checkbox" checked> Chase this invoice automatically once it is overdue</label>
+  <label class="field"><span>Every</span><select><option>7 days</option></select></label></div>
+  <div class="dialog-actions"><button class="ghost-button">Cancel</button><button class="primary-button">Create draft</button></div>
+</div>
+
+<p class="pvl">Rich text editor</p>
+<div class="rich-text">
+  <div class="rich-text-toolbar">
+    <button class="rich-text-tool">B</button><button class="rich-text-tool">I</button>
+    <button class="rich-text-tool">H2</button><button class="rich-text-tool">H3</button>
+    <button class="rich-text-tool">¶</button><button class="rich-text-tool">• List</button>
+    <button class="rich-text-tool">1. List</button><button class="rich-text-tool">❝</button>
+    <button class="rich-text-tool">&lt;/&gt;</button><button class="rich-text-tool">🔗</button>
+    <button class="ghost-button" style="margin-left:auto">HTML</button>
+  </div>
+  <div class="rich-text-surface doc-body"><h2>Onboarding</h2>
+  <p>Everything a new joiner needs in their first week.</p>
+  <ul><li>Sign in to the workspace</li><li>Meet your manager</li></ul></div>
+</div>
+
+
+
+<p class="pvl">Notification banners</p>
+<div style="position:relative;height:250px;background:var(--bg-surface);border-radius:12px;border:1px solid var(--border-default)">
+ <div class="toast-stack" style="position:absolute">
+  <div class="toast toast-critical"><span class="toast-icon">!</span>
+   <div class="toast-text"><strong>Invoice INV-2026-0012 is overdue</strong><span>Acme Holdings · 15 days · LKR 128,000.00</span><a href="#">Open</a></div>
+   <button class="toast-close">×</button></div>
+  <div class="toast toast-warning"><span class="toast-icon">!</span>
+   <div class="toast-text"><strong>Approval waiting on you</strong><span>Expense claim from Kasun R.</span></div>
+   <button class="toast-close">×</button></div>
+  <div class="toast toast-success"><span class="toast-icon">✓</span>
+   <div class="toast-text"><strong>Payment recorded</strong><span>Receipt RCP-2026-0004 sent to the client</span></div>
+   <button class="toast-close">×</button></div>
+  <div class="toast toast-info"><span class="toast-icon">i</span>
+   <div class="toast-text"><strong>Meeting in 10 minutes</strong><span>Client sync · Join online</span></div>
+   <button class="toast-close">×</button></div>
+ </div>
+</div>
+
+<p class="pvl">Shell — redesigned surfaces</p>
+<div style="border:1px solid var(--border-default);border-radius:12px;overflow:hidden">
+<div class="workspace-shell" style="height:430px">
   <aside class="sidebar">
     <div class="brand-lockup">
-      <svg width="34" height="34" viewBox="0 0 512 512" aria-hidden="true" style="display:block;color:#fff">
+      <svg width="30" height="30" viewBox="0 0 512 512" style="display:block;color:#fff">
         <g transform="translate(102.4,52.4) scale(0.6)"><path d="M256,256 C300,160 420,160 420,256 C420,352 300,352 256,256 C212,160 92,160 92,256 C92,352 212,352 256,256" fill="none" stroke="currentColor" stroke-width="73.33" stroke-linecap="round" stroke-linejoin="round"/></g>
-        <rect x="86" y="352" width="340" height="36" rx="18" fill="currentColor" opacity=".55"/>
-      </svg>
+        <rect x="86" y="352" width="340" height="36" rx="18" fill="currentColor" opacity=".55"/></svg>
       <span class="brand-heading">Infinity Workspace</span>
     </div>
     <nav class="nav-list">
-      <a class="nav-item nav-item-active" href="#">Dashboard</a>
-      <a class="nav-item" href="#">Tasks</a>
-      <a class="nav-item" href="#">Chat</a>
-      <a class="nav-item" href="#">Meetings</a>
-      <a class="nav-item" href="#">Approvals</a>
-      <a class="nav-item" href="#">Documents</a>
-      <a class="nav-item" href="#">Finance</a>
-      <a class="nav-item" href="#">People</a>
+      <a class="nav-item nav-item-active" href="#">Dashboard</a><a class="nav-item" href="#">Tasks</a>
+      <a class="nav-item" href="#">Approvals</a><a class="nav-item" href="#">Finance</a>
+      <a class="nav-item" href="#">Documents</a><a class="nav-item" href="#">People</a>
     </nav>
-    <div class="sidebar-footer">
-      <span class="connection-pill connection-open"><i class="connection-dot"></i>Connected</span>
-      <div class="account-chip"><span class="avatar">TD</span><span class="account-name">Thinula D.</span></div>
-    </div>
+    <div class="sidebar-footer"><span class="connection-pill connection-open"><i class="connection-dot"></i>Connected</span></div>
   </aside>
   <div class="workspace-main">
-    <header class="top-bar">
-      <input class="global-search" placeholder="Search everything…  /">
-      <div class="top-bar-actions">
-        <button class="icon-button">Notifications</button>
-        <button class="ghost-button">Help</button>
+    <header class="top-bar"><input class="global-search" placeholder="Search everything…  /">
+      <div class="top-bar-actions"><button class="ghost-button">Notifications</button></div></header>
+    <main class="workspace-content"><div class="module-page">
+      <div class="module-header"><div><h1>Dashboard</h1><p>What needs you today</p></div>
+        <div class="header-controls"><button class="ghost-button">Export</button><button class="primary-button">New task</button></div></div>
+      <div class="tab-row"><button class="tab tab-active">Overview</button><button class="tab">Mine</button><button class="tab">Team</button></div>
+      <div class="dashboard-grid">
+        <div class="panel metric-card"><span class="panel-title">Open approvals</span><strong>12</strong><span class="field-hint">3 waiting on you</span></div>
+        <div class="panel metric-card"><span class="panel-title">Overdue invoices</span><strong class="value-warn">LKR 128,000</strong><span class="field-hint">3 clients</span></div>
+        <div class="panel metric-card"><span class="panel-title">Tasks due</span><strong>7</strong><span class="field-hint">2 today</span></div>
       </div>
-    </header>
-    <main class="workspace-content">
-      <div class="module-page">
-        <div class="module-header">
-          <div><h1>Dashboard</h1><p class="auth-lead">What needs you today</p></div>
-          <div class="header-controls">
-            <button class="ghost-button">Export</button>
-            <button class="primary-button">New task</button>
-          </div>
-        </div>
-        <div class="dashboard-grid">
-          <section class="panel metric-card"><span class="panel-title">Open approvals</span><strong style="font-size:var(--text-3xl)">12</strong></section>
-          <section class="panel metric-card"><span class="panel-title">Tasks due</span><strong style="font-size:var(--text-3xl)">7</strong></section>
-          <section class="panel metric-card"><span class="panel-title">Leave pending</span><strong style="font-size:var(--text-3xl)">3</strong></section>
-        </div>
-        <section class="panel">
-          <header class="panel-header"><span class="panel-title">Recent expenses</span><button class="ghost-button">View all</button></header>
-          <div class="table-scroll"><table class="data-table">
-            <thead><tr><th>Reference</th><th>Employee</th><th>Amount</th><th>Status</th></tr></thead>
-            <tbody>
-              <tr><td>EXP-1042</td><td>Nadeesha P.</td><td>LKR 24,500</td><td><span class="status-tag status-active">Approved</span></td></tr>
-              <tr><td>EXP-1041</td><td>Kasun R.</td><td>LKR 8,900</td><td><span class="status-tag status-invited">Pending</span></td></tr>
-              <tr><td>EXP-1039</td><td>Ishara W.</td><td>LKR 61,200</td><td><span class="status-tag status-suspended">Rejected</span></td></tr>
-            </tbody>
-          </table></div>
-        </section>
-      </div>
-    </main>
+    </div></main>
   </div>
 </div>
-</div>
-
-<p class="pv-label">Forms, chips, states</p>
-<div class="pv-frame" style="padding:20px;background:var(--bg-surface)">
-  <div class="field"><label>Work email address</label><input placeholder="you@iinfinityai.com"></div>
-  <div class="field"><label>Notes</label><textarea rows="2" placeholder="Optional"></textarea></div>
-  <div class="filter-row" style="margin:12px 0">
-    <span class="chip chip-active">All</span><span class="chip">Mine</span><span class="chip">Overdue</span>
-  </div>
-  <div style="display:flex;gap:8px;margin-bottom:16px">
-    <button class="primary-button">Save</button>
-    <button class="ghost-button">Cancel</button>
-    <button class="danger-button">Delete</button>
-  </div>
-  <div class="state-block"><span class="state-icon">!</span><p>Nothing here yet.</p></div>
 </div>
 
 </body></html>

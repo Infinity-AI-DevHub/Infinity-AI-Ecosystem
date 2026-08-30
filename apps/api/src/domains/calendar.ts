@@ -6,7 +6,7 @@
  * Media transport is delegated to the meeting adapter.
  */
 import { many, newId, one, pool, reload, transaction } from '../core/db.js';
-import { conflict, forbidden, notFound, preconditionFailed, unprocessable } from '../core/errors.js';
+import { badRequest, conflict, forbidden, notFound, preconditionFailed, unprocessable } from '../core/errors.js';
 import { authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
 import { emit } from '../core/outbox.js';
@@ -20,6 +20,7 @@ export type EventRow = {
   title: string;
   description: string;
   location: string | null;
+  online_url: string | null;
   room_id: string | null;
   starts_at: Date;
   ends_at: Date;
@@ -40,6 +41,7 @@ export type CreateEventInput = {
   title: string;
   description?: string;
   location?: string | null;
+  onlineUrl?: string | null;
   roomId?: string | null;
   startsAt: string;
   endsAt: string;
@@ -62,6 +64,27 @@ function assertValidRecurrence(rule: string | null | undefined): void {
       { field: 'recurrenceRule', message: 'Use FREQ=DAILY|WEEKLY|MONTHLY with optional INTERVAL, COUNT, UNTIL, BYDAY' },
     ]);
   }
+}
+
+/**
+ * Online meeting links are restricted to https.
+ *
+ * The link is mailed to every attendee and rendered as something people click, so it is
+ * a redirect an attacker would like to control. http would also downgrade the join, and
+ * javascript: or data: would be an outright script injection into the invitation.
+ */
+function assertMeetingUrl(value: string | null | undefined): string | null {
+  if (value === null || value === undefined || value.trim() === '') return null;
+  const raw = value.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw badRequest('The meeting link must be a full URL, for example https://meet.example.com/abc');
+  }
+  if (parsed.protocol !== 'https:') throw badRequest('The meeting link must start with https://');
+  if (raw.length > 600) throw badRequest('That meeting link is too long');
+  return raw;
 }
 
 export async function createEvent(
@@ -103,10 +126,10 @@ export async function createEvent(
     const eventId = newId();
     await tx.query(
       `INSERT INTO calendar_events
-         (id, company_id, organizer_id, title, description, location, room_id, starts_at, ends_at,
-          timezone, all_day, recurrence_rule, visibility, meeting_room_key, meeting_provider,
-          agenda, notes, reminder_minutes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'',$17)`,
+         (id, company_id, organizer_id, title, description, location, online_url, room_id,
+          starts_at, ends_at, timezone, all_day, recurrence_rule, visibility, meeting_room_key,
+          meeting_provider, agenda, notes, reminder_minutes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'',$18)`,
       [
         eventId,
         actor.companyId,
@@ -114,6 +137,7 @@ export async function createEvent(
         input.title.trim(),
         input.description ?? '',
         input.location ?? null,
+        assertMeetingUrl(input.onlineUrl),
         input.roomId ?? null,
         startsAt,
         endsAt,
@@ -324,6 +348,7 @@ export async function updateEvent(
          title = COALESCE($3, title),
          description = COALESCE($4, description),
          location = CASE WHEN $5 THEN $6 ELSE location END,
+         online_url = CASE WHEN $15 THEN $16 ELSE online_url END,
          room_id = $7,
          starts_at = $8, ends_at = $9,
          timezone = COALESCE($10, timezone),
@@ -348,6 +373,10 @@ export async function updateEvent(
         input.recurrenceRule ?? null,
         input.agenda ?? null,
         input.reminderMinutes ?? null,
+        // Appended last so these stay $15/$16; inserting them mid-list silently shifts
+        // agenda and reminder_minutes onto the wrong values.
+        'onlineUrl' in input,
+        assertMeetingUrl(input.onlineUrl),
       ],
     );
     const updated = (await reload<EventRow>(tx, 'calendar_events', eventId))!;

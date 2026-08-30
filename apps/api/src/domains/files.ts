@@ -98,7 +98,8 @@ export type UploadSession = {
 async function assertQuota(companyId: string, additionalBytes: number): Promise<void> {
   const row = await one<{ used: number; quota: number }>(
     `SELECT COALESCE(sum(size_bytes),0) AS used,
-            COALESCE((SELECT (settings->>'$.storageQuotaBytes') FROM companies WHERE id = $1),
+            COALESCE((SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.storageQuotaBytes')) AS UNSIGNED)
+                        FROM companies WHERE id = $1),
                      1099511627776) AS quota
        FROM files WHERE company_id = $1 AND state <> 'expired'`,
     [companyId],

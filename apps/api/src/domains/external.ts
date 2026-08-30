@@ -416,19 +416,26 @@ const MAX_SHARE_DAYS = 90;
 export async function createShareLink(
   actor: Actor,
   input: {
-    resourceType: 'file' | 'folder';
+    resourceType: 'file' | 'folder' | 'doc';
     resourceId: string;
     expiresInDays?: number;
     password?: string | null;
     recipientEmail?: string | null;
     allowDownload?: boolean;
     maxUses?: number | null;
+    resourceName?: string;
+    message?: string | null;
   },
 ): Promise<{ link: ShareLinkRow; url: string }> {
+  /**
+   * The share table calls a documentation page 'doc'; the authorization layer calls it
+   * 'doc_page'. Mapping here keeps both vocabularies honest rather than widening the
+   * permission type to accept a name it has no policy for.
+   */
   await authorize({
     actor,
     capability: 'file.share_external',
-    resourceType: input.resourceType,
+    resourceType: input.resourceType === 'doc' ? 'doc_page' : input.resourceType,
     resourceId: input.resourceId,
   });
 
@@ -456,6 +463,34 @@ export async function createShareLink(
         actor.userId,
       ],
     );
+    /**
+     * Tell the recipient the link exists.
+     *
+     * A share nobody is told about is a link sitting in someone's clipboard, which is
+     * how "I sent you that file" becomes an argument. Emitted inside the transaction so
+     * the link and the message that announces it succeed or fail together.
+     *
+     * The token is deliberately not audited below - it is the whole credential.
+     */
+    if (input.recipientEmail) {
+      await emit(
+        {
+          companyId: actor.companyId,
+          type: 'share.granted',
+          actorId: actor.userId,
+          payload: {
+            resourceType: input.resourceType,
+            resourceName: input.resourceName ?? input.resourceType,
+            recipients: [input.recipientEmail.toLowerCase().trim()],
+            url: `${config.publicUrl}/shared/${token}`,
+            grantedBy: actor.displayName,
+            message: input.message ?? null,
+          },
+        },
+        tx,
+      );
+    }
+
     await auditFromActor(
       actor,
       'file.share_external',
