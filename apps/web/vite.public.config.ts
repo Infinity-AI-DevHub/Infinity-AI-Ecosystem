@@ -45,8 +45,8 @@ export default defineConfig({
       },
     },
   ],
-  server: { port: 5174, strictPort: true },
-  preview: { port: 5174, strictPort: true },
+  server: { port: 5600, strictPort: true },
+  preview: { port: 5600, strictPort: true },
   /**
    * In development Vite serves the root index.html, which is the full workspace - so
    * without this the public server would quietly serve the very bundle it exists to

@@ -90,38 +90,20 @@ npm install
 npm run dev                   # loads the Vite dev server inside Electron
 ```
 
-`npm run dev` points the window at `http://localhost:5173` and the API at
-`http://localhost:4000`. In a packaged build both are fixed at compile time — a desktop
+`npm run dev` points the window at `http://localhost:4600` and the API at
+`http://localhost:3500`. In a packaged build both are fixed at compile time — a desktop
 client that can be repointed at another server is a phishing tool.
 
 ### The public website
 
 ```bash
 cd apps/web
-npm run dev:public            # http://localhost:5174
+npm run dev:public            # http://localhost:5600
 ```
 
 Its API origin must be allowed by the server. In development that means
-`CORS_EXTRA_ORIGINS=http://localhost:5174` in `apps/api/.env`; in production
+`CORS_EXTRA_ORIGINS=http://localhost:5600` in `apps/api/.env`; in production
 `PUBLIC_URL` is the public site, so nothing extra is needed.
-
-### With Docker
-
-The whole stack, not just its dependencies:
-
-```bash
-docker compose up --build
-```
-
-Migrations run as their own service and must complete before the API or the workers
-start, so a bad migration fails the deploy instead of leaving instances racing to apply
-it. Once it settles, the API is on <http://localhost:4000>.
-
-To bring up only the backing services and run the apps from source:
-
-```bash
-docker compose up -d mysql minio clamav
-```
 
 ## Building the desktop installers
 
@@ -138,9 +120,17 @@ warning on first install but updates in place.
 
 ## Testing
 
+The suite needs its own database, separate from the development one:
+
+```bash
+mysql -h 127.0.0.1 -P 8889 -u root -proot \
+  -e "CREATE DATABASE IF NOT EXISTS ecosystem_test
+      CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+```
+
 ```bash
 cd apps/api
-export TEST_DATABASE_URL=mysql://root:root@localhost:3307/ecosystem_test
+export TEST_DATABASE_URL=mysql://root:root@127.0.0.1:8889/ecosystem_test
 npm test                      # unit + end-to-end (84 tests)
 npm run test:unit             # unit only, no database
 npm run test:e2e              # end-to-end only

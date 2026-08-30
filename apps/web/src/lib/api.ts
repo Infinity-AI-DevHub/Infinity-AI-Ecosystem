@@ -10,7 +10,7 @@
 import { isDesktop } from './desktop';
 import { accessTokenForRequest, clearGrant, refresh as refreshGrant } from './tokens';
 
-export const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+export const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3500';
 const BASE = `${API_URL}/api/v1`;
 
 export type FieldError = { field: string; message: string };
