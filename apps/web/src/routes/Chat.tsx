@@ -15,6 +15,7 @@ import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../componen
 import { realtime } from '../lib/realtime';
 import { initials, relativeTime } from '../lib/format';
 import { useSession } from '../lib/session';
+import { MessageReceipt, type Delivery } from '../components/MessageReceipt';
 
 type Room = {
   id: string;
@@ -105,6 +106,28 @@ export default function Chat() {
     if (!roomId || !last) return;
     void api.post(`/chat/rooms/${roomId}/read`, { seq: last.seq }).catch(() => undefined);
   }, [roomId, messages.length]);
+
+  /**
+   * Acknowledge delivery separately from reading.
+   *
+   * This fires when the message arrives in this client, whether or not the room is on
+   * screen — that is what distinguishes "it reached their device" from "they looked at
+   * it". Failures are swallowed: a lost acknowledgement re-sends on the next message,
+   * and an error banner about a tick mark would be noise.
+   */
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (!roomId || !last) return;
+    void api.post(`/chat/rooms/${roomId}/delivered`, { seq: last.seq }).catch(() => undefined);
+  }, [roomId, messages.length]);
+
+  // How far everyone else in this room has got. Refetched as messages arrive, since a
+  // receipt changing is exactly what the sender is waiting to see.
+  const delivery = useQuery<Delivery>(
+    roomId ? `/chat/rooms/${roomId}/delivery` : null,
+    (signal) => api.get(`/chat/rooms/${roomId}/delivery`, signal),
+  );
+  useEffect(() => { delivery.reload(); }, [messages.length]);
 
   const send = useMutation(
     async (body: string) => api.post<Message>(`/chat/rooms/${roomId}/messages`, { body }),
@@ -200,6 +223,11 @@ export default function Chat() {
                                 {relativeTime(message.createdAt)}
                               </time>
                               {message.editedAt ? <span className="edited-tag">edited</span> : null}
+                              {/* Only on your own messages: a tick beside someone
+                                  else's would report what they already know. */}
+                              {mine ? (
+                                <MessageReceipt seq={message.seq} delivery={delivery.data ?? null} />
+                              ) : null}
                             </p>
                             <p className="message-text">
                               {message.deleted ? (

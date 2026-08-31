@@ -7,7 +7,7 @@
  */
 import { useMemo, useRef, useState } from 'react';
 import { Download, FolderPlus, History, Link2, RotateCcw, ShieldAlert, Trash2, Upload } from 'lucide-react';
-import { api, API_URL, ApiError, idempotencyKey, NetworkError } from '../lib/api';
+import { api, API_URL, ApiError, idempotencyKey, NetworkError, uploadAuth } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { saveDownload } from '../lib/desktop';
 import { AsyncSection, Empty, FormError } from '../components/States';
@@ -67,15 +67,10 @@ export default function Files() {
       const form = new FormData();
       form.append('file', file, file.name);
 
-      const csrf = document.cookie.match(/(?:^|; )iw_csrf=([^;]*)/)?.[1];
+      const auth = await uploadAuth();
       const response = await fetch(
         `${API_URL}/api/v1/files/uploads/${session.uploadId}/content`,
-        {
-          method: 'POST',
-          credentials: 'include',
-          headers: csrf ? { 'x-csrf-token': decodeURIComponent(csrf) } : {},
-          body: form,
-        },
+        { method: 'POST', ...auth, body: form },
       );
 
       if (!response.ok) {

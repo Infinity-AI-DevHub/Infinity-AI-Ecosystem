@@ -314,9 +314,57 @@ export async function remove(actor: Actor, roomId: string, messageId: string) {
 
 export async function markRead(actor: Actor, roomId: string, seq: number): Promise<void> {
   await pool.query(
-    `UPDATE chat_members SET read_cursor = GREATEST(read_cursor, $3) WHERE room_id = $1 AND user_id = $2`,
+    // Reading implies delivery. Advancing both keeps the two cursors consistent even if
+    // a delivery acknowledgement was lost, which would otherwise show a message as read
+    // but not delivered.
+    `UPDATE chat_members
+        SET read_cursor = GREATEST(read_cursor, $3),
+            delivered_cursor = GREATEST(delivered_cursor, $3)
+      WHERE room_id = $1 AND user_id = $2`,
     [roomId, actor.userId, seq],
   );
+}
+
+/**
+ * The recipient's client acknowledging that it has the message.
+ *
+ * Separate from reading: delivered means it reached the device, read means a person
+ * looked at it. Conflating them is how a chat app claims someone has seen something
+ * they have not.
+ */
+export async function markDelivered(actor: Actor, roomId: string, seq: number): Promise<void> {
+  await requireMembership(actor, roomId);
+  await pool.query(
+    `UPDATE chat_members SET delivered_cursor = GREATEST(delivered_cursor, $3)
+      WHERE room_id = $1 AND user_id = $2`,
+    [roomId, actor.userId, seq],
+  );
+}
+
+/**
+ * How far every *other* member of a room has got.
+ *
+ * Returned once per room rather than per message: the cursors are monotonic, so the
+ * client can decide each message's state by comparing its seq against these two numbers.
+ * Sending it per message would repeat the same pair for every row on screen.
+ */
+export async function deliveryState(actor: Actor, roomId: string) {
+  await requireMembership(actor, roomId);
+  const row = await one<{ members: number; min_delivered: number; min_read: number }>(
+    `SELECT COUNT(*) AS members,
+            COALESCE(MIN(delivered_cursor), 0) AS min_delivered,
+            COALESCE(MIN(read_cursor), 0) AS min_read
+       FROM chat_members
+      WHERE room_id = $1 AND user_id <> $2`,
+    [roomId, actor.userId],
+  );
+  return {
+    // The minimum is the honest answer for a group: a message is only "read" when it
+    // has been read by everyone it was addressed to.
+    members: Number(row?.members ?? 0),
+    deliveredThrough: Number(row?.min_delivered ?? 0),
+    readThrough: Number(row?.min_read ?? 0),
+  };
 }
 
 export async function addMembers(actor: Actor, roomId: string, userIds: string[]): Promise<void> {

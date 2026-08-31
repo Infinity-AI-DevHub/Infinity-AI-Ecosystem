@@ -12,8 +12,8 @@
  * costs, whether the person has them, and what happens to their calendar and to their
  * own approval queue once it is granted.
  */
-import { many, newId, one, reload, transaction } from '../core/db.js';
-import { conflict, forbidden, notFound, unprocessable } from '../core/errors.js';
+import { many, newId, one, pool, reload, transaction } from '../core/db.js';
+import { badRequest, conflict, forbidden, notFound, unprocessable } from '../core/errors.js';
 import { authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
 import * as approvals from './approvals.js';
@@ -106,11 +106,86 @@ export async function workingDaysBetween(
 
 // ------------------------------------------------------------------ types and balances
 
-export async function listTypes(actor: Actor): Promise<LeaveType[]> {
+export async function listTypes(actor: Actor, includeInactive = false): Promise<LeaveType[]> {
+  // Retired types stay listable for whoever manages them; the pickers ask for the
+  // active set. Hiding them unconditionally makes a retired type impossible to revive.
   return many<LeaveType>(
-    'SELECT * FROM leave_types WHERE company_id = $1 AND active ORDER BY name',
-    [actor.companyId],
+    `SELECT * FROM leave_types
+      WHERE company_id = $1 AND ($2 OR active)
+      ORDER BY active DESC, name`,
+    [actor.companyId, includeInactive],
   );
+}
+
+/**
+ * Edit a leave type.
+ *
+ * The key is deliberately immutable. Balances, requests and historical records all
+ * refer to a type by key, so changing it would silently detach a year of leave history
+ * from the thing it was taken against. Rename freely; re-key by retiring and replacing.
+ *
+ * Retiring is a soft delete for the same reason: an inactive type disappears from the
+ * pickers while every request already booked against it still resolves.
+ */
+export async function updateType(
+  actor: Actor,
+  typeId: string,
+  input: {
+    name?: string;
+    paid?: boolean;
+    requiresApproval?: boolean;
+    deductsBalance?: boolean;
+    defaultAnnualDays?: number;
+    colour?: string;
+    active?: boolean;
+  },
+): Promise<LeaveType> {
+  await authorize({ actor, capability: 'leave.manage', resourceless: true });
+
+  const existing = await one<LeaveType>(
+    'SELECT * FROM leave_types WHERE id = $1 AND company_id = $2',
+    [typeId, actor.companyId],
+  );
+  if (!existing) throw notFound('Leave type not found');
+
+  if (input.name !== undefined && !input.name.trim()) {
+    throw badRequest('A leave type needs a name');
+  }
+  if (input.defaultAnnualDays !== undefined
+      && (input.defaultAnnualDays < 0 || input.defaultAnnualDays > 366)) {
+    throw badRequest('Default annual days must be between 0 and 366');
+  }
+
+  await pool.query(
+    `UPDATE leave_types
+        SET name = COALESCE($1, name),
+            paid = COALESCE($2, paid),
+            requires_approval = COALESCE($3, requires_approval),
+            deducts_balance = COALESCE($4, deducts_balance),
+            default_annual_days = COALESCE($5, default_annual_days),
+            colour = COALESCE($6, colour),
+            active = COALESCE($7, active)
+      WHERE id = $8 AND company_id = $9`,
+    [
+      input.name?.trim() ?? null,
+      input.paid ?? null,
+      input.requiresApproval ?? null,
+      input.deductsBalance ?? null,
+      input.defaultAnnualDays ?? null,
+      input.colour ?? null,
+      input.active ?? null,
+      typeId,
+      actor.companyId,
+    ],
+  );
+
+  await auditFromActor(actor, 'leave.type_updated', {
+    resourceType: 'leave_type',
+    resourceId: typeId,
+    metadata: { changed: Object.keys(input) },
+  });
+
+  return (await one<LeaveType>('SELECT * FROM leave_types WHERE id = $1', [typeId]))!;
 }
 
 export async function createType(

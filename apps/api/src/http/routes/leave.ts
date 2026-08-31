@@ -12,7 +12,31 @@ const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
 export async function leaveRoutes(app: FastifyInstance): Promise<void> {
   app.get('/leave/types', async (request) => {
     const actor = requireActor(request);
-    return { items: await leave.listTypes(actor) };
+    // Whoever manages leave needs to see retired types to revive or rename them.
+    const includeInactive = (request.query as { includeInactive?: string })?.includeInactive === 'true';
+    return { items: await leave.listTypes(actor, includeInactive) };
+  });
+
+  app.patch('/leave/types/:id', async (request) => {
+    const actor = requireActor(request);
+    const { id } = request.params as { id: string };
+    const input = parse(
+      z
+        .object({
+          name: z.string().min(1).max(80).optional(),
+          paid: z.boolean().optional(),
+          requiresApproval: z.boolean().optional(),
+          deductsBalance: z.boolean().optional(),
+          defaultAnnualDays: z.number().min(0).max(366).optional(),
+          colour: z.string().max(16).optional(),
+          active: z.boolean().optional(),
+        })
+        // The key is absent on purpose: leave history refers to a type by key, so
+        // changing it would detach past requests from the thing they were booked against.
+        .strict(),
+      request.body,
+    );
+    return leave.updateType(actor, id, input);
   });
 
   app.post('/leave/types', async (request, reply) => {

@@ -39,6 +39,7 @@ import { realtime, type ConnectionState } from '../lib/realtime';
 import { initials, relativeTime } from '../lib/format';
 import { Logo } from './Logo';
 import { inQuietHours, useNotify } from '../lib/notify';
+import { keysForEvent } from '../lib/realtime-map';
 
 type NavItem = {
   to: string;
@@ -46,19 +47,21 @@ type NavItem = {
   icon: typeof Inbox;
   /** Hides the entry when the role cannot use it; the API still enforces access. */
   capability?: string;
+  /** Which activity count, if any, badges this entry. */
+  badge?: 'chat' | 'tasks' | 'approvals' | 'invoices' | 'announcements' | 'leave';
 };
 
 const NAV_ITEMS: NavItem[] = [
   { to: '/command', label: 'Command', icon: LayoutDashboard },
   { to: '/meetings', label: 'Meetings', icon: CalendarDays, capability: 'calendar.read' },
-  { to: '/chat', label: 'Chat', icon: MessageSquareText, capability: 'room.join' },
-  { to: '/tasks', label: 'Tasks', icon: CheckSquare, capability: 'task.update' },
+  { to: '/chat', label: 'Chat', icon: MessageSquareText, capability: 'room.join', badge: 'chat' },
+  { to: '/tasks', label: 'Tasks', icon: CheckSquare, capability: 'task.update', badge: 'tasks' },
   { to: '/files', label: 'Files', icon: FilesIcon, capability: 'file.read' },
   { to: '/docs', label: 'Documents', icon: BookText, capability: 'doc.read' },
-  { to: '/announcements', label: 'Announcements', icon: Megaphone },
-  { to: '/approvals', label: 'Approvals', icon: ShieldCheck, capability: 'request.create' },
-  { to: '/leave', label: 'Leave', icon: Palmtree, capability: 'leave.request' },
-  { to: '/finance', label: 'Finance', icon: Wallet, capability: 'expense.submit' },
+  { to: '/announcements', label: 'Announcements', icon: Megaphone, badge: 'announcements' },
+  { to: '/approvals', label: 'Approvals', icon: ShieldCheck, capability: 'request.create', badge: 'approvals' },
+  { to: '/leave', label: 'Leave', icon: Palmtree, capability: 'leave.request', badge: 'leave' },
+  { to: '/finance', label: 'Finance', icon: Wallet, capability: 'expense.submit', badge: 'invoices' },
   { to: '/growth', label: 'Growth', icon: Target, capability: 'goal.manage' },
   { to: '/people', label: 'People', icon: Users, capability: 'user.read' },
   { to: '/clients', label: 'Clients', icon: Handshake, capability: 'external_org.read' },
@@ -136,8 +139,13 @@ export function Shell({ children }: { children: ReactNode }) {
           });
         }
       }
-      if (frame.type.startsWith('message.')) invalidate('/chat');
-      if (frame.type.startsWith('task.')) invalidate('/tasks');
+      /**
+       * Everything else refreshes silently. The frame says what changed; the cache
+       * refetches the authoritative record rather than trusting the payload, and the
+       * person sees the screen become correct without being interrupted about it.
+       */
+      for (const key of keysForEvent(frame.type)) invalidate(key);
+
       if (frame.type === 'session.revoked') void signOut();
     });
     return () => {
@@ -166,6 +174,14 @@ export function Shell({ children }: { children: ReactNode }) {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, []);
+
+  /**
+   * Sidebar badge counts. Refreshed by the realtime map rather than polled: the
+   * invalidation list includes '/me/activity' for every event that could change one.
+   */
+  const activity = useQuery<Record<string, number>>('/me/activity', (signal) =>
+    api.get('/me/activity', signal),
+  );
 
   const notifications = useQuery<Paged<Notification>>('/me/notifications?limit=15', (signal) =>
     api.get('/me/notifications?limit=15', signal),
@@ -239,6 +255,16 @@ export function Shell({ children }: { children: ReactNode }) {
               >
                 <item.icon size={17} aria-hidden="true" />
                 <span>{item.label}</span>
+                {item.badge && (activity.data?.[item.badge] ?? 0) > 0 ? (
+                  <span
+                    className="nav-badge"
+                    /* The number alone reads as decoration to a screen reader; the
+                       label says what it counts. */
+                    aria-label={`${activity.data![item.badge]} new in ${item.label}`}
+                  >
+                    {activity.data![item.badge] > 99 ? '99+' : activity.data![item.badge]}
+                  </span>
+                ) : null}
               </NavLink>
             </li>
           ))}

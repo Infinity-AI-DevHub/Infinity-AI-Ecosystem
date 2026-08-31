@@ -7,6 +7,38 @@ import { publishToUser } from '../core/realtime.js';
 import { decodeCursor, encodeCursor } from '../core/validation.js';
 import { notFound } from '../core/errors.js';
 
+/**
+ * How loudly a notification should announce itself.
+ *
+ * Derived from the type rather than stored, because severity is a property of the kind
+ * of event, not of one instance of it - a quarantined file is always serious, and a task
+ * assignment never is.
+ *
+ * The default is deliberately the quiet one. Anything unclassified is information; if
+ * everything were a warning the warning would stop meaning anything, and people would
+ * learn to dismiss the banner that actually matters.
+ */
+export type Severity = 'info' | 'success' | 'warning' | 'critical';
+
+const SEVERITY: Record<string, Severity> = {
+  // Malware found in something an employee uploaded, and it may already be shared.
+  'file.quarantined': 'critical',
+  // Someone is blocked until this person acts.
+  'approval.awaiting': 'warning',
+  'invoice.overdue': 'warning',
+  // Outcomes worth confirming rather than interrupting for.
+  'approval.progress': 'success',
+  'invoice.paid': 'success',
+  welcome: 'success',
+};
+
+export function severityFor(type: string): Severity {
+  if (SEVERITY[type]) return SEVERITY[type];
+  // Announcements carry their own priority, which the publisher already set.
+  if (type.startsWith('announcement.critical')) return 'critical';
+  return 'info';
+}
+
 export type NotificationInput = {
   companyId: string;
   userId: string;
@@ -48,6 +80,8 @@ export async function create(input: NotificationInput, db: Queryable = pool): Pr
     title: input.title,
     body: input.body ?? null,
     link: input.link ?? null,
+    // The client decides whether to make a noise; it needs to be told how loud.
+    severity: severityFor(input.type),
     createdAt: new Date().toISOString(),
   });
 }

@@ -20,6 +20,7 @@ type Event = {
   description: string;
   location: string | null;
   online_url: string | null;
+  recurrence_rule: string | null;
   roomId: string | null;
   startsAt: string;
   endsAt: string;
@@ -170,6 +171,12 @@ export default function Meetings() {
               </p>
 
               {detail.data.location ? <p>{detail.data.location}</p> : null}
+              {detail.data.recurrence_rule ? (
+                <p className="field-hint">
+                  Repeats {String(detail.data.recurrence_rule).includes('DAILY') ? 'daily'
+                    : String(detail.data.recurrence_rule).includes('WEEKLY') ? 'weekly' : 'monthly'}
+                </p>
+              ) : null}
               {detail.data.online_url ? (
                 <p>
                   {/* Through the bridge: in the desktop client a bare target=_blank is
@@ -287,6 +294,8 @@ function ScheduleDialog({
   const [roomId, setRoomId] = useState('');
   const [withVideo, setWithVideo] = useState(true);
   const [onlineUrl, setOnlineUrl] = useState('');
+  const [repeat, setRepeat] = useState<'none' | 'DAILY' | 'WEEKLY' | 'MONTHLY'>('none');
+  const [repeatCount, setRepeatCount] = useState('8');
   const [agenda, setAgenda] = useState('');
   const key = useMemo(() => idempotencyKey(), []);
 
@@ -313,6 +322,12 @@ function ScheduleDialog({
           roomId: roomId || null,
           withVideoRoom: withVideo,
           onlineUrl: onlineUrl.trim() || null,
+          /**
+           * COUNT rather than an open-ended series. A meeting that repeats forever is
+           * one nobody ever cancels, and the server caps what it will expand anyway.
+           */
+          recurrenceRule:
+            repeat === 'none' ? null : `FREQ=${repeat};COUNT=${Number(repeatCount) || 8}`,
           agenda: agenda.trim() || undefined,
         },
         { idempotencyKey: key },
@@ -407,6 +422,39 @@ function ScheduleDialog({
             <p className="field-hint">
               Double bookings are refused by the server, so a clash is reported immediately.
             </p>
+          </div>
+
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="meeting-repeat">Repeats</label>
+              <select
+                id="meeting-repeat"
+                value={repeat}
+                onChange={(event) => setRepeat(event.target.value as typeof repeat)}
+              >
+                <option value="none">Does not repeat</option>
+                <option value="DAILY">Every day</option>
+                <option value="WEEKLY">Every week</option>
+                <option value="MONTHLY">Every month</option>
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="meeting-repeat-count">Occurrences</label>
+              <select
+                id="meeting-repeat-count"
+                value={repeatCount}
+                onChange={(event) => setRepeatCount(event.target.value)}
+                disabled={repeat === 'none'}
+              >
+                {['2', '4', '8', '12', '26', '52'].map((n) => (
+                  <option key={n} value={n}>{n} times</option>
+                ))}
+              </select>
+              <p className="field-hint">
+                A fixed number rather than forever: an endless series is one nobody
+                cancels.
+              </p>
+            </div>
           </div>
 
           <div className="field">

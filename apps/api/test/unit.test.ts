@@ -352,3 +352,23 @@ describe('SQL portability', () => {
     assert.equal(failures.length, 0, `MySQL-only SQL found:\n\n${failures.join('\n\n')}\n`);
   });
 });
+
+/**
+ * Notification severity.
+ *
+ * The default must stay quiet. If an unclassified notification defaulted to a warning,
+ * every new notification type added later would start out interrupting people, and the
+ * banner would stop carrying meaning long before anyone noticed.
+ */
+describe('notification severity', () => {
+  it('classifies by kind and defaults to information', async () => {
+    const { severityFor } = await import('../src/domains/notifications.js');
+    assert.equal(severityFor('file.quarantined'), 'critical');
+    assert.equal(severityFor('approval.awaiting'), 'warning');
+    assert.equal(severityFor('approval.progress'), 'success');
+    assert.equal(severityFor('task.assigned'), 'info');
+    assert.equal(severityFor('meeting.invited'), 'info');
+    // The important one: anything unknown is quiet, not loud.
+    assert.equal(severityFor('something.invented.later'), 'info');
+  });
+});

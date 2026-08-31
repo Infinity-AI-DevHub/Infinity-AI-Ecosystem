@@ -39,7 +39,22 @@ export type OrganizationRow = {
 
 export async function createOrganization(
   actor: Actor,
-  input: { name: string; kind?: OrganizationKind; website?: string | null; notes?: string | null },
+  input: {
+    name: string;
+    kind?: OrganizationKind;
+    website?: string | null;
+    notes?: string | null;
+  billingEmail?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  representative?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  postalCode?: string | null;
+  country?: string | null;
+  taxRegistration?: string | null;
+  },
 ): Promise<OrganizationRow> {
   await authorize({ actor, capability: 'external_org.manage', resourceless: true });
   const name = input.name.trim();
@@ -55,8 +70,11 @@ export async function createOrganization(
   return transaction(async (tx) => {
     const id = newId();
     await tx.query(
-      `INSERT INTO external_organizations (id, company_id, name, kind, website, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      `INSERT INTO external_organizations
+         (id, company_id, name, kind, website, notes, created_by,
+          billing_email, contact_name, contact_phone, representative,
+          address_line1, address_line2, city, postal_code, country, tax_registration)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [
         id,
         actor.companyId,
@@ -65,6 +83,16 @@ export async function createOrganization(
         input.website?.trim() || null,
         input.notes?.trim() || null,
         actor.userId,
+        input.billingEmail?.trim().toLowerCase() || null,
+        input.contactName?.trim() || null,
+        input.contactPhone?.trim() || null,
+        input.representative?.trim() || null,
+        input.addressLine1?.trim() || null,
+        input.addressLine2?.trim() || null,
+        input.city?.trim() || null,
+        input.postalCode?.trim() || null,
+        input.country?.trim() || null,
+        input.taxRegistration?.trim() || null,
       ],
     );
     await auditFromActor(
@@ -107,7 +135,23 @@ export async function getOrganization(actor: Actor, id: string): Promise<Organiz
 export async function updateOrganization(
   actor: Actor,
   id: string,
-  input: { name?: string; kind?: OrganizationKind; status?: 'active' | 'archived'; website?: string | null; notes?: string | null },
+  input: {
+    name?: string;
+    kind?: OrganizationKind;
+    status?: 'active' | 'archived';
+    website?: string | null;
+    notes?: string | null;
+  billingEmail?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  representative?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  postalCode?: string | null;
+  country?: string | null;
+  taxRegistration?: string | null;
+  },
 ): Promise<OrganizationRow> {
   await authorize({ actor, capability: 'external_org.manage', resourceless: true });
   await getOrganization(actor, id);
@@ -120,6 +164,16 @@ export async function updateOrganization(
               status = COALESCE($5, status),
               website = COALESCE($6, website),
               notes = COALESCE($7, notes),
+              billing_email = COALESCE($8, billing_email),
+              contact_name = COALESCE($9, contact_name),
+              contact_phone = COALESCE($10, contact_phone),
+              representative = COALESCE($11, representative),
+              address_line1 = COALESCE($12, address_line1),
+              address_line2 = COALESCE($13, address_line2),
+              city = COALESCE($14, city),
+              postal_code = COALESCE($15, postal_code),
+              country = COALESCE($16, country),
+              tax_registration = COALESCE($17, tax_registration),
               updated_at = NOW(3)
         WHERE id = $1 AND company_id = $2`,
       [
@@ -130,6 +184,16 @@ export async function updateOrganization(
         input.status ?? null,
         input.website === undefined ? null : input.website?.trim() || null,
         input.notes === undefined ? null : input.notes?.trim() || null,
+        input.billingEmail === undefined ? null : input.billingEmail?.trim().toLowerCase() || null,
+        input.contactName === undefined ? null : input.contactName?.trim() || null,
+        input.contactPhone === undefined ? null : input.contactPhone?.trim() || null,
+        input.representative === undefined ? null : input.representative?.trim() || null,
+        input.addressLine1 === undefined ? null : input.addressLine1?.trim() || null,
+        input.addressLine2 === undefined ? null : input.addressLine2?.trim() || null,
+        input.city === undefined ? null : input.city?.trim() || null,
+        input.postalCode === undefined ? null : input.postalCode?.trim() || null,
+        input.country === undefined ? null : input.country?.trim() || null,
+        input.taxRegistration === undefined ? null : input.taxRegistration?.trim() || null,
       ],
     );
     await auditFromActor(

@@ -24,7 +24,13 @@ import { emit } from '../core/outbox.js';
 /** DECIMAL comes back as a string from the driver; this is the only place it becomes a number. */
 const money = (value: string | number): number => Number(Number(value).toFixed(2));
 
-export type InvoiceStatus = 'draft' | 'open' | 'partially_paid' | 'paid' | 'void';
+export type InvoiceStatus =
+  | 'draft'
+  | 'pending_approval'
+  | 'open'
+  | 'partially_paid'
+  | 'paid'
+  | 'void';
 
 export type InvoiceRow = {
   id: string;
@@ -86,7 +92,17 @@ function computeTotals(lines: LineInput[]) {
  */
 async function nextNumber(tx: Queryable, companyId: string, kind: 'invoice' | 'receipt'): Promise<string> {
   const year = new Date().getUTCFullYear();
-  const prefix = kind === 'invoice' ? `INV-${year}-` : `RCP-${year}-`;
+  // The prefix is configurable per company, and is validated on the way in to a
+  // conservative character set - a prefix containing % or _ would make the LIKE below
+  // match numbers from an unrelated series.
+  const configured = (await tx.query<{ invoice_prefix: string; receipt_prefix: string }>(
+    'SELECT invoice_prefix, receipt_prefix FROM billing_settings WHERE company_id = $1',
+    [companyId],
+  )).rows[0];
+  const stem = kind === 'invoice'
+    ? configured?.invoice_prefix ?? 'INV'
+    : configured?.receipt_prefix ?? 'RCP';
+  const prefix = `${stem}-${year}-`;
   const table = kind === 'invoice' ? 'invoices' : 'invoice_payments';
   const column = kind === 'invoice' ? 'number' : 'receipt_number';
   const result = await tx.query<{ last: string | null }>(
@@ -190,12 +206,13 @@ export async function createInvoice(
 }
 
 /**
- * Issue a draft: it stops being editable and the client is told about it.
+ * Submit a draft for approval.
  *
- * The email is emitted through the outbox in the same transaction, so an invoice is
- * never marked sent unless the message was durably queued, and never queued twice.
+ * Anyone who can draft an invoice can send it for release, but releasing it is a
+ * separate act reserved to a super administrator. Drafting and approving being the same
+ * person is how a wrong number reaches a client with nobody having read it.
  */
-export async function issueInvoice(actor: Actor, invoiceId: string): Promise<InvoiceRow> {
+export async function submitInvoice(actor: Actor, invoiceId: string): Promise<InvoiceRow> {
   await authorize({ actor, capability: 'invoice.manage', resourceless: true });
   return transaction(async (tx) => {
     const invoice = (await tx.query<InvoiceRow>(
@@ -205,9 +222,67 @@ export async function issueInvoice(actor: Actor, invoiceId: string): Promise<Inv
     if (!invoice) throw notFound('Invoice not found');
     if (invoice.status !== 'draft') throw conflict(`This invoice is already ${invoice.status}`);
 
+    await assertClientCanBeEmailed(tx, invoice.client_org_id);
+
     await tx.query(
-      `UPDATE invoices SET status = 'open', sent_at = NOW(3), version = version + 1
+      `UPDATE invoices SET status = 'pending_approval', submitted_at = NOW(3),
+              version = version + 1
         WHERE id = $1`, [invoiceId],
+    );
+    await auditFromActor(
+      actor, 'invoice.submit',
+      { resourceType: 'invoice', resourceId: invoiceId, metadata: { number: invoice.number } }, tx,
+    );
+    return (await reload<InvoiceRow>(tx, 'invoices', invoiceId))!;
+  });
+}
+
+/**
+ * A client cannot be invoiced by email without an address to invoice.
+ *
+ * Checked when the invoice is submitted rather than when the mail is dispatched: a
+ * failure at dispatch happens in a worker, where the only symptom is an invoice that
+ * says "sent" and a client who never received anything.
+ */
+async function assertClientCanBeEmailed(tx: Queryable, clientOrgId: string): Promise<void> {
+  const client = (await tx.query<{ name: string; billing_email: string | null }>(
+    'SELECT name, billing_email FROM external_organizations WHERE id = $1',
+    [clientOrgId],
+  )).rows[0];
+  if (!client?.billing_email) {
+    throw badRequest(
+      `${client?.name ?? 'That client'} has no billing email address, so this invoice ` +
+        'cannot be sent. Add one on the client record first.',
+    );
+  }
+}
+
+/**
+ * Approve and release: the invoice becomes payable and the client is emailed.
+ *
+ * The email is emitted through the outbox in the same transaction, so an invoice is
+ * never marked sent unless the message was durably queued, and never queued twice.
+ */
+export async function approveInvoice(actor: Actor, invoiceId: string): Promise<InvoiceRow> {
+  await authorize({ actor, capability: 'invoice.approve', resourceless: true });
+  return transaction(async (tx) => {
+    const invoice = (await tx.query<InvoiceRow>(
+      'SELECT * FROM invoices WHERE id = $1 AND company_id = $2',
+      [invoiceId, actor.companyId],
+    )).rows[0];
+    if (!invoice) throw notFound('Invoice not found');
+    if (invoice.status !== 'pending_approval' && invoice.status !== 'draft') {
+      throw conflict(`This invoice is already ${invoice.status}`);
+    }
+
+    await assertClientCanBeEmailed(tx, invoice.client_org_id);
+
+    await tx.query(
+      `UPDATE invoices
+          SET status = 'open', sent_at = NOW(3), approved_by = $2, approved_at = NOW(3),
+              version = version + 1
+        WHERE id = $1`,
+      [invoiceId, actor.userId],
     );
     await emit(
       {
@@ -219,9 +294,34 @@ export async function issueInvoice(actor: Actor, invoiceId: string): Promise<Inv
       tx,
     );
     await auditFromActor(
-      actor, 'invoice.issue',
-      { resourceType: 'invoice', resourceId: invoiceId, metadata: { number: invoice.number } },
-      tx,
+      actor, 'invoice.approve',
+      { resourceType: 'invoice', resourceId: invoiceId, metadata: { number: invoice.number } }, tx,
+    );
+    return (await reload<InvoiceRow>(tx, 'invoices', invoiceId))!;
+  });
+}
+
+/** Send it back to the author with a reason, rather than leaving it in limbo. */
+export async function rejectInvoice(
+  actor: Actor, invoiceId: string, reason: string,
+): Promise<InvoiceRow> {
+  await authorize({ actor, capability: 'invoice.approve', resourceless: true });
+  if (!reason || reason.trim().length < 4) throw badRequest('Say why it is going back');
+  return transaction(async (tx) => {
+    const invoice = (await tx.query<InvoiceRow>(
+      'SELECT * FROM invoices WHERE id = $1 AND company_id = $2',
+      [invoiceId, actor.companyId],
+    )).rows[0];
+    if (!invoice) throw notFound('Invoice not found');
+    if (invoice.status !== 'pending_approval') throw conflict('This invoice is not awaiting approval');
+
+    await tx.query(
+      `UPDATE invoices SET status = 'draft', submitted_at = NULL, version = version + 1
+        WHERE id = $1`, [invoiceId],
+    );
+    await auditFromActor(
+      actor, 'invoice.reject',
+      { resourceType: 'invoice', resourceId: invoiceId, metadata: { reason } }, tx,
     );
     return (await reload<InvoiceRow>(tx, 'invoices', invoiceId))!;
   });
@@ -250,7 +350,9 @@ export async function recordPayment(
       [invoiceId, actor.companyId],
     )).rows[0];
     if (!invoice) throw notFound('Invoice not found');
-    if (invoice.status === 'draft') throw conflict('Issue the invoice before recording a payment');
+    if (invoice.status === 'draft' || invoice.status === 'pending_approval') {
+      throw conflict('This invoice has not been approved and sent yet');
+    }
     if (invoice.status === 'void') throw conflict('This invoice has been voided');
 
     const balance = money(Number(invoice.total) - Number(invoice.amount_paid));
@@ -358,6 +460,7 @@ export async function setReminderPolicy(
  */
 const BUCKETS: Record<string, string> = {
   draft: "i.status = 'draft'",
+  pending_approval: "i.status = 'pending_approval'",
   open: "i.status = 'open'",
   partially_paid: "i.status = 'partially_paid'",
   paid: "i.status = 'paid'",
@@ -402,7 +505,12 @@ export async function getInvoice(actor: Actor, invoiceId: string) {
   await authorize({ actor, capability: 'invoice.read', resourceless: true });
   const invoice = await one(
     `SELECT i.*, (i.total - i.amount_paid) AS balance,
-            o.name AS client_name, p.name AS project_name
+            o.name AS client_name, p.name AS project_name,
+            -- Carried on the invoice so the screen and the emailed document address
+            -- the client the same way.
+            o.billing_email, o.representative, o.contact_name, o.contact_phone,
+            o.address_line1, o.address_line2, o.city, o.postal_code, o.country,
+            o.tax_registration
        FROM invoices i
        JOIN external_organizations o ON o.id = i.client_org_id
        LEFT JOIN projects p ON p.id = i.project_id

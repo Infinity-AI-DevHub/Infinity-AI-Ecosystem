@@ -196,6 +196,36 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   return payload as T;
 }
 
+/**
+ * Credentials for a raw upload request.
+ *
+ * File bytes do not go through `request()` - they are FormData or a stream, not JSON -
+ * so each upload site builds its own fetch. That is exactly where the two auth schemes
+ * get confused: a hand-written fetch with `credentials: 'include'` and a CSRF cookie is
+ * the browser scheme, and it arrives unauthenticated in the desktop client, which has no
+ * cookies and signs requests with a bearer token instead.
+ *
+ * Every upload path uses this so the scheme is decided in one place rather than three.
+ */
+export async function uploadAuth(): Promise<{
+  headers: Record<string, string>;
+  credentials: RequestCredentials;
+}> {
+  if (isDesktop) {
+    const token = await accessTokenForRequest(BASE);
+    return {
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+      // No ambient cookies to send, and asking for them would attach nothing.
+      credentials: 'omit',
+    };
+  }
+  const csrf = readCookie('iw_csrf');
+  return {
+    headers: csrf ? { 'x-csrf-token': csrf } : {},
+    credentials: 'include',
+  };
+}
+
 export const api = {
   get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal }),
   post: <T>(path: string, body?: unknown, options: Omit<RequestOptions, 'method' | 'body'> = {}) =>

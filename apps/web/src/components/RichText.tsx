@@ -12,6 +12,7 @@
  * impossible.
  */
 import { useEffect, useRef, useState } from 'react';
+import { useTextPrompt } from './Prompt';
 
 type Command = { label: string; title: string; run: (exec: typeof document.execCommand) => void };
 
@@ -38,6 +39,8 @@ export function RichText({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [showSource, setShowSource] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const { ask, element: promptDialog } = useTextPrompt();
 
   // Seed once. Later updates come from typing, so re-writing innerHTML would fight
   // the caret rather than help.
@@ -54,22 +57,48 @@ export function RichText({
     return result;
   }) as typeof document.execCommand;
 
-  function addLink() {
-    const url = window.prompt('Link address (https://…)');
+  /**
+   * The selection has to be captured before the dialog opens.
+   *
+   * Focus moves to the dialog's own input, which collapses the range the link was going
+   * to wrap. Storing it here and restoring it afterwards is what makes the link apply to
+   * the words the author had selected.
+   */
+  async function addLink() {
+    const selection = window.getSelection();
+    const saved = selection && selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
+
+    const url = await ask({
+      title: 'Add a link',
+      label: 'Address',
+      description: 'Must start with http:// or https://',
+      placeholder: 'https://',
+      minLength: 4,
+      confirmLabel: 'Add link',
+    });
     if (!url) return;
-    // Only http(s): a javascript: or data: href here would be a script the sanitizer
-    // has to catch on the way out. Refusing it at the source is clearer to the author.
+
+    // Only http(s): a javascript: or data: href would be a script the sanitizer has to
+    // catch on the way out. Refusing it at the source is clearer to the author.
+    let parsed: URL;
     try {
-      const parsed = new URL(url);
-      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-        window.alert('Links must start with http:// or https://');
-        return;
-      }
+      parsed = new URL(url);
     } catch {
-      window.alert('That is not a valid address');
+      setLinkError('That is not a valid address');
       return;
     }
-    exec('createLink', false, url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      setLinkError('Links must start with http:// or https://');
+      return;
+    }
+
+    setLinkError(null);
+    if (saved && selection) {
+      ref.current?.focus();
+      selection.removeAllRanges();
+      selection.addRange(saved);
+    }
+    exec('createLink', false, parsed.toString());
   }
 
   if (showSource) {
@@ -131,6 +160,8 @@ export function RichText({
         onInput={(event) => onChange((event.target as HTMLDivElement).innerHTML)}
         onBlur={(event) => onChange((event.target as HTMLDivElement).innerHTML)}
       />
+      {linkError ? <p className="field-error">{linkError}</p> : null}
+      {promptDialog}
     </div>
   );
 }

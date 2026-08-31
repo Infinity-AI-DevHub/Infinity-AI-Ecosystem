@@ -7,7 +7,7 @@
  * to anything in Files.
  */
 import { useRef, useState } from 'react';
-import { api, API_URL, ApiError, idempotencyKey } from '../lib/api';
+import { api, API_URL, ApiError, idempotencyKey, uploadAuth } from '../lib/api';
 import { useQuery } from '../lib/query';
 import { formatBytes } from '../lib/format';
 
@@ -33,15 +33,23 @@ export function Attachments({ pageId }: { pageId: string }) {
     setError(null);
     setBusy(true);
     try {
-      const session = await api.post<{ uploadId: string; url: string | null }>(
+      const session = await api.post<{ uploadId: string }>(
         '/files/uploads',
         { filename: file.name, mimeType: file.type || 'application/octet-stream', sizeBytes: file.size },
         { idempotencyKey: idempotencyKey() },
       );
       // The bytes go straight to storage; only the completion comes back through the API.
-      const target = session.url ?? `${API_URL}/api/v1/files/uploads/${session.uploadId}/content`;
-      const put = await fetch(target, { method: 'PUT', body: file });
-      if (!put.ok) throw new Error('upload rejected');
+      const form = new FormData();
+      form.append('file', file, file.name);
+      const auth = await uploadAuth();
+      const put = await fetch(
+        `${API_URL}/api/v1/files/uploads/${session.uploadId}/content`,
+        { method: 'POST', ...auth, body: form },
+      );
+      if (!put.ok) {
+        const payload = await put.json().catch(() => null);
+        throw new Error(payload?.error?.message ?? 'That upload was rejected');
+      }
 
       const completed = await api.post<{ id: string }>(
         `/files/uploads/${session.uploadId}/complete`, {},

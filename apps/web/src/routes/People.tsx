@@ -13,10 +13,12 @@ import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatCurrency, formatDate, initials, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
+import { useTextPrompt } from '../components/Prompt';
 
 type Department = { id: string; name: string; headcount: number };
 
 export default function People() {
+  const { ask, element: promptDialog } = useTextPrompt();
   const { userId } = useParams();
   const navigate = useNavigate();
   const { can, session } = useSession();
@@ -239,13 +241,18 @@ export default function People() {
                       type="button"
                       className="danger-button"
                       disabled={suspend.pending}
-                      onClick={() => {
-                        const reason = window.prompt(
-                          'Why is this account being suspended? This is recorded in the audit trail.',
-                        );
-                        if (reason && reason.trim().length >= 3) {
-                          void suspend.mutate({ id: selected.id, reason: reason.trim() });
-                        }
+                      onClick={async () => {
+                        const reason = await ask({
+                          title: 'Suspend this account',
+                          label: 'Reason',
+                          description:
+                            'Recorded in the audit trail. Suspending ends every session '
+                            + 'immediately, on every device.',
+                          minLength: 3,
+                          confirmLabel: 'Suspend account',
+                          destructive: true,
+                        });
+                        if (reason) void suspend.mutate({ id: selected.id, reason });
                       }}
                     >
                       <ShieldOff size={15} aria-hidden="true" /> Suspend account
@@ -308,6 +315,7 @@ export default function People() {
           }}
         />
       ) : null}
+      {promptDialog}
     </div>
   );
 }

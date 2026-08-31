@@ -9,7 +9,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Building2, ShieldOff, UserPlus } from 'lucide-react';
-import { api, idempotencyKey } from '../lib/api';
+import { api, ApiError, idempotencyKey } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatDateTime, initials, relativeTime, titleCase } from '../lib/format';
@@ -22,6 +22,16 @@ type Organization = {
   status: string;
   website: string | null;
   notes: string | null;
+  billing_email: string | null;
+  contact_name: string | null;
+  contact_phone: string | null;
+  representative: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  postal_code: string | null;
+  country: string | null;
+  tax_registration: string | null;
   guest_count: number;
   created_at: string;
 };
@@ -63,6 +73,7 @@ export default function Clients() {
   const [search, setSearch] = useState('');
   const [creating, setCreating] = useState(false);
   const [inviting, setInviting] = useState(false);
+  const [editingOrg, setEditingOrg] = useState<Organization | null>(null);
 
   const listKey = `/external/organizations${search ? `?q=${encodeURIComponent(search)}` : ''}`;
   const organizations = useQuery<{ items: Organization[] }>(listKey, (signal) =>
@@ -153,11 +164,18 @@ export default function Clients() {
                 <div>
                   <h3>{selected.name}</h3>
                 </div>
-                {can('guest.manage') ? (
-                  <button type="button" className="ghost-button" onClick={() => setInviting(true)}>
-                    <UserPlus size={15} aria-hidden="true" /> Invite guest
-                  </button>
-                ) : null}
+                <div className="table-actions">
+                  {can('external_org.manage') ? (
+                    <button type="button" className="ghost-button" onClick={() => setEditingOrg(selected)}>
+                      Edit details
+                    </button>
+                  ) : null}
+                  {can('guest.manage') ? (
+                    <button type="button" className="ghost-button" onClick={() => setInviting(true)}>
+                      <UserPlus size={15} aria-hidden="true" /> Invite guest
+                    </button>
+                  ) : null}
+                </div>
               </div>
 
               <dl className="detail-list">
@@ -179,6 +197,26 @@ export default function Clients() {
                 </div>
               </dl>
 
+              {selected.billing_email ? (
+                <dl className="detail-list">
+                  <dt>Billing email</dt><dd>{selected.billing_email}</dd>
+                  {selected.representative ? (<><dt>Addressed to</dt><dd>{selected.representative}</dd></>) : null}
+                  {selected.contact_name ? (<><dt>Contact</dt><dd>{selected.contact_name}</dd></>) : null}
+                  {selected.contact_phone ? (<><dt>Phone</dt><dd>{selected.contact_phone}</dd></>) : null}
+                  {selected.address_line1 ? (
+                    <><dt>Address</dt><dd>
+                      {[selected.address_line1, selected.address_line2, selected.city,
+                        selected.postal_code, selected.country].filter(Boolean).join(', ')}
+                    </dd></>
+                  ) : null}
+                  {selected.tax_registration ? (<><dt>Tax reg.</dt><dd>{selected.tax_registration}</dd></>) : null}
+                </dl>
+              ) : (
+                <p className="field-hint">
+                  No billing details yet — invoices for this organisation cannot be sent
+                  until a billing email is added.
+                </p>
+              )}
               {selected.notes ? <p className="meeting-agenda">{selected.notes}</p> : null}
 
               <h4>Guests</h4>
@@ -203,6 +241,14 @@ export default function Clients() {
           )}
         </section>
       </div>
+
+      {editingOrg ? (
+        <EditOrganisation
+          organisation={editingOrg}
+          onClose={() => setEditingOrg(null)}
+          onSaved={() => { setEditingOrg(null); invalidate('/external/organizations'); }}
+        />
+      ) : null}
 
       {creating ? (
         <OrganizationDialog
@@ -322,6 +368,16 @@ function OrganizationDialog({
   const [kind, setKind] = useState('client');
   const [website, setWebsite] = useState('');
   const [notes, setNotes] = useState('');
+  const [billingEmail, setBillingEmail] = useState('');
+  const [contactName, setContactName] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+  const [representative, setRepresentative] = useState('');
+  const [addressLine1, setAddressLine1] = useState('');
+  const [addressLine2, setAddressLine2] = useState('');
+  const [city, setCity] = useState('');
+  const [postalCode, setPostalCode] = useState('');
+  const [country, setCountry] = useState('');
+  const [taxRegistration, setTaxRegistration] = useState('');
 
   const create = useMutation(
     async () =>
@@ -330,6 +386,16 @@ function OrganizationDialog({
         kind,
         website: website || null,
         notes: notes || null,
+        billingEmail: billingEmail || null,
+        contactName: contactName || null,
+        contactPhone: contactPhone || null,
+        representative: representative || null,
+        addressLine1: addressLine1 || null,
+        addressLine2: addressLine2 || null,
+        city: city || null,
+        postalCode: postalCode || null,
+        country: country || null,
+        taxRegistration: taxRegistration || null,
       }),
     { invalidates: ['/external/organizations'], onSuccess: (org) => onCreated(org.id) },
   );
@@ -367,6 +433,79 @@ function OrganizationDialog({
             <label htmlFor="org-website">Website</label>
             <input id="org-website" value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://" />
           </div>
+          <fieldset className="field">
+            <legend>Billing</legend>
+            <p className="field-hint">
+              Needed before an invoice can be sent. Without an address here the invoice
+              is refused at submission rather than failing silently later.
+            </p>
+            <div className="field">
+              <label htmlFor="org-billing-email">Billing email</label>
+              <input
+                id="org-billing-email"
+                type="email"
+                value={billingEmail}
+                onChange={(e) => setBillingEmail(e.target.value)}
+                placeholder="accounts@client.example"
+              />
+            </div>
+            <div className="field-row">
+              <div className="field">
+                <label htmlFor="org-contact-name">Contact person</label>
+                <input id="org-contact-name" value={contactName}
+                       onChange={(e) => setContactName(e.target.value)} />
+              </div>
+              <div className="field">
+                <label htmlFor="org-contact-phone">Phone</label>
+                <input id="org-contact-phone" value={contactPhone}
+                       onChange={(e) => setContactPhone(e.target.value)} />
+              </div>
+            </div>
+            <div className="field">
+              <label htmlFor="org-rep">Authorised representative</label>
+              <input id="org-rep" value={representative}
+                     onChange={(e) => setRepresentative(e.target.value)}
+                     placeholder="Managing Director" />
+              <p className="field-hint">Who the invoice is addressed to.</p>
+            </div>
+          </fieldset>
+
+          <fieldset className="field">
+            <legend>Address</legend>
+            <div className="field">
+              <label htmlFor="org-addr1">Address</label>
+              <input id="org-addr1" value={addressLine1}
+                     onChange={(e) => setAddressLine1(e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="org-addr2" className="visually-hidden">Address line 2</label>
+              <input id="org-addr2" value={addressLine2}
+                     onChange={(e) => setAddressLine2(e.target.value)} placeholder="Line 2" />
+            </div>
+            <div className="field-row">
+              <div className="field">
+                <label htmlFor="org-city">City</label>
+                <input id="org-city" value={city} onChange={(e) => setCity(e.target.value)} />
+              </div>
+              <div className="field">
+                <label htmlFor="org-postal">Postal code</label>
+                <input id="org-postal" value={postalCode}
+                       onChange={(e) => setPostalCode(e.target.value)} />
+              </div>
+            </div>
+            <div className="field-row">
+              <div className="field">
+                <label htmlFor="org-country">Country</label>
+                <input id="org-country" value={country} onChange={(e) => setCountry(e.target.value)} />
+              </div>
+              <div className="field">
+                <label htmlFor="org-tax">Tax registration</label>
+                <input id="org-tax" value={taxRegistration}
+                       onChange={(e) => setTaxRegistration(e.target.value)} />
+              </div>
+            </div>
+          </fieldset>
+
           <div className="field">
             <label htmlFor="org-notes">Notes</label>
             <textarea id="org-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -479,6 +618,171 @@ function InviteGuestDialog({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+
+/**
+ * Editing an organisation's billing details.
+ *
+ * This exists because the invoice guard refuses to send to a client with no billing
+ * address, and until now there was no way to add one to a client that already existed -
+ * a rule enforced with no means of satisfying it.
+ *
+ * Only sends what changed. A PATCH of every field would overwrite a value another
+ * person edited while this form was open.
+ */
+function EditOrganisation({
+  organisation, onClose, onSaved,
+}: { organisation: Organization; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState({
+    name: organisation.name ?? '',
+    billingEmail: organisation.billing_email ?? '',
+    contactName: organisation.contact_name ?? '',
+    contactPhone: organisation.contact_phone ?? '',
+    representative: organisation.representative ?? '',
+    addressLine1: organisation.address_line1 ?? '',
+    addressLine2: organisation.address_line2 ?? '',
+    city: organisation.city ?? '',
+    postalCode: organisation.postal_code ?? '',
+    country: organisation.country ?? '',
+    taxRegistration: organisation.tax_registration ?? '',
+    website: organisation.website ?? '',
+    notes: organisation.notes ?? '',
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const set = (patch: Partial<typeof form>) => setForm({ ...form, ...patch });
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      await api.patch(`/external/organizations/${organisation.id}`, {
+        name: form.name,
+        billingEmail: form.billingEmail || null,
+        contactName: form.contactName || null,
+        contactPhone: form.contactPhone || null,
+        representative: form.representative || null,
+        addressLine1: form.addressLine1 || null,
+        addressLine2: form.addressLine2 || null,
+        city: form.city || null,
+        postalCode: form.postalCode || null,
+        country: form.country || null,
+        taxRegistration: form.taxRegistration || null,
+        website: form.website || null,
+        notes: form.notes || null,
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'That could not be saved');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <form className="dialog dialog-wide" role="dialog" aria-label={`Edit ${organisation.name}`}
+            onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <h3>Edit {organisation.name}</h3>
+
+        <div className="field">
+          <label htmlFor="eo-name">Name</label>
+          <input id="eo-name" value={form.name} required
+                 onChange={(e) => set({ name: e.target.value })} />
+        </div>
+
+        <fieldset className="field">
+          <legend>Billing</legend>
+          {!form.billingEmail ? (
+            <p className="field-hint">
+              Without a billing email, invoices for this organisation are refused at
+              submission.
+            </p>
+          ) : null}
+          <div className="field">
+            <label htmlFor="eo-email">Billing email</label>
+            <input id="eo-email" type="email" value={form.billingEmail}
+                   onChange={(e) => set({ billingEmail: e.target.value })} />
+          </div>
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="eo-contact">Contact person</label>
+              <input id="eo-contact" value={form.contactName}
+                     onChange={(e) => set({ contactName: e.target.value })} />
+            </div>
+            <div className="field">
+              <label htmlFor="eo-phone">Phone</label>
+              <input id="eo-phone" value={form.contactPhone}
+                     onChange={(e) => set({ contactPhone: e.target.value })} />
+            </div>
+          </div>
+          <div className="field">
+            <label htmlFor="eo-rep">Authorised representative</label>
+            <input id="eo-rep" value={form.representative}
+                   onChange={(e) => set({ representative: e.target.value })} />
+          </div>
+        </fieldset>
+
+        <fieldset className="field">
+          <legend>Address</legend>
+          <div className="field">
+            <label htmlFor="eo-a1">Address</label>
+            <input id="eo-a1" value={form.addressLine1}
+                   onChange={(e) => set({ addressLine1: e.target.value })} />
+          </div>
+          <div className="field">
+            <label htmlFor="eo-a2" className="visually-hidden">Address line 2</label>
+            <input id="eo-a2" placeholder="Line 2" value={form.addressLine2}
+                   onChange={(e) => set({ addressLine2: e.target.value })} />
+          </div>
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="eo-city">City</label>
+              <input id="eo-city" value={form.city} onChange={(e) => set({ city: e.target.value })} />
+            </div>
+            <div className="field">
+              <label htmlFor="eo-post">Postal code</label>
+              <input id="eo-post" value={form.postalCode}
+                     onChange={(e) => set({ postalCode: e.target.value })} />
+            </div>
+          </div>
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="eo-country">Country</label>
+              <input id="eo-country" value={form.country}
+                     onChange={(e) => set({ country: e.target.value })} />
+            </div>
+            <div className="field">
+              <label htmlFor="eo-tax">Tax registration</label>
+              <input id="eo-tax" value={form.taxRegistration}
+                     onChange={(e) => set({ taxRegistration: e.target.value })} />
+            </div>
+          </div>
+        </fieldset>
+
+        <div className="field">
+          <label htmlFor="eo-web">Website</label>
+          <input id="eo-web" value={form.website} onChange={(e) => set({ website: e.target.value })} />
+        </div>
+        <div className="field">
+          <label htmlFor="eo-notes">Notes</label>
+          <textarea id="eo-notes" rows={3} value={form.notes}
+                    onChange={(e) => set({ notes: e.target.value })} />
+        </div>
+
+        {error ? <p className="field-error">{error}</p> : null}
+        <div className="dialog-actions">
+          <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary-button" disabled={saving}>
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

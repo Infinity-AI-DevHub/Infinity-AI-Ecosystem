@@ -14,6 +14,7 @@ import { formatDateTime, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 import { setNotice } from '../lib/notice';
 import { NotificationSettings } from '../components/NotificationSettings';
+import { BillingSettings } from '../components/BillingSettings';
 
 type Delegation = {
   id: string;
@@ -38,7 +39,7 @@ type SessionRecord = {
 };
 
 export default function Settings() {
-  const { session, refresh } = useSession();
+  const { session, refresh, can } = useSession();
   const navigate = useNavigate();
   const user = session?.user;
 
@@ -335,6 +336,8 @@ export default function Settings() {
           </AsyncSection>
           <FormError error={withdrawCover.error} />
         </section>
+
+        {can('billing.configure') ? <BillingSettings /> : null}
 
         <NotificationSettings />
 

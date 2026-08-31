@@ -220,6 +220,20 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(204).send();
   });
 
+  app.post('/chat/rooms/:id/delivered', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    const input = parse(z.object({ seq: z.number().int().nonnegative() }), request.body);
+    await chat.markDelivered(actor, id, input.seq);
+    return reply.code(204).send();
+  });
+
+  app.get('/chat/rooms/:id/delivery', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    return chat.deliveryState(actor, id);
+  });
+
   app.post('/chat/rooms/:id/members', async (request, reply) => {
     const actor = requireActor(request);
     const { id } = parse(idParam, request.params);
