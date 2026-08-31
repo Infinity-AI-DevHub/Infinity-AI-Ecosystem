@@ -10,8 +10,15 @@ import * as identity from '../../domains/identity.js';
 import * as notifications from '../../domains/notifications.js';
 import * as dashboard from '../../domains/dashboard.js';
 import { one } from '../../core/db.js';
+import * as activity from '../../domains/activity.js';
 
 export async function meRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/me/activity', async (request) => {
+    const actor = requireActor(request);
+    return activity.counts(actor);
+  });
+
+
   app.get('/me', async (request) => {
     const actor = requireActor(request);
     const user = await identity.findUserById(actor.userId);

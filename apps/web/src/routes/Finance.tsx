@@ -7,7 +7,7 @@
  */
 import { useMemo, useState } from 'react';
 import { Laptop, Paperclip, Plus, Receipt, Trash2, Wallet } from 'lucide-react';
-import { api, API_URL, idempotencyKey } from '../lib/api';
+import { api, API_URL, idempotencyKey, uploadAuth } from '../lib/api';
 import { useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatCurrency, formatDate, initials, relativeTime, titleCase } from '../lib/format';
@@ -861,13 +861,11 @@ function ReceiptControl({
 
       const form = new FormData();
       form.append('file', file, file.name);
-      const csrf = document.cookie.match(/(?:^|; )iw_csrf=([^;]*)/)?.[1];
-      const response = await fetch(`${API_URL}/api/v1/files/uploads/${session.uploadId}/content`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: csrf ? { 'x-csrf-token': decodeURIComponent(csrf) } : {},
-        body: form,
-      });
+      const auth = await uploadAuth();
+      const response = await fetch(
+        `${API_URL}/api/v1/files/uploads/${session.uploadId}/content`,
+        { method: 'POST', ...auth, body: form },
+      );
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
         // A quarantine verdict is a normal outcome to report, not a crash.

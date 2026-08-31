@@ -13,13 +13,14 @@ import { api, ApiError, idempotencyKey, type Paged } from '../lib/api';
 import { invalidate, useQuery } from '../lib/query';
 import { useSession } from '../lib/session';
 import { ErrorState, Loading } from './States';
+import { useTextPrompt } from './Prompt';
 
-type Bucket = 'all' | 'draft' | 'outstanding' | 'overdue' | 'paid';
+type Bucket = 'all' | 'draft' | 'pending_approval' | 'outstanding' | 'overdue' | 'paid';
 
 type Invoice = {
   id: string;
   number: string;
-  status: 'draft' | 'open' | 'partially_paid' | 'paid' | 'void';
+  status: 'draft' | 'pending_approval' | 'open' | 'partially_paid' | 'paid' | 'void';
   currency: string;
   issue_date: string;
   due_date: string;
@@ -51,6 +52,7 @@ const money = (value: string | number, currency = 'LKR') =>
 
 const STATUS_LABEL: Record<Invoice['status'], string> = {
   draft: 'Draft',
+  pending_approval: 'Awaiting approval',
   open: 'Open',
   partially_paid: 'Part paid',
   paid: 'Paid',
@@ -90,6 +92,7 @@ export function Invoices() {
     ['outstanding', 'Outstanding'],
     ['overdue', 'Overdue'],
     ['draft', 'Drafts'],
+    ['pending_approval', 'Awaiting approval'],
     ['paid', 'Paid'],
     ['all', 'All'],
   ];
@@ -430,6 +433,8 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [chasing, setChasing] = useState(false);
+  const { ask, element: promptDialog } = useTextPrompt();
 
   const detail = useQuery<any>(`/invoices/${invoiceId}`, (signal) =>
     api.get(`/invoices/${invoiceId}`, signal),
@@ -470,12 +475,45 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
               <div className="header-controls">
                 {invoice.status === 'draft' && can('invoice.manage') ? (
                   <button type="button" className="primary-button" disabled={busy}
-                          onClick={() => act(() => api.post(`/invoices/${invoiceId}/issue`, {},
+                          onClick={() => act(() => api.post(`/invoices/${invoiceId}/submit`, {},
                             { idempotencyKey: idempotencyKey() }))}>
-                    Issue and email client
+                    Submit for approval
                   </button>
                 ) : null}
-                {invoice.status !== 'draft' && invoice.status !== 'paid'
+
+                {/* Releasing to the client is a super-administrator act, separate from
+                    drafting it. Anyone else sees the state, not the buttons. */}
+                {invoice.status === 'pending_approval' && can('invoice.approve') ? (
+                  <>
+                    <button type="button" className="ghost-button" disabled={busy}
+                            onClick={async () => {
+                              const reason = await ask({
+                                title: 'Send this invoice back',
+                                label: 'Reason',
+                                description:
+                                  'The author sees this, so say what needs changing.',
+                                minLength: 4,
+                                confirmLabel: 'Send back',
+                              });
+                              if (reason) void act(() => api.post(`/invoices/${invoiceId}/reject`, { reason }));
+                            }}>
+                      Send back
+                    </button>
+                    <button type="button" className="primary-button" disabled={busy}
+                            onClick={() => act(() => api.post(`/invoices/${invoiceId}/approve`, {},
+                              { idempotencyKey: idempotencyKey() }))}>
+                      Approve and email client
+                    </button>
+                  </>
+                ) : null}
+
+                {invoice.status === 'pending_approval' && !can('invoice.approve') ? (
+                  <span className="status-tag status-invited">
+                    Waiting on a super administrator
+                  </span>
+                ) : null}
+                {invoice.status !== 'draft' && invoice.status !== 'pending_approval'
+                  && invoice.status !== 'paid'
                   && invoice.status !== 'void' && can('payment.record') ? (
                   <button type="button" className="primary-button" onClick={() => setPaying(true)}>
                     Record payment
@@ -485,6 +523,16 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
             </header>
 
             <dl className="detail-list">
+              {invoice.representative || invoice.billing_email ? (
+                <>
+                  <dt>Billed to</dt>
+                  <dd>
+                    {invoice.representative ? `${invoice.representative}, ` : ''}
+                    {invoice.client_name}
+                    {invoice.billing_email ? ` · ${invoice.billing_email}` : ''}
+                  </dd>
+                </>
+              ) : null}
               <dt>Issued</dt><dd>{String(invoice.issue_date).slice(0, 10)}</dd>
               <dt>Due</dt><dd>{String(invoice.due_date).slice(0, 10)}</dd>
               <dt>Total</dt><dd>{money(invoice.total, invoice.currency)}</dd>
@@ -539,8 +587,49 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
             {error ? <p className="field-error">{error}</p> : null}
 
             <div className="dialog-actions">
+              {/* Voiding is refused by the server once money has landed; the button is
+                  hidden in that case rather than offering an action that will fail. */}
+              {can('invoice.manage') && Number(invoice.amount_paid) === 0
+                && invoice.status !== 'void' && invoice.status !== 'paid' ? (
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={busy}
+                  onClick={async () => {
+                    const reason = await ask({
+                      title: 'Void this invoice',
+                      label: 'Reason',
+                      description:
+                        'Voiding cannot be undone. The invoice stays on record with this reason.',
+                      minLength: 4,
+                      confirmLabel: 'Void invoice',
+                      destructive: true,
+                    });
+                    if (reason) void act(() => api.post(`/invoices/${invoiceId}/void`, { reason }));
+                  }}
+                >
+                  Void invoice
+                </button>
+              ) : null}
+              {can('invoice.manage') && invoice.status !== 'paid' && invoice.status !== 'void' ? (
+                <button type="button" className="ghost-button" onClick={() => setChasing(true)}>
+                  Reminder settings
+                </button>
+              ) : null}
               <button type="button" className="ghost-button" onClick={onClose}>Close</button>
             </div>
+
+            {promptDialog}
+
+            {chasing ? (
+              <ReminderPolicy
+                invoiceId={invoiceId}
+                enabled={Boolean(invoice.reminders_enabled)}
+                intervalDays={Number(invoice.reminder_interval_days)}
+                onClose={() => setChasing(false)}
+                onSaved={() => { setChasing(false); detail.reload(); invalidate('/invoices'); }}
+              />
+            ) : null}
 
             {paying ? (
               <RecordPayment
@@ -626,6 +715,77 @@ function RecordPayment({
           <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
           <button type="submit" className="primary-button" disabled={saving}>
             {saving ? 'Recording…' : 'Record and send receipt'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+
+/**
+ * How often an overdue invoice chases the client.
+ *
+ * Per invoice rather than a single company-wide setting: a client who always pays late
+ * and one who is disputing a line need different treatment, and a global cadence forces
+ * the same tone on both.
+ */
+function ReminderPolicy({
+  invoiceId, enabled, intervalDays, onClose, onSaved,
+}: {
+  invoiceId: string; enabled: boolean; intervalDays: number;
+  onClose: () => void; onSaved: () => void;
+}) {
+  const [on, setOn] = useState(enabled);
+  const [days, setDays] = useState(String(intervalDays || 7));
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      await api.put(`/invoices/${invoiceId}/reminders`, {
+        enabled: on,
+        intervalDays: Number(days),
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'That could not be saved');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <form className="dialog" role="dialog" aria-label="Reminder settings"
+            onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <h3>Payment reminders</h3>
+        <div className="checkbox-row">
+          <label>
+            <input type="checkbox" checked={on} onChange={(e) => setOn(e.target.checked)} />
+            Chase this invoice once it is overdue
+          </label>
+        </div>
+        <label className="field">
+          <span>Send a reminder every</span>
+          <select value={days} onChange={(e) => setDays(e.target.value)} disabled={!on}>
+            {['1', '2', '3', '5', '7', '14', '30'].map((d) => (
+              <option key={d} value={d}>{d} day{d === '1' ? '' : 's'}</option>
+            ))}
+          </select>
+        </label>
+        <p className="field-hint">
+          Reminders start only after the due date, and stop the moment the invoice is
+          settled.
+        </p>
+        {error ? <p className="field-error">{error}</p> : null}
+        <div className="dialog-actions">
+          <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary-button" disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
       </form>

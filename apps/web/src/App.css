@@ -2407,3 +2407,33 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   border: 1px dashed var(--border-default);
   border-radius: var(--r-lg);
 }
+
+/* Sidebar count badges. Pushed to the trailing edge so labels stay left-aligned
+   and the numbers form their own column down the navigation. */
+.nav-badge {
+  margin-left: auto;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 6px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--r-full);
+  background: var(--brand-200);
+  color: var(--brand-900);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.nav-item-active .nav-badge { background: #fff; color: var(--brand-800); }
+
+/* Message receipts. Read is the only state that takes the accent: sent and delivered
+   are the resting cases and should not compete with the message text. */
+.receipt {
+  margin-left: var(--sp-2);
+  font-size: var(--text-2xs);
+  letter-spacing: -0.08em;
+  color: var(--fg-muted);
+  vertical-align: baseline;
+}
+.receipt-read { color: var(--brand-400); }

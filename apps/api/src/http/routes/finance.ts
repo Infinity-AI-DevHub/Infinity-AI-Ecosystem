@@ -7,6 +7,7 @@ import { parse } from '../../core/validation.js';
 import { requireActor, withIdempotency } from '../context.js';
 import * as finance from '../../domains/finance.js';
 import * as invoicing from '../../domains/invoicing.js';
+import * as billingSettings from '../../domains/billing-settings.js';
 
 const idParam = z.object({ id: z.string().uuid() });
 const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
@@ -274,13 +275,63 @@ export async function financeRoutes(app: FastifyInstance): Promise<void> {
     }));
   });
 
-  app.post('/invoices/:id/issue', async (request, reply) => {
+  app.post('/invoices/:id/submit', async (request, reply) => {
     const actor = requireActor(request);
     const { id } = parse(idParam, request.params);
-    return withIdempotency(request, reply, 'POST /invoices/:id/issue', async () => ({
+    return withIdempotency(request, reply, 'POST /invoices/:id/submit', async () => ({
       statusCode: 200,
-      body: await invoicing.issueInvoice(actor, id),
+      body: await invoicing.submitInvoice(actor, id),
     }));
+  });
+
+  // Releasing an invoice to a client is a super-administrator act, separate from
+  // drafting it. The capability check lives in the domain.
+  app.get('/billing/settings', async (request) => {
+    const actor = requireActor(request);
+    return billingSettings.getSettings(actor);
+  });
+
+  app.patch('/billing/settings', async (request) => {
+    const actor = requireActor(request);
+    const input = parse(
+      z.object({
+        legalName: z.string().max(200).nullable().optional(),
+        addressLine1: z.string().max(200).nullable().optional(),
+        addressLine2: z.string().max(200).nullable().optional(),
+        city: z.string().max(120).nullable().optional(),
+        postalCode: z.string().max(30).nullable().optional(),
+        country: z.string().max(80).nullable().optional(),
+        taxRegistration: z.string().max(60).nullable().optional(),
+        contactEmail: z.string().email().max(320).nullable().optional(),
+        contactPhone: z.string().max(40).nullable().optional(),
+        paymentInstructions: z.string().max(4000).nullable().optional(),
+        invoiceFooter: z.string().max(2000).nullable().optional(),
+        receiptFooter: z.string().max(2000).nullable().optional(),
+        defaultTerms: z.string().max(4000).nullable().optional(),
+        defaultDueDays: z.number().int().min(0).max(365).optional(),
+        invoicePrefix: z.string().max(12).optional(),
+        receiptPrefix: z.string().max(12).optional(),
+        accentColour: z.string().max(16).nullable().optional(),
+      }).strict(),
+      request.body,
+    );
+    return billingSettings.updateSettings(actor, input);
+  });
+
+  app.post('/invoices/:id/approve', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    return withIdempotency(request, reply, 'POST /invoices/:id/approve', async () => ({
+      statusCode: 200,
+      body: await invoicing.approveInvoice(actor, id),
+    }));
+  });
+
+  app.post('/invoices/:id/reject', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    const { reason } = parse(z.object({ reason: z.string().min(4).max(500) }), request.body);
+    return invoicing.rejectInvoice(actor, id, reason);
   });
 
   app.post('/invoices/:id/payments', async (request, reply) => {
