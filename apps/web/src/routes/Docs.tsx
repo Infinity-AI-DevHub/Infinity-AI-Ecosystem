@@ -53,6 +53,8 @@ type Version = {
   author_name: string | null;
 };
 
+type Person = { id: string; displayName: string; email: string; status: string };
+
 export default function Docs() {
   const { spaceId, pageId } = useParams();
   const navigate = useNavigate();
@@ -392,13 +394,30 @@ function PageEditor({ page, onDone }: { page: Page; onDone: () => void }) {
 }
 
 function SpaceDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
+  const { session } = useSession();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [visibility, setVisibility] = useState<'company' | 'restricted'>('company');
+  const [readerIds, setReaderIds] = useState<string[]>([]);
+  const [readerSearch, setReaderSearch] = useState('');
+  const people = useQuery<{ items: Person[] }>('/users?limit=100', (signal) =>
+    api.get('/users?limit=100', signal),
+    { enabled: visibility === 'restricted' },
+  );
+  const availableReaders = (people.data?.items ?? []).filter((person) => {
+    if (person.id === session?.user?.id || person.status !== 'active') return false;
+    const term = readerSearch.trim().toLowerCase();
+    return !term || person.displayName.toLowerCase().includes(term) || person.email.toLowerCase().includes(term);
+  });
 
   const create = useMutation(
     async () =>
-      api.post<Space>('/docs/spaces', { name, description: description || null, visibility }),
+      api.post<Space>('/docs/spaces', {
+        name,
+        description: description || null,
+        visibility,
+        readerIds: visibility === 'restricted' ? readerIds : [],
+      }),
     { invalidates: ['/docs/spaces'], onSuccess: (space) => onCreated(space.id) },
   );
 
@@ -426,9 +445,53 @@ function SpaceDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (
               Most spaces should be company-wide — a handbook nobody can read is not one.
             </p>
           </div>
+          {visibility === 'restricted' ? (
+            <fieldset className="field" aria-describedby="space-readers-hint">
+              <legend>People who can read it</legend>
+              <input
+                type="search"
+                aria-label="Search workspace members"
+                placeholder="Search by name or email"
+                value={readerSearch}
+                onChange={(event) => setReaderSearch(event.target.value)}
+              />
+              <p id="space-readers-hint" className="field-hint">
+                You keep owner access automatically. Select at least one additional reader.
+              </p>
+              {people.loading ? <p className="field-hint">Loading people…</p> : null}
+              {people.error ? <FormError error={people.error} /> : null}
+              {!people.loading && !people.error && availableReaders.length === 0 ? (
+                <p className="field-hint">No matching active workspace members.</p>
+              ) : (
+                <div className="attendee-picker">
+                  {availableReaders.map((person) => (
+                    <label key={person.id} className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={readerIds.includes(person.id)}
+                        onChange={(event) => setReaderIds((current) =>
+                          event.target.checked
+                            ? [...current, person.id]
+                            : current.filter((id) => id !== person.id),
+                        )}
+                      />
+                      <span>
+                        <strong>{person.displayName}</strong>
+                        <span className="field-hint">{person.email} · Reader</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </fieldset>
+          ) : null}
           <div className="dialog-actions">
             <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
-            <button type="submit" className="primary-button" disabled={create.pending || !name.trim()}>
+            <button
+              type="submit"
+              className="primary-button"
+              disabled={create.pending || !name.trim() || (visibility === 'restricted' && readerIds.length === 0)}
+            >
               {create.pending ? 'Creating…' : 'Create space'}
             </button>
           </div>

@@ -7,9 +7,10 @@
  * to anything in Files.
  */
 import { useRef, useState } from 'react';
-import { api, API_URL, ApiError, idempotencyKey, uploadAuth } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { useQuery } from '../lib/query';
 import { formatBytes } from '../lib/format';
+import { uploadWorkspaceFile } from '../lib/uploads';
 
 type Attachment = {
   id: string;
@@ -31,34 +32,18 @@ export function Attachments({ pageId }: { pageId: string }) {
 
   async function upload(file: File) {
     setError(null);
+    if (file.size === 0) {
+      setError('This file is empty. Choose a file that contains data.');
+      if (input.current) input.current.value = '';
+      return;
+    }
     setBusy(true);
     try {
-      const session = await api.post<{ uploadId: string }>(
-        '/files/uploads',
-        { filename: file.name, mimeType: file.type || 'application/octet-stream', sizeBytes: file.size },
-        { idempotencyKey: idempotencyKey() },
-      );
-      // The bytes go straight to storage; only the completion comes back through the API.
-      const form = new FormData();
-      form.append('file', file, file.name);
-      const auth = await uploadAuth();
-      const put = await fetch(
-        `${API_URL}/api/v1/files/uploads/${session.uploadId}/content`,
-        { method: 'POST', ...auth, body: form },
-      );
-      if (!put.ok) {
-        const payload = await put.json().catch(() => null);
-        throw new Error(payload?.error?.message ?? 'That upload was rejected');
-      }
-
-      const completed = await api.post<{ id: string }>(
-        `/files/uploads/${session.uploadId}/complete`, {},
-        { idempotencyKey: idempotencyKey() },
-      );
+      const completed = await uploadWorkspaceFile<{ id: string }>(file);
       await api.post(`/docs/pages/${pageId}/attachments`, { fileId: completed.id });
       list.reload();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'That file could not be attached');
+      setError(err instanceof Error ? err.message : 'That file could not be attached');
     } finally {
       setBusy(false);
       if (input.current) input.current.value = '';
@@ -105,6 +90,10 @@ export function Attachments({ pageId }: { pageId: string }) {
           if (file) void upload(file);
         }}
       />
+      <p className="field-hint">
+        Common formats such as PDF, DOCX, PNG, ZIP and TXT are supported. Files without
+        browser MIME metadata are accepted and verified securely after upload.
+      </p>
       {busy ? <p className="field-hint">Uploading…</p> : null}
       {error ? <p className="field-error">{error}</p> : null}
     </div>

@@ -226,6 +226,58 @@ export async function uploadAuth(): Promise<{
   };
 }
 
+/** A non-JSON response fetched through the same authenticated path as every API call. */
+export type Download = { blob: Blob; filename: string };
+
+export async function download(path: string): Promise<Download> {
+  const headers: Record<string, string> = {};
+  if (isDesktop) {
+    const token = await accessTokenForRequest(BASE);
+    if (token) headers.authorization = `Bearer ${token}`;
+  }
+
+  const send = () => fetch(`${BASE}${path}`, {
+    headers,
+    credentials: isDesktop ? 'omit' : 'include',
+  });
+
+  let response: Response;
+  try {
+    response = await send();
+    if (response.status === 401 && isDesktop) {
+      const renewed = await refreshGrant(BASE);
+      if (renewed) {
+        headers.authorization = `Bearer ${renewed.accessToken}`;
+        response = await send();
+      }
+    }
+  } catch {
+    throw new NetworkError();
+  }
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { error?: Record<string, unknown> } | null;
+    const envelope = payload?.error;
+    const error = new ApiError(
+      response.status,
+      String(envelope?.code ?? 'error'),
+      String(envelope?.message ?? 'Something went wrong'),
+      (envelope?.fields as FieldError[]) ?? [],
+      envelope?.correlationId as string | undefined,
+      Number(response.headers.get('retry-after')) || undefined,
+    );
+    if (error.isUnauthenticated) {
+      if (isDesktop) clearGrant();
+      for (const handler of sessionLostHandlers) handler();
+    }
+    throw error;
+  }
+
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? 'download';
+  return { blob: await response.blob(), filename };
+}
+
 export const api = {
   get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal }),
   post: <T>(path: string, body?: unknown, options: Omit<RequestOptions, 'method' | 'body'> = {}) =>
@@ -236,6 +288,7 @@ export const api = {
     request<T>(path, { ...options, method: 'PUT', body }),
   delete: <T>(path: string, options: Omit<RequestOptions, 'method'> = {}) =>
     request<T>(path, { ...options, method: 'DELETE' }),
+  download,
 };
 
 /** Generates a stable key so a retried submit is recognised as the same command. */

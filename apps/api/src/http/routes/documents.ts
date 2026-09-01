@@ -25,6 +25,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
         name: z.string().min(1).max(120),
         description: z.string().max(500).nullable().optional(),
         visibility: z.enum(['company', 'restricted']).optional(),
+        readerIds: z.array(z.string().uuid()).max(100).optional().default([]),
         colour: z.string().max(16).optional(),
       }),
       request.body,

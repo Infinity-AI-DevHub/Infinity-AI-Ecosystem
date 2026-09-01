@@ -6,7 +6,7 @@
  * extracts searchable text. The file stays in `processing` (and `quarantined` on a bad
  * verdict) until checks pass; users never receive a public permanent object URL.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { many, newId, one, pool, reload, transaction } from '../core/db.js';
 import { conflict, forbidden, notFound, payloadTooLarge, unprocessable } from '../core/errors.js';
@@ -17,6 +17,7 @@ import { buildObjectKey, storage } from '../adapters/storage.js';
 import { scanBuffer, sniffMimeType } from '../adapters/scanner.js';
 import { config } from '../core/config.js';
 import { safeFilename } from '../core/validation.js';
+import { logger } from '../core/logger.js';
 import * as searchIndex from './search.js';
 
 export type FileRow = {
@@ -171,28 +172,153 @@ export async function receiveUpload(
   uploadId: string,
   body: Buffer,
 ): Promise<FileRow> {
-  const session = await one<{
-    id: string;
-    file_id: string;
-    filename: string;
-    mime_type: string;
-    declared_size: number;
-    object_key: string;
-    state: string;
-    user_id: string;
-  }>(
+  const session = await claimUpload(actor, uploadId);
+  try {
+    return await finalizeUpload(actor, uploadId, body, false, session);
+  } catch (error) {
+    await releaseUpload(uploadId);
+    throw error;
+  }
+}
+
+type UploadSessionRow = {
+  id: string;
+  file_id: string;
+  filename: string;
+  mime_type: string;
+  declared_size: number;
+  object_key: string;
+  state: string;
+  user_id: string;
+};
+
+async function uploadSession(actor: Actor, uploadId: string): Promise<UploadSessionRow> {
+  const session = await one<UploadSessionRow>(
     `SELECT * FROM upload_sessions WHERE id = $1 AND company_id = $2 AND expires_at > NOW(3)`,
     [uploadId, actor.companyId],
   );
   if (!session) throw notFound('Upload session not found or expired');
   if (session.user_id !== actor.userId) throw forbidden('This upload belongs to someone else');
   if (session.state !== 'open') throw conflict('This upload was already finalized');
+  return session;
+}
+
+/** Finalizes bytes previously sent to the short-lived signed object URL. */
+export async function completeUpload(actor: Actor, uploadId: string): Promise<FileRow> {
+  const session = await claimUpload(actor, uploadId);
+  try {
+    if (!(await storage.exists(session.object_key))) throw conflict('The file has not finished uploading yet');
+    const stream = await storage.get(session.object_key);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of stream) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > config.limits.uploadMaxBytes) throw payloadTooLarge();
+      chunks.push(buffer);
+    }
+    return await finalizeUpload(actor, uploadId, Buffer.concat(chunks), true, session);
+  } catch (error) {
+    await releaseUpload(uploadId);
+    throw error;
+  }
+}
+
+async function claimUpload(actor: Actor, uploadId: string): Promise<UploadSessionRow> {
+  const session = await uploadSession(actor, uploadId);
+  const claimed = await pool.query(
+    `UPDATE upload_sessions SET state = 'finalizing' WHERE id = $1 AND state = 'open'`,
+    [uploadId],
+  );
+  if ((claimed.rowCount ?? 0) === 0) throw conflict('This upload is already being finalized');
+  return session;
+}
+
+async function releaseUpload(uploadId: string): Promise<void> {
+  await pool.query(`UPDATE upload_sessions SET state = 'open' WHERE id = $1 AND state = 'finalizing'`, [uploadId]);
+}
+
+/** Recovers uploads whose object arrived but whose completion request was interrupted. */
+export async function recoverPendingUploads(limit = 10): Promise<number> {
+  const pending = await many<{
+    id: string;
+    user_id: string;
+    company_id: string;
+    email: string;
+    display_name: string;
+    access_level: Actor['accessLevel'];
+    status: string;
+    department_id: string | null;
+    manager_id: string | null;
+  }>(
+    `SELECT s.id, s.user_id, s.company_id, u.email_display AS email, u.display_name,
+            u.access_level, u.status, u.department_id, u.manager_id
+       FROM upload_sessions s
+       JOIN files f ON f.id = s.file_id AND f.state = 'processing'
+       JOIN users u ON u.id = s.user_id AND u.company_id = s.company_id
+      WHERE s.state = 'open' AND s.expires_at > NOW(3)
+      ORDER BY s.created_at
+      LIMIT $1`,
+    [limit],
+  );
+  let recovered = 0;
+  for (const item of pending) {
+    try {
+      const session = await uploadSession({
+        userId: item.user_id,
+        companyId: item.company_id,
+        email: item.email,
+        displayName: item.display_name,
+        accessLevel: item.access_level,
+        status: item.status,
+        departmentId: item.department_id,
+        managerId: item.manager_id,
+        capabilities: new Set(),
+        groupIds: [],
+        sessionId: null,
+        tokenId: null,
+        tokenScopes: null,
+      }, item.id);
+      if (!(await storage.exists(session.object_key))) continue;
+      await completeUpload({
+        userId: item.user_id, companyId: item.company_id, email: item.email,
+        displayName: item.display_name, accessLevel: item.access_level, status: item.status,
+        departmentId: item.department_id, managerId: item.manager_id, capabilities: new Set(),
+        groupIds: [], sessionId: null, tokenId: null, tokenScopes: null,
+      }, item.id);
+      recovered += 1;
+    } catch (error) {
+      logger.warn({ err: error, uploadId: item.id }, 'pending upload recovery failed');
+    }
+  }
+  return recovered;
+}
+
+async function finalizeUpload(
+  actor: Actor,
+  uploadId: string,
+  body: Buffer,
+  alreadyStored: boolean,
+  knownSession?: UploadSessionRow,
+): Promise<FileRow> {
+  const session = knownSession ?? await uploadSession(actor, uploadId);
   if (body.length > config.limits.uploadMaxBytes) throw payloadTooLarge();
+  if (body.length !== session.declared_size) {
+    throw unprocessable('The uploaded file size does not match the reserved upload', [
+      { field: 'file', message: 'Choose the file again and retry the upload' },
+    ]);
+  }
 
   // The declared content type is never trusted.
   const sniffed = sniffMimeType(body, session.mime_type);
   const verdict = await scanBuffer(body, session.filename);
-  const put = await storage.put(session.object_key, body);
+  const put = alreadyStored
+    ? {
+        objectKey: session.object_key,
+        size: body.length,
+        checksum: createHash('sha256').update(body).digest('hex'),
+      }
+    : await storage.put(session.object_key, body);
 
   const file = await transaction(async (tx) => {
     await tx.query(`UPDATE upload_sessions SET state = 'complete' WHERE id = $1`, [uploadId]);

@@ -7,12 +7,13 @@
  */
 import { useMemo, useRef, useState } from 'react';
 import { Download, FolderPlus, History, Link2, RotateCcw, ShieldAlert, Trash2, Upload } from 'lucide-react';
-import { api, API_URL, ApiError, idempotencyKey, NetworkError, uploadAuth } from '../lib/api';
+import { api, ApiError, idempotencyKey, NetworkError } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { saveDownload } from '../lib/desktop';
 import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatBytes, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
+import { uploadWorkspaceFile } from '../lib/uploads';
 
 type FileRecord = {
   id: string;
@@ -57,27 +58,7 @@ export default function Files() {
     setUploadError(null);
     setUploading(true);
     try {
-      const session = await api.post<{ uploadId: string }>('/files/uploads', {
-        filename: file.name,
-        mimeType: file.type || 'application/octet-stream',
-        sizeBytes: file.size,
-        folderId,
-      });
-
-      const form = new FormData();
-      form.append('file', file, file.name);
-
-      const auth = await uploadAuth();
-      const response = await fetch(
-        `${API_URL}/api/v1/files/uploads/${session.uploadId}/content`,
-        { method: 'POST', ...auth, body: form },
-      );
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        // A quarantine verdict is a normal outcome to explain, not a crash.
-        throw new Error(payload?.error?.message ?? 'The upload could not be completed');
-      }
+      await uploadWorkspaceFile(file, { folderId });
       invalidate('/files');
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'The upload could not be completed');

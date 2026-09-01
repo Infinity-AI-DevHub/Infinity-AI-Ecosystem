@@ -4,7 +4,7 @@
  * Times are shown in the viewer's own zone. Joining requests a short-lived ticket; when
  * no media provider is configured the screen says so plainly rather than failing.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CalendarPlus, Check, Video, X } from 'lucide-react';
 import { api, idempotencyKey } from '../lib/api';
@@ -19,8 +19,8 @@ type Event = {
   title: string;
   description: string;
   location: string | null;
-  online_url: string | null;
-  recurrence_rule: string | null;
+  onlineUrl: string | null;
+  recurrenceRule: string | null;
   roomId: string | null;
   startsAt: string;
   endsAt: string;
@@ -28,6 +28,7 @@ type Event = {
   status: string;
   organizerId: string;
   hasVideoRoom: boolean;
+  meetingProvider: string | null;
   agenda: string;
   attendeeCount?: number;
   myRsvp: string | null;
@@ -61,6 +62,7 @@ export default function Meetings() {
   const { session } = useSession();
   const [creating, setCreating] = useState(false);
   const [ticket, setTicket] = useState<JoinTicket | null>(null);
+  const [optimisticRsvp, setOptimisticRsvp] = useState<Event['myRsvp']>(null);
 
   // A fortnight window keeps the agenda useful without unbounded pagination.
   const range = useMemo(() => {
@@ -80,8 +82,10 @@ export default function Meetings() {
   );
 
   const rsvp = useMutation(
-    async (value: 'accepted' | 'declined' | 'tentative') =>
-      api.post(`/calendar/events/${eventId}/rsvp`, { rsvp: value }),
+    async (value: 'accepted' | 'declined' | 'tentative') => {
+      await api.post(`/calendar/events/${eventId}/rsvp`, { rsvp: value });
+      return value;
+    },
     { invalidates: ['/calendar'] },
   );
 
@@ -90,6 +94,27 @@ export default function Meetings() {
     setTicket(result);
     return result;
   });
+
+  useEffect(() => {
+    setTicket(null);
+    setOptimisticRsvp(null);
+  }, [eventId]);
+
+  useEffect(() => {
+    if (detail.data?.myRsvp) setOptimisticRsvp(detail.data.myRsvp);
+  }, [detail.data?.myRsvp]);
+
+  const respond = async (value: 'accepted' | 'declined' | 'tentative') => {
+    const previous = optimisticRsvp ?? detail.data?.myRsvp ?? null;
+    setOptimisticRsvp(value);
+    const saved = await rsvp.mutate(value);
+    if (!saved) setOptimisticRsvp(previous);
+  };
+
+  const joinVideoMeeting = async () => {
+    const result = await join.mutate();
+    if (result && !result.degraded && result.url) await openExternal(result.url);
+  };
 
   return (
     <div className="module-page">
@@ -171,20 +196,20 @@ export default function Meetings() {
               </p>
 
               {detail.data.location ? <p>{detail.data.location}</p> : null}
-              {detail.data.recurrence_rule ? (
+              {detail.data.recurrenceRule ? (
                 <p className="field-hint">
-                  Repeats {String(detail.data.recurrence_rule).includes('DAILY') ? 'daily'
-                    : String(detail.data.recurrence_rule).includes('WEEKLY') ? 'weekly' : 'monthly'}
+                  Repeats {String(detail.data.recurrenceRule).includes('DAILY') ? 'daily'
+                    : String(detail.data.recurrenceRule).includes('WEEKLY') ? 'weekly' : 'monthly'}
                 </p>
               ) : null}
-              {detail.data.online_url ? (
+              {detail.data.onlineUrl ? (
                 <p>
                   {/* Through the bridge: in the desktop client a bare target=_blank is
                       caught by the navigation guard, so the link would do nothing. */}
                   <button
                     type="button"
                     className="primary-button"
-                    onClick={() => void openExternal(detail.data!.online_url!)}
+                    onClick={() => void openExternal(detail.data!.onlineUrl!)}
                   >
                     Join online
                   </button>
@@ -192,12 +217,12 @@ export default function Meetings() {
               ) : null}
               {detail.data.description ? <p>{detail.data.description}</p> : null}
 
-              {detail.data.hasVideoRoom ? (
+              {detail.data.hasVideoRoom && detail.data.meetingProvider !== 'none' ? (
                 <div className="join-block">
                   <button
                     type="button"
                     className="primary-button"
-                    onClick={() => void join.mutate()}
+                    onClick={() => void joinVideoMeeting()}
                     disabled={join.pending}
                   >
                     <Video size={15} aria-hidden="true" />
@@ -210,13 +235,12 @@ export default function Meetings() {
                     >
                       <p>Meeting details, agenda and notes remain available.</p>
                     </DegradedNotice>
-                  ) : ticket ? (
-                    <p className="join-ready" role="status">
-                      Your secure join ticket is ready for {ticket.provider}. It expires shortly,
-                      so join now.
-                    </p>
                   ) : null}
                 </div>
+              ) : detail.data.hasVideoRoom && !detail.data.onlineUrl ? (
+                <DegradedNotice reason="Video calling is not available for this meeting because no media provider or online meeting link is configured.">
+                  <p>Ask the organiser to add an online meeting link.</p>
+                </DegradedNotice>
               ) : null}
 
               <section aria-labelledby="rsvp-heading" className="rsvp-block">
@@ -226,9 +250,9 @@ export default function Meetings() {
                     <button
                       key={value}
                       type="button"
-                      className={`chip ${detail.data!.myRsvp === value ? 'chip-active' : ''}`}
-                      aria-pressed={detail.data!.myRsvp === value}
-                      onClick={() => void rsvp.mutate(value).then(() => detail.reload())}
+                      className={`chip ${(optimisticRsvp ?? detail.data!.myRsvp) === value ? 'chip-active' : ''}`}
+                      aria-pressed={(optimisticRsvp ?? detail.data!.myRsvp) === value}
+                      onClick={() => void respond(value)}
                       disabled={rsvp.pending}
                     >
                       {value === 'accepted' ? <Check size={13} aria-hidden="true" /> : null}
@@ -295,7 +319,7 @@ function ScheduleDialog({
   const [withVideo, setWithVideo] = useState(true);
   const [onlineUrl, setOnlineUrl] = useState('');
   const [repeat, setRepeat] = useState<'none' | 'DAILY' | 'WEEKLY' | 'MONTHLY'>('none');
-  const [repeatCount, setRepeatCount] = useState('8');
+  const [repeatCount, setRepeatCount] = useState('1');
   const [agenda, setAgenda] = useState('');
   const key = useMemo(() => idempotencyKey(), []);
 
@@ -311,6 +335,10 @@ function ScheduleDialog({
       // The local wall-clock values are converted to a real instant before sending.
       const startsAt = new Date(`${date}T${startTime}`);
       const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000);
+      const occurrenceCount = Math.min(
+        365,
+        Math.max(1, Number.parseInt(repeatCount, 10) || 1),
+      );
       return api.post<Event>(
         '/calendar/events',
         {
@@ -327,7 +355,7 @@ function ScheduleDialog({
            * one nobody ever cancels, and the server caps what it will expand anyway.
            */
           recurrenceRule:
-            repeat === 'none' ? null : `FREQ=${repeat};COUNT=${Number(repeatCount) || 8}`,
+            repeat === 'none' ? null : `FREQ=${repeat};COUNT=${occurrenceCount}`,
           agenda: agenda.trim() || undefined,
         },
         { idempotencyKey: key },
@@ -440,19 +468,20 @@ function ScheduleDialog({
             </div>
             <div className="field">
               <label htmlFor="meeting-repeat-count">Occurrences</label>
-              <select
+              <input
                 id="meeting-repeat-count"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={365}
+                step={1}
                 value={repeatCount}
                 onChange={(event) => setRepeatCount(event.target.value)}
                 disabled={repeat === 'none'}
-              >
-                {['2', '4', '8', '12', '26', '52'].map((n) => (
-                  <option key={n} value={n}>{n} times</option>
-                ))}
-              </select>
+                required={repeat !== 'none'}
+              />
               <p className="field-hint">
-                A fixed number rather than forever: an endless series is one nobody
-                cancels.
+                Enter 1–365 meetings. Choose 1 for a single occurrence.
               </p>
             </div>
           </div>

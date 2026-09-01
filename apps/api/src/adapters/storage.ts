@@ -165,7 +165,7 @@ class S3Storage implements StorageDriver {
     return `https://${this.endpointHost()}/${key}`;
   }
 
-  private presign(method: 'GET' | 'PUT', key: string, expiresInSeconds: number, extraQuery: Record<string, string> = {}): string {
+  private presign(method: 'GET' | 'PUT' | 'HEAD' | 'DELETE', key: string, expiresInSeconds: number, extraQuery: Record<string, string> = {}): string {
     const now = new Date();
     const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
     const dateStamp = amzDate.slice(0, 8);
@@ -232,13 +232,13 @@ class S3Storage implements StorageDriver {
   }
 
   async delete(key: string): Promise<void> {
-    await fetch(this.presign('GET', key, 60).replace('X-Amz-Algorithm', 'X-Amz-Algorithm'), {
+    await fetch(this.presign('DELETE', key, 60), {
       method: 'DELETE',
     });
   }
 
   async exists(key: string): Promise<boolean> {
-    const res = await fetch(this.presign('GET', key, 60), { method: 'HEAD' });
+    const res = await fetch(this.presign('HEAD', key, 60), { method: 'HEAD' });
     return res.ok;
   }
 

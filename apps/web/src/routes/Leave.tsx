@@ -13,7 +13,6 @@ import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatDate, initials, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
-import { LeaveTypeAdmin } from '../components/LeaveTypeAdmin';
 
 type LeaveType = {
   id: string;
@@ -99,8 +98,6 @@ export default function Leave() {
           </button>
         ) : null}
       </header>
-
-      {can('leave.manage') ? <LeaveTypeAdmin /> : null}
 
       <AsyncSection query={balances}>
         {(data) =>

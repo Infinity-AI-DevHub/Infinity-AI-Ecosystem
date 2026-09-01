@@ -13,6 +13,7 @@ import * as notifications from '../domains/notifications.js';
 import * as approvals from '../domains/approvals.js';
 import { purgeExpired } from '../core/ratelimit.js';
 import { storage } from '../adapters/storage.js';
+import * as files from '../domains/files.js';
 
 type Job = { name: string; intervalMs: number; lockKey: string; run: () => Promise<void> };
 
@@ -210,6 +211,10 @@ const jobs: Job[] = [
   { name: 'housekeeping', intervalMs: 900_000, lockKey: 'iw_housekeeping', run: housekeeping },
   { name: 'approval-escalation', intervalMs: 600_000, lockKey: 'iw_approval_escalation', run: escalateApprovals },
   { name: 'queue-health', intervalMs: 60_000, lockKey: 'iw_queue_health', run: queueHealth },
+  { name: 'upload-recovery', intervalMs: 60_000, lockKey: 'iw_upload_recovery', run: async () => {
+    const recovered = await files.recoverPendingUploads();
+    if (recovered > 0) logger.info({ recovered }, 'recovered interrupted file uploads');
+  } },
   // Hourly: the cadence is measured in days, so a tighter tick only adds load.
   { name: 'invoice-reminders', intervalMs: 3_600_000, lockKey: 'iw_invoice_reminders', run: invoiceReminders },
 ];

@@ -21,6 +21,16 @@ const organizationInput = z.object({
   kind: z.enum(['client', 'vendor', 'partner', 'contractor']).optional(),
   website: z.string().max(300).nullable().optional(),
   notes: z.string().max(5000).nullable().optional(),
+  billingEmail: z.string().email().max(320).nullable().optional(),
+  contactName: z.string().max(160).nullable().optional(),
+  contactPhone: z.string().max(40).nullable().optional(),
+  representative: z.string().max(160).nullable().optional(),
+  addressLine1: z.string().max(200).nullable().optional(),
+  addressLine2: z.string().max(200).nullable().optional(),
+  city: z.string().max(120).nullable().optional(),
+  postalCode: z.string().max(30).nullable().optional(),
+  country: z.string().max(80).nullable().optional(),
+  taxRegistration: z.string().max(60).nullable().optional(),
 });
 
 export async function externalRoutes(app: FastifyInstance): Promise<void> {
@@ -31,6 +41,7 @@ export async function externalRoutes(app: FastifyInstance): Promise<void> {
     const query = parse(
       z.object({
         status: z.enum(['active', 'archived']).optional(),
+        kind: z.enum(['client', 'vendor', 'partner', 'contractor']).optional(),
         q: z.string().max(200).optional(),
       }),
       request.query,

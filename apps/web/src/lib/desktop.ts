@@ -94,3 +94,22 @@ export async function saveDownload(
   const saved = await desktop.saveFile({ suggestedName, data });
   return saved ? 'saved' : 'cancelled';
 }
+
+/** Save bytes that were already fetched by the authenticated API client. */
+export async function saveBlobDownload(blob: Blob, suggestedName: string): Promise<'saved' | 'cancelled' | 'browser'> {
+  if (desktop) {
+    const saved = await desktop.saveFile({ suggestedName, data: await blob.arrayBuffer() });
+    return saved ? 'saved' : 'cancelled';
+  }
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = suggestedName;
+  anchor.rel = 'noopener';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  return 'browser';
+}

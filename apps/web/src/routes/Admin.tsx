@@ -7,11 +7,13 @@
  */
 import { useState } from 'react';
 import { Activity, Building2, Database, Download, Plus, ScrollText, Trash2, Users2 } from 'lucide-react';
-import { api, API_URL, type Paged } from '../lib/api';
+import { api, type Paged } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { formatDate, formatDateTime, initials, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
+import { LeaveTypeAdmin } from '../components/LeaveTypeAdmin';
+import { saveBlobDownload } from '../lib/desktop';
 
 type Operations = {
   queue: { pending: number; oldestSeconds: number };
@@ -65,6 +67,12 @@ export default function Admin() {
     tab === 'audit' && can('audit.read') ? auditKey : null,
     (signal) => api.get(auditKey, signal),
   );
+  const exportAudit = useMutation(async () => {
+    const to = new Date();
+    const from = new Date(to.getTime() - 30 * 86_400_000);
+    const result = await api.download(`/audit/export?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`);
+    await saveBlobDownload(result.blob, result.filename);
+  });
 
   const groups = useQuery<{ items: Group[] }>(
     tab === 'groups' ? '/admin/groups' : null,
@@ -219,15 +227,14 @@ export default function Admin() {
               <ScrollText size={16} aria-hidden="true" />
               <h3>Audit trail</h3>
             </div>
-            <a
-              className="ghost-button"
-              href={`${API_URL}/api/v1/audit/export?from=${new Date(
-                Date.now() - 30 * 86_400_000,
-              ).toISOString()}&to=${new Date().toISOString()}`}
-            >
-              <Download size={14} aria-hidden="true" /> Export 30 days
-            </a>
+            <button type="button" className="ghost-button" disabled={exportAudit.pending}
+                    onClick={() => void exportAudit.mutate()}>
+              <Download size={14} aria-hidden="true" />
+              {exportAudit.pending ? 'Preparing export…' : 'Export 30 days'}
+            </button>
           </header>
+
+          <FormError error={exportAudit.error} />
 
           <div className="field">
             <label htmlFor="audit-action">Filter by action</label>
@@ -569,9 +576,8 @@ function CreateGroupDialog({ onClose, onCreated }: { onClose: () => void; onCrea
 }
 
 /**
- * Group membership drives resource grants, so saving here invalidates authorization
- * caches server-side. The whole membership is sent as a set rather than as deltas,
- * which keeps the result predictable when two administrators edit at once.
+ * The current membership is loaded before the checklist mounts. Saving sends a delta,
+ * so this administrator does not overwrite changes another administrator made meanwhile.
  */
 function GroupMembersDialog({
   group,
@@ -582,14 +588,8 @@ function GroupMembersDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const people = useQuery<{ items: Person[] }>('/users?limit=100&status=active', (signal) =>
-    api.get('/users?limit=100&status=active', signal),
-  );
-  const [selected, setSelected] = useState<string[] | null>(null);
-
-  const save = useMutation(
-    async () => api.put(`/admin/groups/${group.id}/members`, { userIds: selected ?? [] }),
-    { invalidates: ['/admin/groups'], onSuccess: onSaved },
+  const membership = useQuery<{ userIds: string[] }>(`/admin/groups/${group.id}/members`, (signal) =>
+    api.get(`/admin/groups/${group.id}/members`, signal),
   );
 
   return (
@@ -603,13 +603,52 @@ function GroupMembersDialog({
       >
         <h3 id="members-title">Members of {group.name}</h3>
         <p className="field-hint">
-          Changing membership takes effect immediately and refreshes what these people can
-          reach.
+          Changing membership takes effect immediately and refreshes what these people can reach.
         </p>
+        {membership.loading ? <Loading /> : null}
+        {membership.error ? <ErrorState error={membership.error} onRetry={membership.reload} /> : null}
+        {membership.data ? (
+          <GroupMembersEditor
+            group={group}
+            initialUserIds={membership.data.userIds}
+            onClose={onClose}
+            onSaved={onSaved}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
-        <FormError error={save.error} />
+function GroupMembersEditor({
+  group,
+  initialUserIds,
+  onClose,
+  onSaved,
+}: {
+  group: Group;
+  initialUserIds: string[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const people = useQuery<{ items: Person[] }>('/users?limit=100&status=active', (signal) =>
+    api.get('/users?limit=100&status=active', signal),
+  );
+  const [selected, setSelected] = useState(initialUserIds);
 
-        <AsyncSection query={people}>
+  const save = useMutation(
+    async () => api.patch(`/admin/groups/${group.id}/members`, {
+      addUserIds: selected.filter((id) => !initialUserIds.includes(id)),
+      removeUserIds: initialUserIds.filter((id) => !selected.includes(id)),
+    }),
+    { invalidates: ['/admin/groups'], onSuccess: onSaved },
+  );
+
+  return (
+    <>
+      <FormError error={save.error} />
+
+      <AsyncSection query={people}>
           {(data) => (
             <fieldset className="field">
               <legend>People</legend>
@@ -624,13 +663,12 @@ function GroupMembersDialog({
                   <label key={person.id} className="checkbox-row">
                     <input
                       type="checkbox"
-                      checked={(selected ?? []).includes(person.id)}
+                      checked={selected.includes(person.id)}
                       onChange={(event) =>
                         setSelected((current) => {
-                          const base = current ?? [];
                           return event.target.checked
-                            ? [...base, person.id]
-                            : base.filter((id) => id !== person.id);
+                            ? [...current, person.id]
+                            : current.filter((id) => id !== person.id);
                         })
                       }
                     />
@@ -640,21 +678,20 @@ function GroupMembersDialog({
               </div>
             </fieldset>
           )}
-        </AsyncSection>
+      </AsyncSection>
 
-        <div className="dialog-actions">
-          <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
-          <button
-            type="button"
-            className="primary-button"
-            disabled={save.pending || selected === null}
-            onClick={() => void save.mutate()}
-          >
-            {save.pending ? 'Saving…' : 'Save membership'}
-          </button>
-        </div>
+      <div className="dialog-actions">
+        <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
+        <button
+          type="button"
+          className="primary-button"
+          disabled={save.pending}
+          onClick={() => void save.mutate()}
+        >
+          {save.pending ? 'Saving…' : 'Save membership'}
+        </button>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -717,28 +754,9 @@ function LeaveAdmin() {
   return (
     <>
       <div className="operations-grid">
-      <section className="panel" aria-labelledby="leave-types-heading">
-        <h3 id="leave-types-heading">Leave types</h3>
-        <AsyncSection query={types}>
-          {(data) => (
-            <ul className="leave-type-list">
-              {data.items.map((type) => (
-                <li key={type.id}>
-                  <span className="leave-bar" style={{ background: type.colour }} aria-hidden="true" />
-                  <div>
-                    <strong>{type.name}</strong>
-                    <span>
-                      {type.paid ? 'Paid' : 'Unpaid'}
-                      {type.deducts_balance ? ' · deducts balance' : ' · no balance'}
-                      {type.requires_approval ? ' · needs approval' : ' · recorded immediately'}
-                    </span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </AsyncSection>
-      </section>
+      {/* The manageable version, not a read-only list: this is the administration
+          screen, so the thing an administrator came here to change belongs here. */}
+      <LeaveTypeAdmin />
 
       <section className="panel" aria-labelledby="holidays-heading">
         <h3 id="holidays-heading">Public holidays in {year}</h3>
