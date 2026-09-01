@@ -7,12 +7,13 @@
  */
 import { useMemo, useState } from 'react';
 import { Laptop, Paperclip, Plus, Receipt, Trash2, Wallet } from 'lucide-react';
-import { api, API_URL, idempotencyKey, uploadAuth } from '../lib/api';
+import { api, idempotencyKey } from '../lib/api';
 import { useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatCurrency, formatDate, initials, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 import { Invoices } from '../components/Invoices';
+import { uploadWorkspaceFile } from '../lib/uploads';
 
 type Tab = 'invoices' | 'claims' | 'budgets' | 'assets' | 'vendors';
 
@@ -852,26 +853,7 @@ function ReceiptControl({
     setError(null);
     setBusy(true);
     try {
-      const session = await api.post<{ uploadId: string }>('/files/uploads', {
-        filename: file.name,
-        mimeType: file.type || 'application/octet-stream',
-        sizeBytes: file.size,
-        folderId: null,
-      });
-
-      const form = new FormData();
-      form.append('file', file, file.name);
-      const auth = await uploadAuth();
-      const response = await fetch(
-        `${API_URL}/api/v1/files/uploads/${session.uploadId}/content`,
-        { method: 'POST', ...auth, body: form },
-      );
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        // A quarantine verdict is a normal outcome to report, not a crash.
-        throw new Error(payload?.error?.message ?? 'That receipt could not be attached');
-      }
-      const stored = (await response.json()) as { id: string; name: string };
+      const stored = await uploadWorkspaceFile<{ id: string; name: string }>(file);
       onUploaded(stored.id, stored.name);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That receipt could not be attached');

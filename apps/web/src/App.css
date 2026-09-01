@@ -19,7 +19,16 @@
    ========================================================================== */
 
 *, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+html {
+  -webkit-text-size-adjust: 100%;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) { color-scheme: dark; }
+}
+
+:root[data-theme='dark'] { color-scheme: dark; }
 
 body {
   margin: 0;
@@ -807,6 +816,22 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 .priority-high { background: var(--warn-600); }
 .priority-urgent { background: var(--dan-600); }
 
+.task-priority-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-full);
+  background: var(--bg-sunken);
+  color: var(--fg-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semi);
+  line-height: var(--leading-snug);
+}
+.task-priority-badge .priority-dot { margin: 0; }
+
 .announcement-list { display: grid; gap: var(--sp-3); }
 .announcement-list li { padding-bottom: var(--sp-3); border-bottom: 1px solid var(--border-subtle); }
 .announcement-list li:last-child { border-bottom: none; padding-bottom: 0; }
@@ -1099,7 +1124,7 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   font: inherit; color: inherit; text-align: left; cursor: pointer;
 }
 .task-card-open strong { font-size: var(--text-sm); font-weight: var(--weight-medium); line-height: var(--leading-snug); }
-.task-card .priority-dot { margin: 0 0 var(--sp-1); }
+.task-card .task-priority-badge { margin-bottom: var(--sp-1); }
 .task-meta { font-size: var(--text-2xs); color: var(--fg-tertiary); }
 .task-status-select {
   width: 100%; margin-top: var(--sp-3);
@@ -1378,6 +1403,9 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 .dialog {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
   width: min(560px, 100%);
   max-height: 88vh;
   overflow-y: auto;
@@ -1386,6 +1414,34 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   border-radius: var(--r-xl);
   box-shadow: var(--shadow-xl);
   animation: dialog-in var(--dur-slow) var(--ease);
+}
+
+/* Announcement composition uses a real backdrop sibling. Keeping that inert visual
+   layer below the dialog prevents backdrop hit-testing from ever covering form fields. */
+.announcement-dialog-layer {
+  isolation: isolate;
+  background: transparent;
+  backdrop-filter: none;
+  pointer-events: none;
+}
+.announcement-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgba(14, 17, 22, 0.45);
+  backdrop-filter: blur(3px);
+  cursor: default;
+  pointer-events: auto;
+}
+.announcement-dialog-layer > .announcement-dialog {
+  z-index: 1;
+  pointer-events: auto;
+  isolation: isolate;
 }
 @keyframes dialog-in { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: none; } }
 .dialog-wide { width: min(780px, 100%); }
@@ -1475,10 +1531,12 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 /* A select that sits inline in a definition list, reading as a value until you reach
    for it rather than as a form control parked in the middle of a summary. */
 .inline-select {
+  min-width: 7.75rem;
+  min-height: 30px;
   padding: 2px var(--sp-6) 2px var(--sp-2);
   border: 1px solid transparent;
   border-radius: var(--r-sm);
-  background-color: transparent;
+  background-color: var(--bg-raised);
   font: inherit;
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
@@ -1490,6 +1548,10 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   background-repeat: no-repeat;
   background-position: right var(--sp-2) center;
   transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.inline-select option {
+  background-color: var(--bg-raised);
+  color: var(--fg-primary);
 }
 .inline-select:hover:not(:disabled) { background-color: var(--bg-hover); border-color: var(--border-default); }
 .inline-select:focus { outline: none; border-color: var(--border-accent); box-shadow: var(--ring-focus); }

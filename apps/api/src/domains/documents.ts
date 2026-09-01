@@ -92,6 +92,22 @@ async function requireSpace(actor: Actor, spaceId: string): Promise<SpaceRow> {
   return space;
 }
 
+/** Applies a page's owning-space ACL for related resources such as attachments. */
+export async function assertPageAccess(
+  actor: Actor,
+  pageId: string,
+  capability: 'doc.read' | 'doc.write',
+): Promise<PageRow> {
+  const page = await one<PageRow>(
+    'SELECT * FROM doc_pages WHERE id = $1 AND company_id = $2',
+    [pageId, actor.companyId],
+  );
+  if (!page) throw notFound('Page not found');
+  const space = await requireSpace(actor, page.space_id);
+  await assertSpaceAccess(actor, space, capability);
+  return page;
+}
+
 // ------------------------------------------------------------------ spaces
 
 export async function listSpaces(actor: Actor): Promise<SpaceRow[]> {
@@ -125,10 +141,28 @@ export async function listSpaces(actor: Actor): Promise<SpaceRow[]> {
 
 export async function createSpace(
   actor: Actor,
-  input: { key: string; name: string; description?: string | null; visibility?: 'company' | 'restricted'; colour?: string },
+  input: { key: string; name: string; description?: string | null; visibility?: 'company' | 'restricted'; readerIds?: string[]; colour?: string },
 ): Promise<SpaceRow> {
   await authorize({ actor, capability: 'doc.space_manage', resourceless: true });
   const key = slugify(input.key || input.name);
+  const visibility = input.visibility ?? 'company';
+  const readerIds = [...new Set(input.readerIds ?? [])].filter((id) => id !== actor.userId);
+  if (visibility === 'restricted' && readerIds.length === 0) {
+    throw unprocessable('Choose at least one person who can read this restricted space', [
+      { field: 'readerIds', message: 'Select at least one workspace member' },
+    ]);
+  }
+  if (visibility === 'restricted') {
+    const validReaders = await many<{ id: string }>(
+      `SELECT id FROM users WHERE company_id = $1 AND status = 'active' AND JSON_CONTAINS($2, JSON_QUOTE(id))`,
+      [actor.companyId, JSON.stringify(readerIds)],
+    );
+    if (validReaders.length !== readerIds.length) {
+      throw unprocessable('One or more selected readers are unavailable', [
+        { field: 'readerIds', message: 'Choose active members of this workspace' },
+      ]);
+    }
+  }
 
   const existing = await one<{ id: string }>(
     'SELECT id FROM doc_spaces WHERE company_id = $1 AND `key` = $2',
@@ -147,15 +181,30 @@ export async function createSpace(
         key,
         input.name.trim(),
         input.description?.trim() || null,
-        input.visibility ?? 'company',
+        visibility,
         input.colour ?? '#6366f1',
         actor.userId,
       ],
     );
+    if (visibility === 'restricted') {
+      const grants = [
+        { userId: actor.userId, capabilities: ['doc.read', 'doc.write'] },
+        ...readerIds.map((userId) => ({ userId, capabilities: ['doc.read'] })),
+      ];
+      for (const grant of grants) {
+        await tx.query(
+          `INSERT INTO resource_grants
+             (id, company_id, subject_type, subject_id, resource_type, resource_id,
+              capabilities, conditions, granted_by)
+           VALUES ($1,$2,'user',$3,'doc_space',$4,$5,'{}',$6)`,
+          [newId(), actor.companyId, grant.userId, id, JSON.stringify(grant.capabilities), actor.userId],
+        );
+      }
+    }
     await auditFromActor(actor, 'doc.space_create', {
       resourceType: 'doc_space',
       resourceId: id,
-      metadata: { key, name: input.name, visibility: input.visibility ?? 'company' },
+      metadata: { key, name: input.name, visibility, readerCount: readerIds.length },
     }, tx);
     return (await reload<SpaceRow>(tx, 'doc_spaces', id))!;
   });

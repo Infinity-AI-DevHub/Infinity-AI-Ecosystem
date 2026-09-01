@@ -8,21 +8,20 @@
  */
 import { many, newId, one, pool } from '../core/db.js';
 import { conflict, notFound } from '../core/errors.js';
-import { authorize, type Actor } from '../core/authz.js';
+import type { Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
+import { assertPageAccess } from './documents.js';
 
 export async function attach(actor: Actor, pageId: string, fileId: string) {
-  await authorize({ actor, capability: 'doc.write', resourceType: 'doc_page', resourceId: pageId });
+  await assertPageAccess(actor, pageId, 'doc.write');
 
   // Both sides must belong to the caller's company: an attachment is otherwise a way to
   // pull a file from another tenant into a page this one can read.
-  const page = await one<{ id: string }>(
-    'SELECT id FROM doc_pages WHERE id = $1 AND company_id = $2', [pageId, actor.companyId],
-  );
-  if (!page) throw notFound('Page not found');
   const file = await one<{ id: string; name: string }>(
-    `SELECT id, name FROM files WHERE id = $1 AND company_id = $2 AND state <> 'expired'`,
-    [fileId, actor.companyId],
+    `SELECT id, name FROM files
+      WHERE id = $1 AND company_id = $2 AND state IN ('active','legal_hold')
+        AND (owner_id = $3 OR $4)`,
+    [fileId, actor.companyId, actor.userId, actor.accessLevel === 'admin' || actor.accessLevel === 'super_admin'],
   );
   if (!file) throw notFound('File not found');
 
@@ -50,7 +49,7 @@ export async function attach(actor: Actor, pageId: string, fileId: string) {
 }
 
 export async function list(actor: Actor, pageId: string) {
-  await authorize({ actor, capability: 'doc.read', resourceType: 'doc_page', resourceId: pageId });
+  await assertPageAccess(actor, pageId, 'doc.read');
   return many(
     `SELECT a.id, a.file_id, a.created_at, f.name, f.size_bytes, f.mime_type,
             u.display_name AS uploaded_by_name
@@ -64,7 +63,7 @@ export async function list(actor: Actor, pageId: string) {
 }
 
 export async function detach(actor: Actor, pageId: string, attachmentId: string): Promise<void> {
-  await authorize({ actor, capability: 'doc.write', resourceType: 'doc_page', resourceId: pageId });
+  await assertPageAccess(actor, pageId, 'doc.write');
   // Only the join is removed. The file keeps its own lifecycle, because it may be
   // referenced elsewhere and deleting it here would be a surprise.
   const result = await pool.query(

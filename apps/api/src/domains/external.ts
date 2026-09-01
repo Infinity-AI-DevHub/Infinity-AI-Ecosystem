@@ -107,7 +107,7 @@ export async function createOrganization(
 
 export async function listOrganizations(
   actor: Actor,
-  options: { status?: string; q?: string } = {},
+  options: { status?: string; kind?: OrganizationKind; q?: string } = {},
 ): Promise<OrganizationRow[]> {
   await authorize({ actor, capability: 'external_org.read', resourceless: true });
   return many<OrganizationRow>(
@@ -116,9 +116,10 @@ export async function listOrganizations(
        FROM external_organizations o
       WHERE o.company_id = $1
         AND ($2 IS NULL OR o.status = $2)
-        AND ($3 IS NULL OR o.name LIKE CONCAT('%', $3, '%'))
+        AND ($3 IS NULL OR o.kind = $3)
+        AND ($4 IS NULL OR o.name LIKE CONCAT('%', $4, '%'))
       ORDER BY o.name`,
-    [actor.companyId, options.status ?? null, options.q?.trim() || null],
+    [actor.companyId, options.status ?? null, options.kind ?? null, options.q?.trim() || null],
   );
 }
 

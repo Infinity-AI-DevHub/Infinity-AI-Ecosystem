@@ -11,7 +11,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Building2, ShieldOff, UserPlus } from 'lucide-react';
 import { api, ApiError, idempotencyKey } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
-import { AsyncSection, Empty, FormError } from '../components/States';
+import { AsyncSection, Empty, ErrorState, FormError, Loading } from '../components/States';
 import { formatDateTime, initials, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 
@@ -73,7 +73,7 @@ export default function Clients() {
   const [search, setSearch] = useState('');
   const [creating, setCreating] = useState(false);
   const [inviting, setInviting] = useState(false);
-  const [editingOrg, setEditingOrg] = useState<Organization | null>(null);
+  const [editingOrgId, setEditingOrgId] = useState<string | null>(null);
 
   const listKey = `/external/organizations${search ? `?q=${encodeURIComponent(search)}` : ''}`;
   const organizations = useQuery<{ items: Organization[] }>(listKey, (signal) =>
@@ -166,7 +166,7 @@ export default function Clients() {
                 </div>
                 <div className="table-actions">
                   {can('external_org.manage') ? (
-                    <button type="button" className="ghost-button" onClick={() => setEditingOrg(selected)}>
+                    <button type="button" className="ghost-button" onClick={() => setEditingOrgId(selected.id)}>
                       Edit details
                     </button>
                   ) : null}
@@ -242,11 +242,11 @@ export default function Clients() {
         </section>
       </div>
 
-      {editingOrg ? (
+      {editingOrgId ? (
         <EditOrganisation
-          organisation={editingOrg}
-          onClose={() => setEditingOrg(null)}
-          onSaved={() => { setEditingOrg(null); invalidate('/external/organizations'); }}
+          organizationId={editingOrgId}
+          onClose={() => setEditingOrgId(null)}
+          onSaved={() => { setEditingOrgId(null); invalidate('/external/organizations'); }}
         />
       ) : null}
 
@@ -634,6 +634,27 @@ function InviteGuestDialog({
  * person edited while this form was open.
  */
 function EditOrganisation({
+  organizationId, onClose, onSaved,
+}: { organizationId: string; onClose: () => void; onSaved: () => void }) {
+  const organisation = useQuery<Organization>(`/external/organizations/${organizationId}`, (signal) =>
+    api.get(`/external/organizations/${organizationId}`, signal),
+  );
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <div className="dialog dialog-wide" role="dialog" aria-label="Edit organisation"
+           onClick={(event) => event.stopPropagation()}>
+        {organisation.loading ? <Loading /> : null}
+        {organisation.error ? <ErrorState error={organisation.error} onRetry={organisation.reload} /> : null}
+        {organisation.data ? (
+          <EditOrganisationForm organisation={organisation.data} onClose={onClose} onSaved={onSaved} />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function EditOrganisationForm({
   organisation, onClose, onSaved,
 }: { organisation: Organization; onClose: () => void; onSaved: () => void }) {
   const [form, setForm] = useState({
@@ -685,9 +706,7 @@ function EditOrganisation({
   }
 
   return (
-    <div className="dialog-scrim" role="presentation" onClick={onClose}>
-      <form className="dialog dialog-wide" role="dialog" aria-label={`Edit ${organisation.name}`}
-            onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+    <form onSubmit={submit}>
         <h3>Edit {organisation.name}</h3>
 
         <div className="field">
@@ -782,7 +801,6 @@ function EditOrganisation({
             {saving ? 'Saving…' : 'Save changes'}
           </button>
         </div>
-      </form>
-    </div>
+    </form>
   );
 }

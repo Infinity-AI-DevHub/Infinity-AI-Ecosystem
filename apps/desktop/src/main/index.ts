@@ -14,6 +14,11 @@ import { createWindow } from './window';
 
 registerSchemePrivileges();
 
+// Keep an unpackaged development window distinct from the installed client. This avoids
+// attaching a local verification session to a colleague's production window when both
+// are open on the same Mac.
+if (!app.isPackaged) app.setName('Infinity Workspace Dev');
+
 let mainWindow: BrowserWindow | null = null;
 
 /**

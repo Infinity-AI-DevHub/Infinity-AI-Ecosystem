@@ -7,6 +7,7 @@
 import { Link } from 'react-router-dom';
 import { CalendarDays, CheckSquare, Megaphone, ShieldCheck, HardDrive } from 'lucide-react';
 import { api, type Widget } from '../lib/api';
+import { TaskPriority } from '../components/TaskPriority';
 import { useQuery } from '../lib/query';
 import { Loading, ErrorState } from '../components/States';
 import { useSession } from '../lib/session';
@@ -149,7 +150,7 @@ export default function Command() {
                   {tasks.map((task) => (
                     <li key={task.id}>
                       <Link to={`/tasks/${task.id}`}>
-                        <span className={`priority-dot priority-${task.priority}`} aria-hidden="true" />
+                        <TaskPriority priority={task.priority} />
                         <div>
                           <strong>{task.title}</strong>
                           <span>

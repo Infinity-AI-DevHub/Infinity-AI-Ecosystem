@@ -8,7 +8,7 @@ import { requireActor } from '../context.js';
 import * as admin from '../../domains/admin.js';
 import { config } from '../../core/config.js';
 import { storage, verifyLocalObjectSignature } from '../../adapters/storage.js';
-import { forbidden, notFound } from '../../core/errors.js';
+import { badRequest, forbidden, notFound } from '../../core/errors.js';
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.get('/admin/company', async (request) => admin.companySettings(requireActor(request)));
@@ -45,11 +45,20 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     return admin.createGroup(actor, input.name, input.description);
   });
 
-  app.put('/admin/groups/:id/members', async (request, reply) => {
+  app.get('/admin/groups/:id/members', async (request) => {
     const actor = requireActor(request);
     const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
-    const input = parse(z.object({ userIds: z.array(z.string().uuid()).max(5000) }), request.body);
-    await admin.setGroupMembers(actor, id, input.userIds);
+    return { userIds: await admin.listGroupMemberIds(actor, id) };
+  });
+
+  app.patch('/admin/groups/:id/members', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
+    const input = parse(z.object({
+      addUserIds: z.array(z.string().uuid()).max(5000).default([]),
+      removeUserIds: z.array(z.string().uuid()).max(5000).default([]),
+    }), request.body);
+    await admin.changeGroupMembers(actor, id, input);
     return reply.code(204).send();
   });
 
@@ -90,6 +99,30 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
  * key and expiry, so a URL cannot be edited to reach another object or outlive its window.
  */
 export async function objectRoutes(app: FastifyInstance): Promise<void> {
+  app.addContentTypeParser(
+    'application/octet-stream',
+    { parseAs: 'buffer', bodyLimit: config.limits.uploadMaxBytes },
+    (_request, body, done) => done(null, body),
+  );
+
+  app.put('/objects/upload', async (request, reply) => {
+    const query = parse(
+      z.object({
+        key: z.string().min(1).max(500),
+        expires: z.coerce.number().int(),
+        signature: z.string().min(16).max(200),
+      }),
+      request.query,
+    );
+    if (!verifyLocalObjectSignature('upload', query.key, query.expires, query.signature)) {
+      throw forbidden('This upload link is invalid or has expired');
+    }
+    const body = request.body;
+    if (!Buffer.isBuffer(body) || body.length === 0) throw badRequest('No file content was provided');
+    await storage.put(query.key, body);
+    return reply.code(204).send();
+  });
+
   app.get('/objects/download', async (request, reply) => {
     const query = parse(
       z.object({

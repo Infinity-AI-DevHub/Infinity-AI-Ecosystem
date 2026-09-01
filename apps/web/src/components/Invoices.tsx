@@ -36,6 +36,8 @@ type Invoice = {
   reminder_count: number;
 };
 
+type Client = { id: string; name: string; billing_email: string | null };
+
 type Summary = {
   draft_count: string;
   outstanding_amount: string;
@@ -215,13 +217,15 @@ function ComposeInvoice({ onClose, onCreated }: { onClose: () => void; onCreated
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const clients = useQuery<{ items: { id: string; name: string }[] }>(
+  const clients = useQuery<{ items: Client[] }>(
     '/external/organizations?kind=client',
     (signal) => api.get('/external/organizations?kind=client', signal),
   );
   const projects = useQuery<Paged<{ id: string; name: string }>>('/projects', (signal) =>
     api.get('/projects', signal),
   );
+  const selectedClient = clients.data?.items.find((client) => client.id === clientOrgId);
+  const clientNeedsBillingEmail = Boolean(clientOrgId && !selectedClient?.billing_email);
 
   /**
    * A running total, shown while typing.
@@ -298,7 +302,9 @@ function ComposeInvoice({ onClose, onCreated }: { onClose: () => void; onCreated
             <select value={clientOrgId} onChange={(e) => setClientOrgId(e.target.value)} required>
               <option value="">Choose a client…</option>
               {(clients.data?.items ?? []).map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+                <option key={c.id} value={c.id}>
+                  {c.name}{c.billing_email ? '' : ' - Missing billing email'}
+                </option>
               ))}
             </select>
           </label>
@@ -312,6 +318,15 @@ function ComposeInvoice({ onClose, onCreated }: { onClose: () => void; onCreated
             </select>
           </label>
         </div>
+
+        {clientNeedsBillingEmail ? (
+          <div className="degraded-notice" role="status">
+            <div>
+              <strong>Billing email required before submission</strong>
+              <p>This draft can be saved, but it cannot be sent for approval until the client has a billing email.</p>
+            </div>
+          </div>
+        ) : null}
 
         <div className="field-row">
           <label className="field">
@@ -434,12 +449,14 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
   const [busy, setBusy] = useState(false);
   const [paying, setPaying] = useState(false);
   const [chasing, setChasing] = useState(false);
+  const [addingBillingEmail, setAddingBillingEmail] = useState(false);
   const { ask, element: promptDialog } = useTextPrompt();
 
   const detail = useQuery<any>(`/invoices/${invoiceId}`, (signal) =>
     api.get(`/invoices/${invoiceId}`, signal),
   );
   const invoice = detail.data;
+  const clientNeedsBillingEmail = Boolean(invoice && !invoice.billing_email);
 
   async function act(run: () => Promise<unknown>) {
     setError(null);
@@ -473,7 +490,7 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
                 </p>
               </div>
               <div className="header-controls">
-                {invoice.status === 'draft' && can('invoice.manage') ? (
+                {invoice.status === 'draft' && can('invoice.manage') && !clientNeedsBillingEmail ? (
                   <button type="button" className="primary-button" disabled={busy}
                           onClick={() => act(() => api.post(`/invoices/${invoiceId}/submit`, {},
                             { idempotencyKey: idempotencyKey() }))}>
@@ -521,6 +538,22 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
                 ) : null}
               </div>
             </header>
+
+            {clientNeedsBillingEmail ? (
+              <div className="degraded-notice" role="alert">
+                <div>
+                  <strong>Billing email needed</strong>
+                  <p>
+                    {invoice.client_name} cannot receive this invoice until a billing email is added.
+                  </p>
+                </div>
+                {can('external_org.manage') ? (
+                  <button type="button" className="primary-button" onClick={() => setAddingBillingEmail(true)}>
+                    Add billing email
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
 
             <dl className="detail-list">
               {invoice.representative || invoice.billing_email ? (
@@ -640,9 +673,68 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
                 onRecorded={() => { setPaying(false); invalidate('/invoices'); detail.reload(); }}
               />
             ) : null}
+
+            {addingBillingEmail ? (
+              <AddBillingEmail
+                clientOrgId={invoice.client_org_id}
+                clientName={invoice.client_name}
+                onClose={() => setAddingBillingEmail(false)}
+                onSaved={() => {
+                  setAddingBillingEmail(false);
+                  invalidate('/external/organizations');
+                  detail.reload();
+                }}
+              />
+            ) : null}
           </>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function AddBillingEmail({
+  clientOrgId, clientName, onClose, onSaved,
+}: {
+  clientOrgId: string; clientName: string; onClose: () => void; onSaved: () => void;
+}) {
+  const [billingEmail, setBillingEmail] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      await api.patch(`/external/organizations/${clientOrgId}`, { billingEmail });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'The billing email could not be saved');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <form className="dialog" role="dialog" aria-label={`Add billing email for ${clientName}`}
+            onClick={(event) => event.stopPropagation()} onSubmit={submit}>
+        <h3>Add billing email</h3>
+        <p className="field-hint">This is where approval and invoice delivery notices will be sent.</p>
+        <label className="field" htmlFor="invoice-client-billing-email">
+          <span>Billing email</span>
+          <input id="invoice-client-billing-email" type="email" autoFocus required value={billingEmail}
+                 onChange={(event) => setBillingEmail(event.target.value)} />
+        </label>
+        {error ? <p className="field-error">{error}</p> : null}
+        <div className="dialog-actions">
+          <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary-button" disabled={saving}>
+            {saving ? 'Saving…' : 'Save billing email'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

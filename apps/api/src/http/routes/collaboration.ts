@@ -415,6 +415,13 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
     return files.publicFile(await files.receiveUpload(actor, id, buffer));
   });
 
+  app.post('/files/uploads/:id/complete', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    reply.code(201);
+    return files.publicFile(await files.completeUpload(actor, id));
+  });
+
   app.get('/files/:id/download', async (request) => {
     const actor = requireActor(request);
     const { id } = parse(idParam, request.params);

@@ -15,10 +15,21 @@ import { clearNotice, readNotice } from '../lib/notice';
 import { FieldMessage } from '../components/States';
 import { Logo } from '../components/Logo';
 
+const AUTHENTICATED_ROUTE_PREFIXES = [
+  '/command', '/meetings', '/chat', '/tasks', '/files', '/docs', '/reports', '/growth',
+  '/finance', '/leave', '/clients', '/people', '/announcements', '/approvals', '/admin',
+  '/search', '/settings',
+];
+
 function safeReturnPath(value: unknown): string {
   if (typeof value !== 'string') return '/command';
   if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return '/command';
-  return value;
+  const pathname = value.split(/[?#]/, 1)[0];
+  const isKnownRoute = pathname === '/'
+    || AUTHENTICATED_ROUTE_PREFIXES.some((prefix) =>
+      pathname === prefix || pathname.startsWith(`${prefix}/`),
+    );
+  return isKnownRoute ? value : '/command';
 }
 
 export default function SignIn() {

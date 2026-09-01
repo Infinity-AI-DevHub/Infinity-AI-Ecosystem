@@ -11,6 +11,7 @@ import { FolderPlus, Plus } from 'lucide-react';
 import { api } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
+import { TaskPriority } from '../components/TaskPriority';
 import { relativeTime, titleCase } from '../lib/format';
 
 type Project = {
@@ -146,7 +147,7 @@ export default function Tasks() {
                               className="task-card-open"
                               onClick={() => navigate(`/tasks/${task.id}`)}
                             >
-                              <span className={`priority-dot priority-${task.priority}`} aria-hidden="true" />
+                              <TaskPriority priority={task.priority} />
                               <strong>{task.title}</strong>
                               <span className="task-meta">
                                 {task.reference}

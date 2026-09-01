@@ -118,31 +118,57 @@ export async function createGroup(actor: Actor, name: string, description?: stri
   return { id: groupId, name: name.trim(), description: description ?? null };
 }
 
-export async function setGroupMembers(actor: Actor, groupId: string, userIds: string[]) {
+/** The editor needs the actual membership set, not just its count, to avoid destructive saves. */
+export async function listGroupMemberIds(actor: Actor, groupId: string): Promise<string[]> {
+  await authorize({ actor, capability: 'user.read', resourceless: true });
+  const group = await one('SELECT 1 FROM `groups` WHERE id = $1 AND company_id = $2', [
+    groupId,
+    actor.companyId,
+  ]);
+  if (!group) throw notFound('Group not found');
+  const rows = await many<{ user_id: string }>(
+    'SELECT user_id FROM group_members WHERE group_id = $1 ORDER BY user_id',
+    [groupId],
+  );
+  return rows.map((row) => row.user_id);
+}
+
+/** Apply only the administrator's changes, preserving memberships changed elsewhere meanwhile. */
+export async function changeGroupMembers(
+  actor: Actor,
+  groupId: string,
+  input: { addUserIds: string[]; removeUserIds: string[] },
+): Promise<void> {
   await authorize({ actor, capability: 'user.update', resourceless: true });
   const group = await one('SELECT 1 FROM `groups` WHERE id = $1 AND company_id = $2', [
     groupId,
     actor.companyId,
   ]);
   if (!group) throw notFound('Group not found');
-  await pool.query(
-    `DELETE FROM group_members
-      WHERE group_id = $1 AND NOT JSON_CONTAINS($2, JSON_QUOTE(user_id))`,
-    [groupId, JSON.stringify(userIds)],
-  );
-  for (const userId of userIds) {
+
+  const removed = [...new Set(input.removeUserIds)];
+  const removedSet = new Set(removed);
+  const added = [...new Set(input.addUserIds)].filter((userId) => !removedSet.has(userId));
+
+  if (removed.length > 0) {
+    await pool.query(
+      `DELETE FROM group_members
+        WHERE group_id = $1 AND JSON_CONTAINS($2, JSON_QUOTE(user_id))`,
+      [groupId, JSON.stringify(removed)],
+    );
+  }
+  for (const userId of added) {
     await pool.query(
       `INSERT IGNORE INTO group_members (group_id, user_id) SELECT $1, id FROM users
         WHERE id = $2 AND company_id = $3`,
       [groupId, userId, actor.companyId],
     );
   }
-  // Group membership feeds authorization; caches must not keep the old answer.
   invalidateCapabilityCache();
-  await auditFromActor(actor, 'group.members_set', {
+  await auditFromActor(actor, 'group.members_changed', {
     resourceType: 'company',
     resourceId: actor.companyId,
-    metadata: { groupId, count: userIds.length },
+    metadata: { groupId, added: added.length, removed: removed.length },
   });
 }
 

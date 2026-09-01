@@ -499,6 +499,7 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
         endsAt,
         timezone: 'Asia/Colombo',
         roomId,
+        onlineUrl: 'https://meet.example.com/quarterly-review',
         attendeeIds: [staffId],
       },
       { 'idempotency-key': `event-${Date.now()}` },
@@ -524,6 +525,15 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
       rsvp: 'accepted',
     });
     assert.equal(rsvp.status, 204);
+
+    const detail = await staff.get(`/api/v1/calendar/events/${created.body.id}`);
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.myRsvp, 'accepted');
+    assert.equal(detail.body.onlineUrl, 'https://meet.example.com/quarterly-review');
+    assert.equal(
+      detail.body.attendees.find((attendee: { user_id: string }) => attendee.user_id === staffId)?.rsvp,
+      'accepted',
+    );
   });
 
   it('rejects a meeting that ends before it starts', async () => {
@@ -755,7 +765,7 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     const upload = await admin.post('/api/v1/files/uploads', {
       filename: 'retention-note.txt',
       mimeType: 'text/plain',
-      sizeBytes: 24,
+      sizeBytes: 22,
     });
     assert.equal(upload.status, 201);
     const fileId = upload.body.fileId as string;
@@ -768,7 +778,17 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     await fileDomain.receiveUpload(actor, upload.body.uploadId, Buffer.from('retention note content'));
 
     const active = await admin.get('/api/v1/files?limit=100');
-    assert.equal(active.body.items.some((f: Json) => f.id === fileId), true);
+    const stored = active.body.items.find((f: Json) => f.id === fileId);
+    assert.ok(stored);
+    assert.equal(stored.state, 'active');
+    assert.equal(stored.sizeBytes, 22);
+
+    const download = await admin.get(`/api/v1/files/${fileId}/download`);
+    assert.equal(download.status, 200);
+    const signed = new URL(download.body.url);
+    const content = await app.inject({ method: 'GET', url: `${signed.pathname}${signed.search}` });
+    assert.equal(content.statusCode, 200);
+    assert.equal(content.rawPayload.toString(), 'retention note content');
 
     assert.equal((await admin.del(`/api/v1/files/${fileId}`)).status, 204);
 
@@ -1317,6 +1337,60 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     );
     assert.equal(restored.status, 200);
     assert.equal(restored.body.version > current.body.version, true);
+  });
+
+  it('requires readers for restricted document spaces and grants them access', async () => {
+    const missingReaders = await admin.post('/api/v1/docs/spaces', {
+      name: `Restricted empty ${Date.now()}`,
+      visibility: 'restricted',
+      readerIds: [],
+    });
+    assert.equal(missingReaders.status, 422);
+
+    const restricted = await admin.post('/api/v1/docs/spaces', {
+      name: `Leadership notes ${Date.now()}`,
+      visibility: 'restricted',
+      readerIds: [staffId],
+    });
+    assert.equal(restricted.status, 201);
+
+    const creatorSpaces = await admin.get('/api/v1/docs/spaces');
+    assert.equal(creatorSpaces.body.items.some((space: Json) => space.id === restricted.body.id), true);
+    const readerSpaces = await staff.get('/api/v1/docs/spaces');
+    assert.equal(readerSpaces.body.items.some((space: Json) => space.id === restricted.body.id), true);
+  });
+
+  it('lets a document editor upload and attach a standard file', async () => {
+    const space = await admin.post('/api/v1/docs/spaces', {
+      name: `Attachment space ${Date.now()}`,
+      visibility: 'company',
+    });
+    const page = await admin.post('/api/v1/docs/pages', {
+      spaceId: space.body.id,
+      title: 'Attachment target',
+      body: '<p>Supporting files</p>',
+      publish: true,
+    });
+
+    const upload = await staff.post('/api/v1/files/uploads', {
+      filename: 'supporting-notes.txt',
+      mimeType: 'application/octet-stream',
+      sizeBytes: 15,
+    });
+    assert.equal(upload.status, 201);
+    const fileDomain = await import('../src/domains/files.js');
+    const identity = await import('../src/domains/identity.js');
+    const staffContext = await identity.findUserById(staffId);
+    const staffActor = await identity.buildActor(staffContext!, { id: 'attachment-test' });
+    await fileDomain.receiveUpload(staffActor, upload.body.uploadId, Buffer.from('attachment data'));
+
+    const attached = await staff.post(`/api/v1/docs/pages/${page.body.id}/attachments`, {
+      fileId: upload.body.fileId,
+    });
+    assert.equal(attached.status, 201);
+    const listed = await staff.get(`/api/v1/docs/pages/${page.body.id}/attachments`);
+    assert.equal(listed.status, 200);
+    assert.equal(listed.body.items.some((item: Json) => item.file_id === upload.body.fileId), true);
   });
 
   it('counts only working days, and reserves them before the decision', async () => {

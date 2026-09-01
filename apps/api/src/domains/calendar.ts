@@ -286,9 +286,12 @@ export async function freeBusy(actor: Actor, userIds: string[], from: Date, to: 
 }
 
 export async function getEvent(actor: Actor, eventId: string) {
-  const event = await one<EventRow>(
-    'SELECT * FROM calendar_events WHERE id = $1 AND company_id = $2',
-    [eventId, actor.companyId],
+  const event = await one<EventRow & { rsvp: string | null }>(
+    `SELECT e.*, me.rsvp
+       FROM calendar_events e
+       LEFT JOIN event_attendees me ON me.event_id = e.id AND me.user_id = $3
+      WHERE e.id = $1 AND e.company_id = $2`,
+    [eventId, actor.companyId, actor.userId],
   );
   if (!event) throw notFound('Meeting not found');
   const attendees = await many(
@@ -526,6 +529,7 @@ export function publicEvent(row: EventRow & { attendee_count?: number; rsvp?: st
     title: row.title,
     description: row.description,
     location: row.location,
+    onlineUrl: row.online_url,
     roomId: row.room_id,
     startsAt: row.starts_at,
     endsAt: row.ends_at,

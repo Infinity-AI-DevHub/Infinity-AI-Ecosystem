@@ -23,6 +23,7 @@ import { join } from 'node:path';
 const ACCEPTED = new Map<string, string>([
   ['POST /auth/token/refresh', 'called by the token layer, not by a screen'],
   ['POST /files/uploads/:id/content', 'raw multipart fetch, not through the api helper'],
+  ['PUT /objects/upload', 'signed upload URL is returned dynamically by the API'],
   ['POST /chat/rooms/:id/typing', 'sent over the realtime channel'],
   ['PATCH /chat/rooms/:id/messages/:messageId', 'message editing UI not built'],
   ['DELETE /chat/rooms/:id/messages/:messageId', 'message deletion UI not built'],

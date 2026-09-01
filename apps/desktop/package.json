@@ -10,7 +10,7 @@
     "build:main": "tsc -p tsconfig.json && npm run build:preload",
     "build:renderer": "node scripts/build-renderer.mjs",
     "build": "npm run build:renderer && node scripts/copy-renderer.mjs && npm run build:main",
-    "dev": "npm run build:main && cross-env INFINITY_DEV_SERVER=http://localhost:4600 electron .",
+    "dev": "npm run build:main && cross-env INFINITY_DEV_SERVER=http://localhost:4600 INFINITY_API_URL=http://localhost:3500 electron .",
     "start": "npm run build && electron .",
     "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/preload/index.js --sourcemap",
     "icons": "node scripts/make-icons.mjs",

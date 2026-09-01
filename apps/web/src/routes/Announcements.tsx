@@ -288,6 +288,9 @@ function ComposeAnnouncement({
   onClose: () => void;
   onCreated: (id: string) => void;
 }) {
+  const titleInput = useRef<HTMLInputElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [priority, setPriority] = useState<'normal' | 'important' | 'critical'>('normal');
@@ -295,6 +298,24 @@ function ComposeAnnouncement({
   const [targetIds, setTargetIds] = useState<string[]>([]);
   const [requiresAck, setRequiresAck] = useState(false);
   const [expiresAt, setExpiresAt] = useState('');
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    titleInput.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onCloseRef.current();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape);
+      document.body.style.overflow = previousOverflow;
+      previouslyFocused?.focus();
+    };
+  }, []);
 
   const departments = useQuery<{ items: Department[] }>('/departments', (signal) =>
     api.get('/departments', signal),
@@ -327,13 +348,19 @@ function ComposeAnnouncement({
   const targets = scope === 'department' ? (departments.data?.items ?? []) : (groups.data?.items ?? []);
 
   return (
-    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+    <div className="dialog-scrim announcement-dialog-layer" role="presentation">
+      <button
+        type="button"
+        className="announcement-dialog-backdrop"
+        aria-label="Close new announcement"
+        tabIndex={-1}
+        onClick={onClose}
+      />
       <div
-        className="dialog"
+        className="dialog announcement-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="announcement-title"
-        onClick={(event) => event.stopPropagation()}
       >
         <h3 id="announcement-title">New announcement</h3>
 
@@ -348,11 +375,11 @@ function ComposeAnnouncement({
           <div className="field">
             <label htmlFor="ann-title">Title</label>
             <input
+              ref={titleInput}
               id="ann-title"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               required
-              autoFocus
             />
           </div>
 
