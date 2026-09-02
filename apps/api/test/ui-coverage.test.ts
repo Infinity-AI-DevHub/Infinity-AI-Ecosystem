@@ -37,7 +37,6 @@ const ACCEPTED = new Map<string, string>([
   ['POST /files/:id/legal-hold', 'legal hold not built'],
   ['DELETE /share-links/:id', 'revoking a share link not built'],
   ['POST /external/guests/:id/grants', 'guest resource grants not built'],
-  ['POST /users/:id/invitation', 'resending an invitation not built'],
   ['POST /users/:id/offboard', 'offboarding UI not built'],
 ]);
 
