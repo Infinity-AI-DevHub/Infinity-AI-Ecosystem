@@ -17,6 +17,10 @@ import * as leave from '../domains/leave.js';
 import * as finance from '../domains/finance.js';
 import * as files from '../domains/files.js';
 import { publish, publishToUser } from '../core/realtime.js';
+import {
+  billingProfile, buildModel, renderEmailHtml, renderPdf, signatureSlots,
+  type DocumentKind, type RenderModel,
+} from '../domains/document-render.js';
 
 type Handler = (event: StoredEvent) => Promise<void>;
 
@@ -666,128 +670,141 @@ const onBroadcast: Handler = async (event) => {
 
 const onQuotationSent: Handler = async (event) => {
   const { quotationId } = event.payload as { quotationId: string };
-  const quotation = await one<{
-    number: string; total: string; currency: string; valid_until: string | null;
-    summary: string | null; org_name: string; billing_email: string | null;
-  }>(
-    `SELECT q.number, q.total, q.currency, q.valid_until, q.summary,
-            o.name AS org_name, o.billing_email
-       FROM quotations q JOIN external_organizations o ON o.id = q.org_id
-      WHERE q.id = $1`,
-    [quotationId],
+  await sendDocument('quotation', quotationId, event.company_id, (model, profile) => ({
+    subject: `Quotation ${model.number} from ${profile.legal_name ?? 'us'}`,
+    intro: model.summary
+      ?? `Please find our quotation ${model.number} attached.`
+        + (model.dueDate ? ` It is valid until ${model.dueDate}.` : ''),
+  }));
+};
+
+
+/**
+ * Sends a document to the client: a branded HTML email, a plain-text alternative, and
+ * the document itself as a PDF.
+ *
+ * One path for all three kinds. The email body and the attachment are built from the
+ * same model, so what the client reads in the message cannot disagree with the figures
+ * on the page attached to it.
+ */
+async function sendDocument(
+  kind: DocumentKind,
+  documentId: string,
+  companyId: string,
+  compose: (model: RenderModel, profile: Awaited<ReturnType<typeof billingProfile>>) =>
+    { subject: string; intro: string },
+): Promise<void> {
+  const model = await buildModel(kind, documentId);
+  if (!model) return;
+
+  /*
+   * Signatures are drawn on the attachment, with any that no longer match the document
+   * marked as such. A client reading the PDF should see the same warning the
+   * application shows, not a clean-looking page.
+   */
+  model.signatures = await signatureSlots(kind, documentId);
+  const current = await one<{ hash: string }>(
+    kind === 'quotation'
+      ? 'SELECT content_hash AS hash FROM quotations WHERE id = $1'
+      : kind === 'invoice'
+        ? 'SELECT content_hash AS hash FROM invoices WHERE id = $1'
+        : 'SELECT content_hash AS hash FROM invoice_payments WHERE id = $1',
+    [documentId],
   );
-  if (!quotation) return;
-  if (!quotation.billing_email) {
-    logger.error({ quotationId }, 'quotation has no recipient address; nothing was sent');
+  if (current?.hash) {
+    const signed = await many<{ role: string; signed_hash: string }>(
+      'SELECT role, signed_hash FROM document_signatures WHERE document_type = $1 AND document_id = $2',
+      [kind, documentId],
+    );
+    for (const slot of model.signatures) {
+      const match = signed.find((row) => row.role === slot.role);
+      if (match) slot.valid = match.signed_hash === current.hash;
+    }
+  }
+
+  // A receipt's recipients are the invoice's; a quotation's are its organisation's.
+  const recipients = kind === 'quotation'
+    ? await quotationRecipients(documentId)
+    : await clientRecipients(kind === 'receipt' ? await invoiceIdForPayment(documentId) : documentId);
+  if (recipients.length === 0) {
+    logger.error({ kind, documentId }, 'document has no recipient address; nothing was sent');
     return;
   }
 
-  const lines = await many<{ description: string; quantity: string; unit_price: string; amount: string }>(
-    'SELECT description, quantity, unit_price, amount FROM quotation_lines WHERE quotation_id = $1 ORDER BY sort_order',
-    [quotationId],
-  );
+  const profile = await billingProfile(companyId);
+  const { subject, intro } = compose(model, profile);
 
   await notifier.send({
-    from: { address: systemSender(), name: 'Infinity Workspace' },
-    to: [quotation.billing_email],
-    subject: `Quotation ${quotation.number} from Infinity AI`,
+    from: { address: systemSender(), name: profile.legal_name ?? 'Infinity Workspace' },
+    to: recipients,
+    subject,
+    html: renderEmailHtml(model, profile, intro),
+    // The plain-text alternative is not a formality: some clients show only this, and a
+    // blank body would make the attachment look like spam.
     text: [
-      `Dear ${quotation.org_name},`,
+      intro,
       '',
-      quotation.summary ?? 'Please find our quotation below.',
+      ...(model.lines.length > 0
+        ? model.lines.map((l) => `  ${l.description} — ${l.quantity} x ${l.unitPrice.toFixed(2)} = ${l.amount.toFixed(2)}`)
+        : []),
       '',
-      ...lines.map((l) => `  ${l.description} — ${Number(l.quantity)} x ${l.unit_price} = ${l.amount}`),
+      model.kind === 'receipt'
+        ? `Received: ${model.currency} ${(model.receivedAmount ?? 0).toFixed(2)}`
+        : `Total: ${model.currency} ${(model.total - model.amountPaid).toFixed(2)}`,
       '',
-      `Total: ${quotation.total} ${quotation.currency}`,
-      quotation.valid_until ? `Valid until ${String(quotation.valid_until).slice(0, 10)}` : '',
-      '',
-      'To accept, please sign and return the attached copy.',
+      `The full ${kind} is attached as a PDF.`,
+      profile.legal_name ?? '',
     ].filter(Boolean).join('\n'),
+    attachments: [{
+      filename: `${model.number || kind}.pdf`,
+      mimeType: 'application/pdf',
+      content: renderPdf(model, profile),
+    }],
   });
-};
+}
+
+/** A receipt is a payment; its recipients come from the invoice it settles. */
+async function invoiceIdForPayment(paymentId: string): Promise<string> {
+  const row = await one<{ invoice_id: string }>(
+    'SELECT invoice_id FROM invoice_payments WHERE id = $1', [paymentId],
+  );
+  return row?.invoice_id ?? '';
+}
+
+async function quotationRecipients(quotationId: string): Promise<string[]> {
+  const row = await one<{ billing_email: string | null }>(
+    `SELECT o.billing_email FROM quotations q
+       JOIN external_organizations o ON o.id = q.org_id WHERE q.id = $1`,
+    [quotationId],
+  );
+  return row?.billing_email ? [row.billing_email] : [];
+}
 
 const onInvoiceIssued: Handler = async (event) => {
   const { invoiceId } = event.payload as { invoiceId: string };
-  const invoice = await one<{
-    number: string; total: string; currency: string; due_date: string;
-    notes: string | null; terms: string | null; client_name: string; project_name: string | null;
-  }>(
-    `SELECT i.number, i.total, i.currency, i.due_date, i.notes, i.terms,
-            o.name AS client_name, p.name AS project_name
-       FROM invoices i
-       JOIN external_organizations o ON o.id = i.client_org_id
-       LEFT JOIN projects p ON p.id = i.project_id
-      WHERE i.id = $1`,
-    [invoiceId],
-  );
-  if (!invoice) return;
-
-  const recipients = await clientRecipients(invoiceId);
-  if (recipients.length === 0) {
-    // Reachable only if the billing address was cleared after the invoice was approved.
-    logger.error({ invoiceId }, 'invoice has no recipient; nothing was sent');
-    return;
-  }
-
-  const lines = await many<{ description: string; quantity: string; unit_price: string; amount: string }>(
-    'SELECT description, quantity, unit_price, amount FROM invoice_lines WHERE invoice_id = $1 ORDER BY sort_order',
-    [invoiceId],
-  );
-
-  await notifier.send({
-    from: { address: systemSender(), name: 'Infinity Workspace' },
-    to: recipients,
-    subject: `Invoice ${invoice.number} from Infinity AI`,
-    text: [
-      `Invoice ${invoice.number}`,
-      invoice.project_name ? `Project: ${invoice.project_name}` : '',
-      `Due: ${String(invoice.due_date).slice(0, 10)}`,
-      '',
-      ...lines.map((l) => `  ${l.description} — ${Number(l.quantity)} x ${l.unit_price} = ${l.amount}`),
-      '',
-      `Total due: ${invoice.total} ${invoice.currency}`,
-      invoice.notes ? `\n${invoice.notes}` : '',
-      invoice.terms ? `\nTerms: ${invoice.terms}` : '',
-    ].filter(Boolean).join('\n'),
-  });
+  await sendDocument('invoice', invoiceId, event.company_id, (model, profile) => ({
+    subject: `Invoice ${model.number} from ${profile.legal_name ?? 'us'}`,
+    intro: `Please find invoice ${model.number} attached, for ${model.partyName}.`
+      + (model.dueDate ? ` Payment is due by ${model.dueDate}.` : ''),
+  }));
 };
+
 
 /** A payment is acknowledged immediately: a receipt the client can file. */
 const onInvoicePayment: Handler = async (event) => {
-  const { invoiceId, paymentId, receiptNumber, amount, fullySettled } = event.payload as {
-    invoiceId: string; paymentId: string; receiptNumber: string; amount: number; fullySettled: boolean;
+  const { paymentId, fullySettled } = event.payload as {
+    paymentId: string; fullySettled: boolean;
   };
-  const invoice = await one<{ number: string; currency: string; total: string; amount_paid: string }>(
-    'SELECT number, currency, total, amount_paid FROM invoices WHERE id = $1',
-    [invoiceId],
-  );
-  if (!invoice) return;
-  const recipients = await clientRecipients(invoiceId);
-  if (recipients.length === 0) {
-    // Reachable only if the billing address was cleared after the invoice was approved.
-    logger.error({ invoiceId }, 'invoice has no recipient; nothing was sent');
-    return;
-  }
-
-  const balance = (Number(invoice.total) - Number(invoice.amount_paid)).toFixed(2);
-  await notifier.send({
-    from: { address: systemSender(), name: 'Infinity Workspace' },
-    to: recipients,
-    subject: `Receipt ${receiptNumber} for invoice ${invoice.number}`,
-    text: [
-      `Thank you — we have recorded your payment.`,
-      '',
-      `Receipt:  ${receiptNumber}`,
-      `Invoice:  ${invoice.number}`,
-      `Amount:   ${Number(amount).toFixed(2)} ${invoice.currency}`,
-      '',
-      fullySettled
-        ? 'This invoice is now settled in full. Nothing further is due.'
-        : `Remaining balance: ${balance} ${invoice.currency}`,
-    ].join('\n'),
-  });
-  await pool.query('UPDATE invoice_payments SET receipt_sent_at = NOW(3) WHERE id = $1', [paymentId]);
+  await sendDocument('receipt', paymentId, event.company_id, (model, profile) => ({
+    subject: `Receipt ${model.number}`,
+    intro: `Thank you — we have received ${model.currency} `
+      + `${(model.receivedAmount ?? 0).toFixed(2)} against invoice ${model.dueDate}. `
+      + (fullySettled
+        ? 'That settles it in full; nothing further is outstanding.'
+        : `The remaining balance is ${model.currency} ${(model.total - model.amountPaid).toFixed(2)}.`),
+  }));
 };
+
 
 /**
  * Overdue chasing.
