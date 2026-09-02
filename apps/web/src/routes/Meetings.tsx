@@ -13,6 +13,7 @@ import { AsyncSection, DegradedNotice, Empty, ErrorState, Loading, FormError } f
 import { durationBetween, formatDate, formatTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 import { openExternal } from '../lib/desktop';
+import { useNotify } from '../lib/notify';
 
 type Event = {
   id: string;
@@ -57,6 +58,7 @@ function groupByDay(events: Event[]): [string, Event[]][] {
 }
 
 export default function Meetings() {
+  const { notify } = useNotify();
   const { eventId } = useParams();
   const navigate = useNavigate();
   const { session } = useSession();
@@ -202,6 +204,23 @@ export default function Meetings() {
                     : String(detail.data.recurrenceRule).includes('WEEKLY') ? 'weekly' : 'monthly'}
                 </p>
               ) : null}
+              {/* The scheduled reminder fires once at a fixed offset; this covers the
+                  case it does not — a meeting moved, or half the room forgetting. */}
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={async () => {
+                  try {
+                    await api.post(`/calendar/events/${detail.data!.id}/remind`, {});
+                    notify({ severity: 'success', title: 'Reminder sent to everyone attending' });
+                  } catch {
+                    notify({ severity: 'warning', title: 'That reminder could not be sent' });
+                  }
+                }}
+              >
+                Send reminder now
+              </button>
+
               {detail.data.onlineUrl ? (
                 <p>
                   {/* Through the bridge: in the desktop client a bare target=_blank is

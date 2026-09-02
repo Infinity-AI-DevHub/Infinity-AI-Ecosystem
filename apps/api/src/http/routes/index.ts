@@ -27,7 +27,26 @@ import { reportRoutes } from './reports.js';
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   /** Liveness: the process is up. Never touches the database. */
-  app.get('/health', async () => ({ status: 'ok', version: '1.0.0', env: config.env }));
+  app.get('/health', async () => ({
+    status: 'ok',
+    version: '1.0.0',
+    env: config.env,
+    /**
+     * Where uploaded bytes actually go.
+     *
+     * The desktop client uploads straight to storage with a presigned URL, so its
+     * content security policy and its main-process allow list both have to permit that
+     * origin - and neither can know it at build time, because it is server
+     * configuration. Publishing it here is what lets the client ask.
+     *
+     * It is a bucket hostname, not a credential: the presigned URL carries the
+     * authorisation, and this reveals nothing that the URL itself would not.
+     */
+    storageOrigin:
+      config.storage.driver === 's3' && config.storage.endpoint
+        ? new URL(config.storage.endpoint).origin
+        : null,
+  }));
 
   /** Readiness: dependencies the instance needs before it should receive traffic. */
   app.get('/ready', async (_request, reply) => {

@@ -35,6 +35,25 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/admin/groups', async (request) => ({ items: await admin.listGroups(requireActor(request)) }));
 
+  app.patch('/admin/groups/:id', async (request) => {
+    const actor = requireActor(request);
+    const { id } = request.params as { id: string };
+    return admin.updateGroup(actor, id, parse(
+      z.object({
+        name: z.string().min(1).max(120).optional(),
+        description: z.string().max(1000).optional(),
+      }).strict(), request.body));
+  });
+
+  app.delete('/admin/groups/:id', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = request.params as { id: string };
+    // Archive: a group is an access decision, and removing it would revoke permissions
+    // nobody asked to revoke.
+    await admin.archiveGroup(actor, id);
+    return reply.code(204).send();
+  });
+
   app.post('/admin/groups', async (request, reply) => {
     const actor = requireActor(request);
     const input = parse(

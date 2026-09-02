@@ -372,3 +372,77 @@ describe('notification severity', () => {
     assert.equal(severityFor('something.invented.later'), 'info');
   });
 });
+
+/**
+ * Recurrence expansion.
+ *
+ * A recurring meeting is stored as one row plus a rule, so anything that lists rows
+ * shows only the first occurrence — which is exactly how a weekly meeting created in
+ * September disappeared from the calendar in October.
+ */
+describe('recurrence', () => {
+  it('expands a weekly series into the window that asks for it', async () => {
+    const { parseRecurrence, occurrencesBetween } = await import('../src/core/recurrence.js');
+    const rule = parseRecurrence('FREQ=WEEKLY;COUNT=8')!;
+    const start = new Date('2026-09-01T09:00:00Z');
+    const hour = 3_600_000;
+
+    // A window a month later still finds the series — the original failure, where a
+    // September meeting simply did not exist in October.
+    //
+    // Eight weekly occurrences from 1 September run 1, 8, 15, 22, 29 September and
+    // 6, 13, 20 October, so exactly three land in October and the series then stops.
+    const october = occurrencesBetween(start, hour, rule,
+      new Date('2026-10-01T00:00:00Z'), new Date('2026-10-31T23:59:59Z'));
+    assert.equal(october.length, 3, 'the tail of an eight-week series');
+    assert.equal(october[0]!.toISOString(), '2026-10-06T09:00:00.000Z');
+
+    // COUNT is counted from the start of the series, not from the window.
+    const everything = occurrencesBetween(start, hour, rule,
+      new Date('2026-01-01T00:00:00Z'), new Date('2027-01-01T00:00:00Z'));
+    assert.equal(everything.length, 8);
+
+    // And the series really does stop.
+    const later = occurrencesBetween(start, hour, rule,
+      new Date('2027-01-01T00:00:00Z'), new Date('2027-02-01T00:00:00Z'));
+    assert.deepEqual(later, []);
+  });
+
+  it('honours UNTIL, INTERVAL and daily frequency', async () => {
+    const { parseRecurrence, occurrencesBetween } = await import('../src/core/recurrence.js');
+    const hour = 3_600_000;
+    const start = new Date('2026-09-01T09:00:00Z');
+
+    const until = parseRecurrence('FREQ=DAILY;UNTIL=20260905')!;
+    const days = occurrencesBetween(start, hour, until,
+      new Date('2026-09-01T00:00:00Z'), new Date('2026-12-01T00:00:00Z'));
+    assert.equal(days.length, 5, 'the 1st through the 5th inclusive');
+
+    const fortnightly = parseRecurrence('FREQ=WEEKLY;INTERVAL=2;COUNT=3')!;
+    const spaced = occurrencesBetween(start, hour, fortnightly,
+      new Date('2026-09-01T00:00:00Z'), new Date('2026-12-01T00:00:00Z'));
+    assert.equal(spaced.length, 3);
+    assert.equal(
+      (spaced[1]!.getTime() - spaced[0]!.getTime()) / 86_400_000, 14,
+      'two weeks apart',
+    );
+  });
+
+  it('keeps a monthly series on the last day of a short month', async () => {
+    const { parseRecurrence, occurrencesBetween } = await import('../src/core/recurrence.js');
+    // The 31st of January: February has no 31st, and skipping it would drop occurrences
+    // silently rather than landing on the last day, which is what people expect.
+    const rule = parseRecurrence('FREQ=MONTHLY;COUNT=3')!;
+    const months = occurrencesBetween(new Date('2026-01-31T09:00:00Z'), 3_600_000, rule,
+      new Date('2026-01-01T00:00:00Z'), new Date('2026-06-01T00:00:00Z'));
+    assert.equal(months.length, 3);
+    assert.equal(months[1]!.getUTCMonth(), 1, 'the second occurrence is in February');
+    assert.equal(months[1]!.getUTCDate(), 28, 'and lands on the 28th, not in March');
+  });
+
+  it('refuses a rule the validator would not have stored', async () => {
+    const { parseRecurrence } = await import('../src/core/recurrence.js');
+    assert.equal(parseRecurrence('FREQ=FORTNIGHTLY'), null);
+    assert.equal(parseRecurrence(null), null);
+  });
+});

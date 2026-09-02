@@ -153,12 +153,25 @@ export async function createInvoice(
   const { priced, subtotal, tax, total } = computeTotals(input.lines);
 
   return transaction(async (tx) => {
-    const client = (await tx.query<{ id: string }>(
-      `SELECT id FROM external_organizations
-        WHERE id = $1 AND company_id = $2 AND status = 'active'`,
+    /**
+     * Which clients can be billed.
+     *
+     * 'upcoming' is allowed: a deposit raised before work starts is the ordinary reason
+     * a client is in that state. 'completed' and 'archived' are not - the relationship
+     * is over, and a new invoice against it is far more likely a mistake than an
+     * intention. Reopening the client is one click and makes the decision visible.
+     */
+    const client = (await tx.query<{ id: string; name: string; status: string }>(
+      `SELECT id, name, status FROM external_organizations
+        WHERE id = $1 AND company_id = $2`,
       [input.clientOrgId, actor.companyId],
     )).rows[0];
     if (!client) throw notFound('That client could not be found');
+    if (client.status !== 'active' && client.status !== 'upcoming') {
+      throw conflict(
+        `${client.name} is marked ${client.status}. Set it back to active before invoicing it.`,
+      );
+    }
 
     if (input.projectId) {
       const project = (await tx.query<{ id: string }>(

@@ -166,9 +166,52 @@ export default function Clients() {
                 </div>
                 <div className="table-actions">
                   {can('external_org.manage') ? (
-                    <button type="button" className="ghost-button" onClick={() => setEditingOrgId(selected.id)}>
-                      Edit details
-                    </button>
+                    <>
+                      {/* Lifecycle in one control rather than buried in the edit form:
+                          moving a client between upcoming, active and completed is the
+                          thing done most often. */}
+                      <label className="inline-select">
+                        <span className="visually-hidden">Status for {selected.name}</span>
+                        <select
+                          value={selected.status}
+                          onChange={async (event) => {
+                            await api.patch(`/external/organizations/${selected.id}`, {
+                              status: event.target.value,
+                            });
+                            invalidate('/external/organizations');
+                          }}
+                        >
+                          <option value="upcoming">Upcoming</option>
+                          <option value="active">Active</option>
+                          <option value="completed">Completed</option>
+                          <option value="archived">Archived</option>
+                        </select>
+                      </label>
+                      <button type="button" className="ghost-button" onClick={() => setEditingOrgId(selected.id)}>
+                        Edit details
+                      </button>
+                      <button
+                        type="button"
+                        className="danger-button"
+                        onClick={async () => {
+                          try {
+                            await api.delete(`/external/organizations/${selected.id}`);
+                            invalidate('/external/organizations');
+                            navigate('/clients');
+                          } catch (err) {
+                            // Refused while invoices, projects or guests are attached,
+                            // and the message says which and how many.
+                            window.alert(
+                              err instanceof ApiError
+                                ? err.message
+                                : 'That organisation could not be deleted',
+                            );
+                          }
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </>
                   ) : null}
                   {can('guest.manage') ? (
                     <button type="button" className="ghost-button" onClick={() => setInviting(true)}>

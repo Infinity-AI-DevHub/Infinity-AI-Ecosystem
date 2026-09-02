@@ -4,10 +4,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parse } from '../../core/validation.js';
-import { requireActor, withIdempotency } from '../context.js';
+import { clientIp, requireActor, withIdempotency } from '../context.js';
 import * as finance from '../../domains/finance.js';
 import * as invoicing from '../../domains/invoicing.js';
 import * as billingSettings from '../../domains/billing-settings.js';
+import * as quotations from '../../domains/quotations.js';
+import * as signatures from '../../domains/signatures.js';
 
 const idParam = z.object({ id: z.string().uuid() });
 const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
@@ -286,6 +288,238 @@ export async function financeRoutes(app: FastifyInstance): Promise<void> {
 
   // Releasing an invoice to a client is a super-administrator act, separate from
   // drafting it. The capability check lives in the domain.
+  app.patch('/vendors/:id', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    return finance.updateVendor(actor, id, parse(
+      z.object({
+        name: z.string().min(1).max(200).optional(),
+        contactEmail: z.string().email().max(320).nullable().optional(),
+        contactPhone: z.string().max(40).nullable().optional(),
+        taxId: z.string().max(60).nullable().optional(),
+        notes: z.string().max(4000).nullable().optional(),
+        status: z.enum(['active', 'archived']).optional(),
+      }).strict(), request.body));
+  });
+
+  app.delete('/vendors/:id', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    await finance.archiveVendor(actor, id);
+    return reply.code(204).send();
+  });
+
+  app.patch('/budgets/:id', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    return finance.updateBudget(actor, id, parse(
+      z.object({
+        name: z.string().min(1).max(200).optional(),
+        amount: z.number().min(0).optional(),
+        periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        status: z.enum(['active', 'closed']).optional(),
+      }).strict(), request.body));
+  });
+
+  app.delete('/budgets/:id', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    await finance.closeBudget(actor, id);
+    return reply.code(204).send();
+  });
+
+  app.patch('/expenses/categories/:id', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    return finance.updateCategory(actor, id, parse(
+      z.object({
+        name: z.string().min(1).max(120).optional(),
+        limitAmount: z.number().min(0).nullable().optional(),
+        requiresReceiptAbove: z.number().min(0).optional(),
+        active: z.boolean().optional(),
+      }).strict(), request.body));
+  });
+
+  app.patch('/assets/:id', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    return finance.updateAsset(actor, id, parse(
+      z.object({
+        name: z.string().min(1).max(200).optional(),
+        category: z.string().max(60).optional(),
+        serialNumber: z.string().max(120).nullable().optional(),
+        vendorId: z.string().uuid().nullable().optional(),
+        purchasedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+        purchaseCost: z.number().min(0).nullable().optional(),
+        warrantyUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+        location: z.string().max(200).nullable().optional(),
+        notes: z.string().max(4000).nullable().optional(),
+        status: z.string().max(30).optional(),
+      }).strict(), request.body));
+  });
+
+  // ---- quotations -------------------------------------------------------
+  app.get('/quotations', async (request) => {
+    const actor = requireActor(request);
+    const q = request.query as { status?: string; orgId?: string };
+    return { items: await quotations.listQuotations(actor, { status: q.status, orgId: q.orgId }) };
+  });
+
+  app.get('/quotations/:id', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    return quotations.getQuotation(actor, id);
+  });
+
+  app.post('/quotations', async (request, reply) => {
+    const actor = requireActor(request);
+    const input = parse(
+      z.object({
+        orgId: z.string().uuid(),
+        issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        validUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+        currency: z.string().length(3).optional(),
+        summary: z.string().max(4000).nullable().optional(),
+        terms: z.string().max(8000).nullable().optional(),
+        lines: z.array(z.object({
+          description: z.string().min(1).max(500),
+          quantity: z.number().positive(),
+          unitPrice: z.number().min(0),
+          taxRate: z.number().min(0).max(100).optional(),
+        })).min(1),
+      }),
+      request.body,
+    );
+    return withIdempotency(request, reply, 'POST /quotations', async () => ({
+      statusCode: 201,
+      body: await quotations.createQuotation(actor, input),
+    }));
+  });
+
+  app.post('/quotations/:id/revise', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    const input = parse(
+      z.object({
+        note: z.string().min(1).max(1000),
+        summary: z.string().max(4000).nullable().optional(),
+        terms: z.string().max(8000).nullable().optional(),
+        validUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+        lines: z.array(z.object({
+          description: z.string().min(1).max(500),
+          quantity: z.number().positive(),
+          unitPrice: z.number().min(0),
+          taxRate: z.number().min(0).max(100).optional(),
+        })).min(1),
+      }),
+      request.body,
+    );
+    return quotations.reviseQuotation(actor, id, input);
+  });
+
+  app.post('/quotations/:id/ready', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    await quotations.markReadyToSend(actor, id);
+    return reply.code(204).send();
+  });
+
+  app.post('/quotations/:id/send', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    return quotations.sendQuotation(actor, id);
+  });
+
+  app.post('/quotations/:id/accept', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    return quotations.acceptQuotation(actor, id);
+  });
+
+  app.post('/quotations/:id/decline', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    const { reason } = parse(z.object({ reason: z.string().min(1).max(2000) }), request.body);
+    await quotations.declineQuotation(actor, id, reason);
+    return reply.code(204).send();
+  });
+
+  // ---- signatures -------------------------------------------------------
+  app.get('/me/signature', async (request) => {
+    const actor = requireActor(request);
+    return (await signatures.mySignature(actor)) ?? { file_id: null };
+  });
+
+  app.put('/me/signature', async (request, reply) => {
+    const actor = requireActor(request);
+    const { fileId } = parse(z.object({ fileId: z.string().uuid() }), request.body);
+    await signatures.saveMySignature(actor, fileId);
+    return reply.code(204).send();
+  });
+
+  app.get('/signatures/:type/:id', async (request) => {
+    const actor = requireActor(request);
+    const { type, id } = request.params as { type: signatures.DocumentType; id: string };
+    return signatures.verify(actor, type, id);
+  });
+
+  app.post('/signatures/:type/:id/sign', async (request) => {
+    const actor = requireActor(request);
+    const { type, id } = request.params as { type: signatures.DocumentType; id: string };
+    const input = parse(
+      z.object({
+        role: z.enum(['internal_1', 'internal_2']),
+        page: z.number().int().min(1).optional(),
+        posX: z.number().min(0).max(1).optional(),
+        posY: z.number().min(0).max(1).optional(),
+        width: z.number().min(0).max(1).optional(),
+      }),
+      request.body,
+    );
+    return signatures.signDocument(actor, {
+      documentType: type,
+      documentId: id,
+      ...input,
+      // Taken from the request, never from the body: a caller that could state its own
+      // address could put anyone's in the record.
+      ip: clientIp(request),
+      userAgent: request.headers['user-agent'] ?? null,
+    });
+  });
+
+  app.post('/signatures/:type/:id/request', async (request, reply) => {
+    const actor = requireActor(request);
+    const { type, id } = request.params as { type: signatures.DocumentType; id: string };
+    const input = parse(
+      z.object({
+        signerUserId: z.string().uuid(),
+        note: z.string().max(1000).nullable().optional(),
+      }),
+      request.body,
+    );
+    await signatures.requestCountersignature(actor, {
+      documentType: type, documentId: id, ...input,
+    });
+    return reply.code(204).send();
+  });
+
+  app.post('/signatures/:type/:id/client', async (request, reply) => {
+    const actor = requireActor(request);
+    const { type, id } = request.params as { type: signatures.DocumentType; id: string };
+    const input = parse(
+      z.object({
+        role: z.enum(['client_1', 'client_2']),
+        signerName: z.string().min(1).max(200),
+        signerEmail: z.string().email().max(320).nullable().optional(),
+        fileId: z.string().uuid(),
+      }),
+      request.body,
+    );
+    await signatures.recordClientSignature(actor, { documentType: type, documentId: id, ...input });
+    return reply.code(204).send();
+  });
+
   app.get('/billing/settings', async (request) => {
     const actor = requireActor(request);
     return billingSettings.getSettings(actor);

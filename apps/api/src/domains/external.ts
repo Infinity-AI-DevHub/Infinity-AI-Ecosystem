@@ -14,7 +14,7 @@
  * scoped guest into a company-wide one, which is why guests hold no capability that any
  * resourceless endpoint requires.
  */
-import { jsonArray, many, newId, one, reload, transaction } from '../core/db.js';
+import { jsonArray, many, newId, one, pool, reload, transaction } from '../core/db.js';
 import { conflict, notFound, unprocessable } from '../core/errors.js';
 import { authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
@@ -105,6 +105,49 @@ export async function createOrganization(
   });
 }
 
+/**
+ * Removing a client.
+ *
+ * Refused while anything financial still points at it. `invoices.client_org_id` cascades
+ * on delete, so removing an organisation with invoices would silently take a year of
+ * billing history with it - and the person clicking "delete" is thinking about a
+ * duplicate record, not about their accounts.
+ *
+ * A relationship that has simply ended should be marked completed instead; the message
+ * says so, because otherwise the refusal reads as the system being obstructive.
+ */
+export async function deleteOrganization(actor: Actor, id: string): Promise<void> {
+  await authorize({ actor, capability: 'external_org.manage', resourceless: true });
+  const org = await getOrganization(actor, id);
+
+  const blockers = await one<{ invoices: number; projects: number; guests: number }>(
+    `SELECT
+       (SELECT COUNT(*) FROM invoices WHERE client_org_id = $1) AS invoices,
+       (SELECT COUNT(*) FROM projects WHERE client_org_id = $1) AS projects,
+       (SELECT COUNT(*) FROM external_memberships WHERE organization_id = $1) AS guests`,
+    [id],
+  );
+
+  const held: string[] = [];
+  if (Number(blockers?.invoices ?? 0) > 0) held.push(`${blockers!.invoices} invoice(s)`);
+  if (Number(blockers?.projects ?? 0) > 0) held.push(`${blockers!.projects} project(s)`);
+  if (Number(blockers?.guests ?? 0) > 0) held.push(`${blockers!.guests} guest account(s)`);
+
+  if (held.length > 0) {
+    throw conflict(
+      `${org.name} still has ${held.join(', ')} attached, so deleting it would remove them too. `
+        + 'Mark it completed instead to keep the history.',
+    );
+  }
+
+  await pool.query('DELETE FROM external_organizations WHERE id = $1 AND company_id = $2', [
+    id, actor.companyId,
+  ]);
+  await auditFromActor(actor, 'external_org.delete', {
+    resourceType: 'external_org', resourceId: id, metadata: { name: org.name },
+  });
+}
+
 export async function listOrganizations(
   actor: Actor,
   options: { status?: string; kind?: OrganizationKind; q?: string } = {},
@@ -139,7 +182,7 @@ export async function updateOrganization(
   input: {
     name?: string;
     kind?: OrganizationKind;
-    status?: 'active' | 'archived';
+    status?: 'upcoming' | 'active' | 'completed' | 'archived';
     website?: string | null;
     notes?: string | null;
   billingEmail?: string | null;

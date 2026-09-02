@@ -1,7 +1,7 @@
 import { net, protocol } from 'electron';
 import { pathToFileURL } from 'node:url';
 import { join, normalize, sep } from 'node:path';
-import { apiUrl } from './config';
+import { apiUrl, currentStorageOrigin } from './config';
 
 /**
  * Serving the renderer over a custom `app://` scheme rather than `file://`.
@@ -38,14 +38,18 @@ export function registerSchemePrivileges(): void {
 function contentSecurityPolicy(): string {
   const api = new URL(apiUrl).origin;
   const socket = api.replace(/^http/, 'ws');
+  // Uploads and downloads go directly to object storage, so its origin has to be in
+  // connect-src or the fetch is refused before it leaves the renderer - which surfaces
+  // as a network failure and reads exactly like a dropped connection.
+  const storage = currentStorageOrigin();
   return [
     "default-src 'none'",
     `script-src 'self' ${APP_SCHEME}:`,
     `style-src 'self' 'unsafe-inline'`,
-    `img-src 'self' data: blob: ${api}`,
+    `img-src 'self' data: blob: ${api}${storage ? ` ${storage}` : ''}`,
     `font-src 'self' data:`,
-    `connect-src 'self' ${api} ${socket}`,
-    `media-src 'self' blob: ${api}`,
+    `connect-src 'self' ${api} ${socket}${storage ? ` ${storage}` : ''}`,
+    `media-src 'self' blob: ${api}${storage ? ` ${storage}` : ''}`,
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",

@@ -8,14 +8,16 @@
 import { useMemo, useState } from 'react';
 import { Laptop, Paperclip, Plus, Receipt, Trash2, Wallet } from 'lucide-react';
 import { api, idempotencyKey } from '../lib/api';
-import { useMutation, useQuery } from '../lib/query';
+import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatCurrency, formatDate, initials, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 import { Invoices } from '../components/Invoices';
+import { Quotations } from '../components/Quotations';
 import { uploadWorkspaceFile } from '../lib/uploads';
+import { RecordEditor } from '../components/RecordEditor';
 
-type Tab = 'invoices' | 'claims' | 'budgets' | 'assets' | 'vendors';
+type Tab = 'quotations' | 'invoices' | 'claims' | 'budgets' | 'assets' | 'vendors';
 
 type Claim = {
   id: string;
@@ -30,7 +32,10 @@ type Claim = {
   created_at: string;
 };
 
-type Category = { id: string; name: string; requires_receipt_above: string; limit_amount: string | null };
+type Category = { id: string; name: string; requires_receipt_above: string; limit_amount: string | null
+  key: string;
+  active: boolean;
+};
 type Budget = {
   id: string;
   name: string;
@@ -61,7 +66,8 @@ export default function Finance() {
   const { can } = useSession();
   const tabs = (
     [
-      // Invoices lead: money owed to the company is the question this page is opened for.
+      // Quotations first: work is quoted before it is invoiced.
+      ['quotations', 'Quotations', can('quotation.read')],
       ['invoices', 'Invoices', can('invoice.read')],
       ['claims', 'Expenses', can('expense.submit')],
       ['budgets', 'Budgets', can('budget.read')],
@@ -96,6 +102,7 @@ export default function Finance() {
         ))}
       </div>
 
+      {tab === 'quotations' ? <Quotations /> : null}
       {tab === 'invoices' ? <Invoices /> : null}
       {tab === 'claims' ? <Claims /> : null}
       {tab === 'budgets' ? <Budgets /> : null}
@@ -431,6 +438,7 @@ function ClaimDetail({ claimId, onClose }: { claimId: string; onClose: () => voi
 function Budgets() {
   const { can } = useSession();
   const [creating, setCreating] = useState(false);
+  const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
   const budgets = useQuery<{ items: Budget[] }>('/budgets', (signal) => api.get('/budgets', signal));
 
   return (
@@ -473,6 +481,24 @@ function Budgets() {
                       {budget.department_name ? ` · ${budget.department_name}` : ''}
                     </p>
                     {over ? <span className="status-tag status-suspended">Over budget</span> : null}
+                    {can('budget.manage') ? (
+                      <div className="table-actions">
+                        <button type="button" className="ghost-button" onClick={() => setEditingBudget(budget)}>
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={async () => {
+                            await api.delete(`/budgets/${budget.id}`);
+                            invalidate('/budgets');
+                            budgets.reload();
+                          }}
+                        >
+                          Close
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
@@ -480,6 +506,32 @@ function Budgets() {
           )
         }
       </AsyncSection>
+
+      {editingBudget ? (
+        <RecordEditor
+          title={`Edit ${editingBudget.name}`}
+          path={`/budgets/${editingBudget.id}`}
+          savedMessage="Budget updated"
+          initial={editingBudget as unknown as Record<string, unknown>}
+          fields={[
+            { name: 'name', label: 'Name', required: true },
+            {
+              name: 'amount', label: 'Amount', type: 'number',
+              // Spent and committed are derived from claims, so they are not editable
+              // here — a hand-set total would disagree with the claims behind it.
+              hint: 'Cannot be set below what has already been spent.',
+            },
+            { name: 'periodStart', label: 'Period starts', type: 'date' },
+            { name: 'periodEnd', label: 'Period ends', type: 'date' },
+          ]}
+          onClose={() => setEditingBudget(null)}
+          onSaved={() => { setEditingBudget(null); invalidate('/budgets'); budgets.reload(); }}
+        />
+      ) : null}
+
+      {/* Categories live with budgets: both are budget.manage, and a category with the
+          wrong limit is a budgeting problem rather than a claims one. */}
+      {can('budget.manage') ? <ExpenseCategories /> : null}
 
       {creating ? <BudgetDialog onClose={() => setCreating(false)} /> : null}
     </>
@@ -536,6 +588,7 @@ function BudgetDialog({ onClose }: { onClose: () => void }) {
 // ------------------------------------------------------------------ assets
 
 function Assets() {
+  const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const { can } = useSession();
   const [search, setSearch] = useState('');
   const [creating, setCreating] = useState(false);
@@ -587,9 +640,14 @@ function Assets() {
                         <td>{asset.assignee_name ?? <span className="task-meta">—</span>}</td>
                         <td className="table-actions">
                           {can('asset.manage') ? (
-                            <button type="button" className="ghost-button" onClick={() => setAssigning(asset)}>
-                              {asset.assigned_to ? 'Reassign' : 'Assign'}
-                            </button>
+                            <>
+                              <button type="button" className="ghost-button" onClick={() => setEditingAsset(asset)}>
+                                Edit
+                              </button>
+                              <button type="button" className="ghost-button" onClick={() => setAssigning(asset)}>
+                                {asset.assigned_to ? 'Reassign' : 'Assign'}
+                              </button>
+                            </>
                           ) : null}
                         </td>
                       </tr>
@@ -603,6 +661,36 @@ function Assets() {
       </section>
 
       {creating ? <AssetDialog onClose={() => setCreating(false)} /> : null}
+      {editingAsset ? (
+        <RecordEditor
+          title={`Edit ${editingAsset.name}`}
+          path={`/assets/${editingAsset.id}`}
+          savedMessage="Asset updated"
+          initial={editingAsset as unknown as Record<string, unknown>}
+          fields={[
+            { name: 'name', label: 'Name', required: true },
+            { name: 'category', label: 'Category' },
+            { name: 'serialNumber', label: 'Serial number' },
+            { name: 'location', label: 'Location' },
+            { name: 'purchaseCost', label: 'Purchase cost', type: 'number' },
+            { name: 'warrantyUntil', label: 'Warranty until', type: 'date' },
+            { name: 'notes', label: 'Notes', type: 'textarea' },
+            {
+              name: 'status', label: 'Status', type: 'select',
+              hint: 'An asset still held by someone cannot be retired.',
+              options: [
+                { value: 'in_stock', label: 'In stock' },
+                { value: 'assigned', label: 'Assigned' },
+                { value: 'repair', label: 'In repair' },
+                { value: 'retired', label: 'Retired' },
+              ],
+            },
+          ]}
+          onClose={() => setEditingAsset(null)}
+          onSaved={() => { setEditingAsset(null); invalidate('/assets'); }}
+        />
+      ) : null}
+
       {assigning ? <AssignDialog asset={assigning} onClose={() => setAssigning(null)} /> : null}
     </>
   );
@@ -748,6 +836,7 @@ function AssignDialog({ asset, onClose }: { asset: Asset; onClose: () => void })
 
 function Vendors() {
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<Vendor | null>(null);
   const vendors = useQuery<{ items: Vendor[] }>('/vendors', (signal) => api.get('/vendors', signal));
 
   const create = useMutation(
@@ -783,6 +872,24 @@ function Vendors() {
                           {vendor.organization_name ? ` · linked to ${vendor.organization_name}` : ''}
                         </span>
                       </span>
+                      <span className="table-actions">
+                        <button type="button" className="ghost-button" onClick={() => setEditing(vendor)}>
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={async () => {
+                            // Archive, not delete: assets record which supplier they came
+                            // from, and removing the row would erase that history.
+                            await api.delete(`/vendors/${vendor.id}`);
+                            invalidate('/vendors');
+                            vendors.reload();
+                          }}
+                        >
+                          Archive
+                        </button>
+                      </span>
                     </div>
                   </li>
                 ))}
@@ -791,6 +898,24 @@ function Vendors() {
           }
         </AsyncSection>
       </section>
+
+      {editing ? (
+        <RecordEditor
+          title={`Edit ${editing.name}`}
+          path={`/vendors/${editing.id}`}
+          savedMessage="Supplier updated"
+          initial={editing as unknown as Record<string, unknown>}
+          fields={[
+            { name: 'name', label: 'Name', required: true },
+            { name: 'contactEmail', label: 'Contact email', type: 'email' },
+            { name: 'contactPhone', label: 'Phone' },
+            { name: 'taxId', label: 'Tax ID' },
+            { name: 'notes', label: 'Notes', type: 'textarea' },
+          ]}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); invalidate('/vendors'); vendors.reload(); }}
+        />
+      ) : null}
 
       {creating ? (
         <div className="dialog-scrim" role="presentation" onClick={() => setCreating(false)}>
@@ -888,5 +1013,85 @@ function ReceiptControl({
       )}
       {error ? <p className="field-error" role="alert">{error}</p> : null}
     </div>
+  );
+}
+
+
+/**
+ * Expense categories.
+ *
+ * The key is immutable, as it is for a leave type: existing claims refer to the category
+ * by it, and re-keying would detach a year of expenses from what they were filed under.
+ * Categories are deactivated rather than deleted for the same reason.
+ */
+function ExpenseCategories() {
+  const [editing, setEditing] = useState<Category | null>(null);
+  const categories = useQuery<{ items: Category[] }>('/expenses/categories', (signal) =>
+    api.get('/expenses/categories', signal),
+  );
+
+  return (
+    <section className="panel" aria-labelledby="categories-heading">
+      <header className="panel-header">
+        <span className="panel-title" id="categories-heading">Expense categories</span>
+      </header>
+      <AsyncSection query={categories}>
+        {(data) =>
+          data.items.length === 0 ? (
+            <p className="field-hint">None configured.</p>
+          ) : (
+            <div className="table-scroll">
+              <table className="data-table">
+                <thead>
+                  <tr><th>Name</th><th>Key</th><th>Limit</th><th>Receipt above</th><th>Status</th><th /></tr>
+                </thead>
+                <tbody>
+                  {data.items.map((category) => (
+                    <tr key={category.id}>
+                      <td><strong>{category.name}</strong></td>
+                      <td><code>{category.key}</code></td>
+                      <td>{category.limit_amount ? num(category.limit_amount).toFixed(2) : '—'}</td>
+                      <td>{num(category.requires_receipt_above).toFixed(2)}</td>
+                      <td>
+                        <span className={`status-tag ${category.active ? 'status-active' : 'status-suspended'}`}>
+                          {category.active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td className="table-actions">
+                        <button type="button" className="ghost-button" onClick={() => setEditing(category)}>
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      </AsyncSection>
+
+      {editing ? (
+        <RecordEditor
+          title={`Edit ${editing.name}`}
+          path={`/expenses/categories/${editing.id}`}
+          savedMessage="Category updated"
+          initial={editing as unknown as Record<string, unknown>}
+          fields={[
+            { name: 'name', label: 'Name', required: true },
+            { name: 'limitAmount', label: 'Per-claim limit', type: 'number',
+              hint: 'Leave empty for no limit.' },
+            { name: 'requiresReceiptAbove', label: 'Receipt required above', type: 'number' },
+            {
+              name: 'active', label: 'Status', type: 'select',
+              hint: 'Inactive categories leave the picker; existing claims keep theirs.',
+              options: [{ value: 'true', label: 'Active' }, { value: 'false', label: 'Inactive' }],
+            },
+          ]}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); invalidate('/expenses/categories'); categories.reload(); }}
+        />
+      ) : null}
+    </section>
   );
 }

@@ -77,6 +77,26 @@ async function meetingReminders(): Promise<void> {
         dedupeKey: `meeting-reminder:${event.id}:${userId}`,
       }),
     );
+
+    /*
+     * Reminders go by email too.
+     *
+     * An in-app reminder reaches somebody already looking at the app — which is the
+     * person least likely to need reminding. The one who forgets is elsewhere.
+     *
+     * Emitted through the outbox rather than sent here so a failure is retried, and so
+     * the scheduler is not blocked behind SMTP.
+     */
+    await emit({
+      companyId: event.company_id,
+      type: 'meeting.reminder_due',
+      payload: {
+        eventId: event.id,
+        title: event.title,
+        startsAt: new Date(event.starts_at).toISOString(),
+        userIds: attendees.map((a) => a.user_id),
+      },
+    });
   }
 }
 

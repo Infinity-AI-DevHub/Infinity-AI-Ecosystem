@@ -30,6 +30,52 @@ function systemSender(): string {
   return config.notifications.fromAddress || `no-reply@${config.notifications.defaultDomain}`;
 }
 
+/**
+ * Emails a set of people, given their user ids.
+ *
+ * Every handler that notifies in-app was also meant to email, and most simply did not —
+ * the notification was written and nothing was sent. Putting the lookup and the send in
+ * one place means adding email to a handler is one call rather than fifteen lines that
+ * can be forgotten.
+ *
+ * Suspended and offboarded accounts are excluded: mail to somebody who has left is at
+ * best noise and at worst a disclosure.
+ */
+async function emailUsers(
+  userIds: (string | null | undefined)[],
+  message: { subject: string; lines: string[] },
+): Promise<void> {
+  const ids = [...new Set(userIds.filter(Boolean) as string[])];
+  if (ids.length === 0) return;
+
+  const rows = await many<{ email_display: string }>(
+    `SELECT email_display FROM users
+      WHERE id IN (${ids.map((_, i) => `$${i + 1}`).join(',')})
+        AND status = 'active' AND email_display IS NOT NULL`,
+    ids,
+  );
+  const to = rows.map((row) => row.email_display).filter(Boolean);
+  if (to.length === 0) return;
+
+  /*
+   * One message per recipient, not one with everybody in To.
+   * A single message would disclose the whole recipient list to each of them.
+   */
+  for (const address of to) {
+    await notifier.send({
+      from: { address: systemSender(), name: 'Infinity Workspace' },
+      to: [address],
+      subject: message.subject,
+      text: message.lines.filter((line) => line !== null && line !== undefined).join('\n'),
+    });
+  }
+}
+
+/** A link back into the application, for the body of an email. */
+function appLink(route: string): string {
+  return `${config.publicUrl}${route}`;
+}
+
 // ----------------------------------------------------------------- identity
 
 /**
@@ -262,6 +308,43 @@ const onEventChanged: Handler = async (event) => {
     }),
     event.actor_id,
   );
+
+  /*
+   * Changes and cancellations go by email as well as in-app.
+   *
+   * A meeting is the one notification people act on away from the application, and a
+   * cancellation nobody sees is a room of people waiting.
+   */
+  const meeting = await one<{
+    title: string; starts_at: Date; online_url: string | null; location: string | null;
+    agenda: string; timezone: string;
+  }>(
+    'SELECT title, starts_at, online_url, location, agenda, timezone FROM calendar_events WHERE id = $1',
+    [eventId],
+  );
+  if (meeting) {
+    await emailUsers(
+      attendees.map((a) => a.user_id).filter((id) => id !== event.actor_id),
+      {
+        subject: cancelled
+          ? `Cancelled: ${meeting.title}`
+          : `Changed: ${meeting.title}`,
+        lines: cancelled
+          ? [`${meeting.title} has been cancelled.`, '', 'Nothing further is needed from you.']
+          : [
+              `${meeting.title} has changed.`,
+              '',
+              `When: ${new Date(meeting.starts_at).toISOString().replace('T', ' ').slice(0, 16)} (${meeting.timezone})`,
+              meeting.location ? `Where: ${meeting.location}` : '',
+              meeting.online_url ? `Join: ${meeting.online_url}` : '',
+              meeting.agenda ? `\nAgenda:\n${meeting.agenda}` : '',
+              '',
+              appLink(`/meetings/${eventId}`),
+            ],
+      },
+    );
+  }
+
   if (cancelled) await searchIndex.remove('meeting', eventId);
   // A time change invalidates any reminder already scheduled for the old slot.
   if (timeChanged) {
@@ -338,27 +421,59 @@ const onChatMessage: Handler = async (event) => {
 // ----------------------------------------------------------------- tasks
 
 const onTaskEvent: Handler = async (event) => {
-  const { taskId, assigneeId, title } = event.payload as {
-    taskId: string;
-    assigneeId?: string | null;
-    title?: string;
-  };
+  const { taskId, title } = event.payload as { taskId: string; title?: string };
   await tasks.indexTask(taskId);
 
-  if (event.type === 'task.assigned' && assigneeId && assigneeId !== event.actor_id) {
-    await notifications.create({
-      companyId: event.company_id,
-      userId: assigneeId,
-      type: 'task.assigned',
-      title: 'A task was assigned to you',
-      body: title ?? '',
-      link: `/tasks/${taskId}`,
-      resourceType: 'task',
-      resourceId: taskId,
-      dedupeKey: `task-assign:${taskId}:${assigneeId}:${event.id}`,
-    });
-  }
+  if (event.type !== 'task.created' && event.type !== 'task.assigned') return;
+
+  /**
+   * Everyone the task is on, not just the primary assignee.
+   *
+   * Read from the join table rather than the event payload: the payload carries a single
+   * assigneeId, which was true when a task could only have one person on it. A task
+   * created with three people would otherwise notify one of them.
+   *
+   * task.created counts as an assignment too — a task created already assigned told
+   * nobody, because only task.assigned was handled.
+   */
+  const assignees = await many<{ user_id: string }>(
+    'SELECT user_id FROM task_assignees WHERE task_id = $1',
+    [taskId],
+  );
+  const recipients = assignees
+    .map((row) => row.user_id)
+    .filter((userId) => userId !== event.actor_id);
+  if (recipients.length === 0) return;
+
+  const detail = await one<{ title: string; project_key: string; number: number }>(
+    `SELECT t.title, p.\`key\` AS project_key, t.number
+       FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = $1`,
+    [taskId],
+  );
+  const reference = detail ? `${detail.project_key}-${detail.number}` : 'task';
+
+  await notifications.createMany(recipients, (userId) => ({
+    companyId: event.company_id,
+    userId,
+    type: 'task.assigned',
+    title: `${reference} was assigned to you`,
+    body: detail?.title ?? title ?? '',
+    link: `/tasks/${taskId}`,
+    resourceType: 'task',
+    resourceId: taskId,
+    dedupeKey: `task-assign:${taskId}:${userId}:${event.id}`,
+  }));
+
+  await emailUsers(recipients, {
+    subject: `${reference} was assigned to you: ${detail?.title ?? title ?? ''}`,
+    lines: [
+      detail?.title ?? title ?? 'A task has been assigned to you.',
+      '',
+      appLink(`/tasks/${taskId}`),
+    ],
+  });
 };
+
 
 // ----------------------------------------------------------------- files
 
@@ -407,6 +522,16 @@ const onApprovalRequested: Handler = async (event) => {
     resourceId: requestId,
     dedupeKey: `approval-await:${requestId}:${userId}`,
   }));
+
+  await emailUsers(approverIds, {
+    subject: `Approval needed: ${reference}`,
+    lines: [
+      `${title}`,
+      '',
+      'Somebody is waiting on your decision.',
+      appLink(`/approvals/${requestId}`),
+    ],
+  });
 };
 
 const onApprovalProgressed: Handler = async (event) => {
@@ -430,6 +555,24 @@ const onApprovalProgressed: Handler = async (event) => {
       resourceId: requestId,
       dedupeKey: `approval-progress:${requestId}:${event.id}`,
     });
+
+    /*
+     * The outcome matters more than the progress. An approval or a rejection is
+     * something the requester acts on, and they are frequently not in the app when it
+     * lands — which was the whole reason to ask.
+     */
+    const outcome = decision ?? status ?? 'updated';
+    await emailUsers([requesterId], {
+      subject: `${reference} was ${outcome}`,
+      lines: [
+        `Your request ${reference} was ${outcome}.`,
+        '',
+        outcome === 'rejected'
+          ? 'Open it to see the reason given.'
+          : 'No further action is needed from you.',
+        appLink(`/approvals/${requestId}`),
+      ],
+    });
   }
 
   // A sequential route hands the request to the next approver in line.
@@ -452,6 +595,13 @@ const onApprovalProgressed: Handler = async (event) => {
         dedupeKey: `approval-await:${requestId}:${userId}:${nextStep}`,
       }),
     );
+    await emailUsers(nextApprovers.map((row) => row.approver_id), {
+      subject: `Approval needed: ${reference}`,
+      lines: [
+        'The previous approver has decided, and it is now with you.',
+        appLink(`/approvals/${requestId}`),
+      ],
+    });
   }
 };
 
@@ -463,6 +613,99 @@ const onApprovalProgressed: Handler = async (event) => {
  * The message is plain text on purpose: it has to survive every mail client a client
  * company might use, and the authoritative copy always lives in the workspace.
  */
+/**
+ * A quotation has gone out to a prospect.
+ *
+ * This handler was missing entirely: the event was emitted when a quotation was sent and
+ * nothing consumed it, so "send to prospect" marked it sent and emailed nobody.
+ */
+/** The reminder itself, sent by email. In-app was already handled by the scheduler. */
+const onMeetingReminder: Handler = async (event) => {
+  const { eventId, title, startsAt, userIds } = event.payload as {
+    eventId: string; title: string; startsAt: string; userIds: string[];
+  };
+  const meeting = await one<{ online_url: string | null; location: string | null; timezone: string }>(
+    'SELECT online_url, location, timezone FROM calendar_events WHERE id = $1',
+    [eventId],
+  );
+  await emailUsers(userIds, {
+    subject: `Starting soon: ${title}`,
+    lines: [
+      `${title} starts at ${startsAt.replace('T', ' ').slice(0, 16)} (${meeting?.timezone ?? 'UTC'}).`,
+      meeting?.location ? `Where: ${meeting.location}` : '',
+      meeting?.online_url ? `Join: ${meeting.online_url}` : '',
+      '',
+      appLink(`/meetings/${eventId}`),
+    ],
+  });
+};
+
+/** A message somebody wrote by hand, to the people they chose. */
+const onBroadcast: Handler = async (event) => {
+  const { messageId, subject, body, from, userIds } = event.payload as {
+    messageId: string; subject: string; body: string; from: string; userIds: string[];
+  };
+
+  await notifications.createMany(userIds, (userId) => ({
+    companyId: event.company_id,
+    userId,
+    type: 'message',
+    title: subject,
+    body: body.slice(0, 400),
+    link: '/command',
+    resourceType: 'message',
+    resourceId: messageId,
+    dedupeKey: `broadcast:${messageId}:${userId}`,
+  }));
+
+  await emailUsers(userIds, {
+    subject,
+    lines: [body, '', `— ${from}, via Infinity Workspace`],
+  });
+};
+
+const onQuotationSent: Handler = async (event) => {
+  const { quotationId } = event.payload as { quotationId: string };
+  const quotation = await one<{
+    number: string; total: string; currency: string; valid_until: string | null;
+    summary: string | null; org_name: string; billing_email: string | null;
+  }>(
+    `SELECT q.number, q.total, q.currency, q.valid_until, q.summary,
+            o.name AS org_name, o.billing_email
+       FROM quotations q JOIN external_organizations o ON o.id = q.org_id
+      WHERE q.id = $1`,
+    [quotationId],
+  );
+  if (!quotation) return;
+  if (!quotation.billing_email) {
+    logger.error({ quotationId }, 'quotation has no recipient address; nothing was sent');
+    return;
+  }
+
+  const lines = await many<{ description: string; quantity: string; unit_price: string; amount: string }>(
+    'SELECT description, quantity, unit_price, amount FROM quotation_lines WHERE quotation_id = $1 ORDER BY sort_order',
+    [quotationId],
+  );
+
+  await notifier.send({
+    from: { address: systemSender(), name: 'Infinity Workspace' },
+    to: [quotation.billing_email],
+    subject: `Quotation ${quotation.number} from Infinity AI`,
+    text: [
+      `Dear ${quotation.org_name},`,
+      '',
+      quotation.summary ?? 'Please find our quotation below.',
+      '',
+      ...lines.map((l) => `  ${l.description} — ${Number(l.quantity)} x ${l.unit_price} = ${l.amount}`),
+      '',
+      `Total: ${quotation.total} ${quotation.currency}`,
+      quotation.valid_until ? `Valid until ${String(quotation.valid_until).slice(0, 10)}` : '',
+      '',
+      'To accept, please sign and return the attached copy.',
+    ].filter(Boolean).join('\n'),
+  });
+};
+
 const onInvoiceIssued: Handler = async (event) => {
   const { invoiceId } = event.payload as { invoiceId: string };
   const invoice = await one<{
@@ -480,7 +723,11 @@ const onInvoiceIssued: Handler = async (event) => {
   if (!invoice) return;
 
   const recipients = await clientRecipients(invoiceId);
-  if (recipients.length === 0) return;
+  if (recipients.length === 0) {
+    // Reachable only if the billing address was cleared after the invoice was approved.
+    logger.error({ invoiceId }, 'invoice has no recipient; nothing was sent');
+    return;
+  }
 
   const lines = await many<{ description: string; quantity: string; unit_price: string; amount: string }>(
     'SELECT description, quantity, unit_price, amount FROM invoice_lines WHERE invoice_id = $1 ORDER BY sort_order',
@@ -516,7 +763,11 @@ const onInvoicePayment: Handler = async (event) => {
   );
   if (!invoice) return;
   const recipients = await clientRecipients(invoiceId);
-  if (recipients.length === 0) return;
+  if (recipients.length === 0) {
+    // Reachable only if the billing address was cleared after the invoice was approved.
+    logger.error({ invoiceId }, 'invoice has no recipient; nothing was sent');
+    return;
+  }
 
   const balance = (Number(invoice.total) - Number(invoice.amount_paid)).toFixed(2);
   await notifier.send({
@@ -552,7 +803,11 @@ const onInvoiceReminder: Handler = async (event) => {
   );
   if (!invoice) return;
   const recipients = await clientRecipients(invoiceId);
-  if (recipients.length === 0) return;
+  if (recipients.length === 0) {
+    // Reachable only if the billing address was cleared after the invoice was approved.
+    logger.error({ invoiceId }, 'invoice has no recipient; nothing was sent');
+    return;
+  }
 
   const balance = (Number(invoice.total) - Number(invoice.amount_paid)).toFixed(2);
   await notifier.send({
@@ -598,8 +853,29 @@ const onShareGranted: Handler = async (event) => {
 };
 
 /** The client-side addresses an invoice should reach. */
+/**
+ * Who an invoice, receipt or reminder is emailed to.
+ *
+ * The organisation's billing address first: that is the accounts inbox somebody entered
+ * for exactly this purpose, and it is what the submit guard checks for before letting an
+ * invoice be sent at all.
+ *
+ * Guest users of the same organisation are included as well, because a client contact
+ * with a login expects to see their own invoices. Deduplicated case-insensitively, since
+ * the same person is often both.
+ *
+ * This previously returned only the guest accounts, so a client with a billing address
+ * and no guest logins - the ordinary case - passed the guard and then received nothing.
+ */
 async function clientRecipients(invoiceId: string): Promise<string[]> {
-  const rows = await many<{ email_display: string }>(
+  const billing = await one<{ billing_email: string | null }>(
+    `SELECT o.billing_email
+       FROM invoices i
+       JOIN external_organizations o ON o.id = i.client_org_id
+      WHERE i.id = $1`,
+    [invoiceId],
+  );
+  const guests = await many<{ email_display: string }>(
     `SELECT u.email_display
        FROM invoices i
        JOIN external_memberships m ON m.organization_id = i.client_org_id
@@ -607,8 +883,79 @@ async function clientRecipients(invoiceId: string): Promise<string[]> {
       WHERE i.id = $1 AND u.status = 'active'`,
     [invoiceId],
   );
-  return rows.map((r) => r.email_display).filter(Boolean);
+
+  const seen = new Set<string>();
+  const recipients: string[] = [];
+  for (const address of [billing?.billing_email, ...guests.map((g) => g.email_display)]) {
+    if (!address) continue;
+    const key = address.trim().toLowerCase();
+    if (key.length === 0 || seen.has(key)) continue;
+    seen.add(key);
+    recipients.push(address.trim());
+  }
+  return recipients;
 }
+
+/**
+ * Somebody has been asked to countersign.
+ *
+ * Both channels, deliberately. The in-app notification is what they act on while they
+ * are working; the email is what reaches them when they are not, and a document waiting
+ * on one person's signature is exactly the thing that stalls for a day because nobody
+ * happened to look.
+ */
+const onSignatureRequested: Handler = async (event) => {
+  const {
+    documentType, documentId, documentLabel, signerUserId, signerName, signerEmail,
+    requestedBy, note,
+  } = event.payload as {
+    documentType: string; documentId: string; documentLabel: string;
+    signerUserId: string; signerName: string; signerEmail: string;
+    requestedBy: string; note: string | null;
+  };
+
+  const route =
+    documentType === 'quotation' ? `/finance?tab=quotations&open=${documentId}`
+      : `/finance?tab=invoices&open=${documentId}`;
+
+  const created = await notifications.create({
+    companyId: event.company_id,
+    userId: signerUserId,
+    type: 'signature.requested',
+    title: `${requestedBy} asked you to countersign ${documentLabel}`,
+    body: note ?? `A ${documentType} is waiting for your signature.`,
+    link: route,
+    resourceType: documentType,
+    resourceId: documentId,
+    // Redelivery of the same event must not notify twice.
+    dedupeKey: `signature.requested:${documentId}:${signerUserId}`,
+  });
+
+  /**
+   * Only email if the notification was new.
+   *
+   * The outbox delivers at least once. Without this check a redelivered event notifies
+   * once and emails again, which reads to the recipient as the system nagging them.
+   */
+  if (!created || !signerEmail) return;
+
+  await notifier.send({
+    from: { address: systemSender(), name: 'Infinity Workspace' },
+    to: [signerEmail],
+    subject: `Your signature is needed on ${documentLabel}`,
+    text: [
+      `${signerName},`,
+      '',
+      `${requestedBy} has signed ${documentLabel} and asked you to countersign it.`,
+      note ? `\n"${note}"\n` : '',
+      `Open Infinity Workspace and go to Finance to review and sign it.`,
+      `${config.publicUrl}${route}`,
+      '',
+      'Signing records your account and the time, along with a fingerprint of the',
+      'document as it reads now — so read it before you sign.',
+    ].filter(Boolean).join('\n'),
+  });
+};
 
 const onAnnouncementPublished: Handler = async (event) => {
   const { announcementId, title, audience } = event.payload as {
@@ -654,6 +1001,30 @@ const onAnnouncementPublished: Handler = async (event) => {
     }),
     event.actor_id,
   );
+
+  /*
+   * Announcements go out by email as well.
+   *
+   * The whole point of one is that people see it, and a company-wide notice that only
+   * appears to whoever happens to open the app that week is not an announcement.
+   */
+  await emailUsers(
+    recipients.map((r) => r.id).filter((id) => id !== event.actor_id),
+    {
+      subject: title,
+      lines: [
+        title,
+        '',
+        // Read here rather than carried on the event: an announcement body can be long,
+        // and the outbox row is not the place for it.
+        (await one<{ body: string }>(
+          'SELECT body FROM announcements WHERE id = $1', [announcementId],
+        ))?.body?.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 2000) ?? '',
+        '',
+        appLink(`/announcements/${announcementId}`),
+      ],
+    },
+  );
 };
 
 // ----------------------------------------------------------------- registry
@@ -665,6 +1036,10 @@ export const handlers: Record<string, Handler> = {
   'user.suspended': onAccessChanged,
   'user.reactivated': onAccessChanged,
   'user.password_reset_requested': onPasswordResetRequested,
+  'signature.requested': onSignatureRequested,
+  'meeting.reminder_due': onMeetingReminder,
+  'message.broadcast': onBroadcast,
+  'quotation.sent': onQuotationSent,
   'invoice.issued': onInvoiceIssued,
   'invoice.payment_recorded': onInvoicePayment,
   'invoice.reminder_due': onInvoiceReminder,

@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { useQuery } from '../lib/query';
 import { useNotify } from '../lib/notify';
+import { InvoiceDocument } from './InvoiceDocument';
 
 type Settings = {
   legal_name: string | null;
@@ -26,6 +27,41 @@ type Settings = {
   default_due_days: number;
   invoice_prefix: string;
   receipt_prefix: string;
+  accent_colour: string | null;
+};
+
+/**
+ * A stand-in invoice for the live preview.
+ *
+ * Fixed sample content on purpose: the point is to show how the letterhead, colour and
+ * footers land, and real data would change under the person as they type.
+ */
+const SAMPLE = {
+  number: 'INV-2026-0042',
+  status: 'open',
+  currency: 'LKR',
+  issue_date: '2026-09-01',
+  due_date: '2026-09-30',
+  subtotal: 185000,
+  tax_amount: 27750,
+  total: 212750,
+  amount_paid: 0,
+  notes: null,
+  terms: 'Payment due within 30 days of issue.',
+  client_name: 'Acme Holdings (Pvt) Ltd',
+  project_name: 'Website Rebuild',
+  representative: 'Managing Director',
+  billing_email: 'accounts@acme.example',
+  address_line1: '42 Galle Road',
+  address_line2: null,
+  city: 'Colombo',
+  postal_code: '00300',
+  country: 'Sri Lanka',
+  tax_registration: 'VAT-99887',
+  lines: [
+    { description: 'Design and build', quantity: 1, unit_price: 150000, tax_rate: 15, amount: 150000 },
+    { description: 'Content migration', quantity: 7, unit_price: 5000, tax_rate: 15, amount: 35000 },
+  ],
 };
 
 export function BillingSettings() {
@@ -35,6 +71,7 @@ export function BillingSettings() {
   );
   const [form, setForm] = useState<Settings | null>(null);
   const [saving, setSaving] = useState(false);
+  const [previewMode, setPreviewMode] = useState<'invoice' | 'receipt'>('invoice');
   const [error, setError] = useState<string | null>(null);
 
   // Seeded once the server answers; edits after that are the person's, not a refetch's.
@@ -81,6 +118,7 @@ export function BillingSettings() {
   const year = new Date().getFullYear();
 
   return (
+    <div className="billing-designer">
     <form className="panel" onSubmit={save} aria-labelledby="billing-heading">
       <header className="panel-header">
         <span className="panel-title" id="billing-heading">Invoice and receipt details</span>
@@ -204,6 +242,17 @@ export function BillingSettings() {
         </p>
       </fieldset>
 
+      <div className="field">
+        <label htmlFor="bs-accent">Accent colour</label>
+        <input
+          id="bs-accent"
+          type="color"
+          value={form.accent_colour ?? '#1A6288'}
+          onChange={(e) => set({ accent_colour: e.target.value })}
+        />
+        <p className="field-hint">Used for the heading and the rule beneath it.</p>
+      </div>
+
       {error ? <p className="field-error">{error}</p> : null}
       <div className="dialog-actions">
         <button type="submit" className="primary-button" disabled={saving}>
@@ -211,5 +260,45 @@ export function BillingSettings() {
         </button>
       </div>
     </form>
+
+    {/*
+      The live preview, updating as the form is typed into rather than after saving.
+      It renders through the same component the client's document uses, so what is being
+      designed here is literally the thing that gets sent - not an approximation of it.
+    */}
+    <div className="billing-preview">
+      <div className="panel-header">
+        <span className="panel-title">Preview</span>
+        <div className="table-actions">
+          <button
+            type="button"
+            className={`chip ${previewMode === 'invoice' ? 'chip-active' : ''}`}
+            onClick={() => setPreviewMode('invoice')}
+          >
+            Invoice
+          </button>
+          <button
+            type="button"
+            className={`chip ${previewMode === 'receipt' ? 'chip-active' : ''}`}
+            onClick={() => setPreviewMode('receipt')}
+          >
+            Receipt
+          </button>
+        </div>
+      </div>
+      <div className="billing-preview-scale">
+        <InvoiceDocument
+          invoice={SAMPLE as never}
+          profile={form as never}
+          variant={previewMode}
+          payment={{
+            id: 'sample', amount: 212750, paid_on: '2026-09-14',
+            method: 'bank_transfer', reference: 'BOC-88213',
+            receipt_number: `${form.receipt_prefix}-2026-0007`,
+          }}
+        />
+      </div>
+    </div>
+    </div>
   );
 }

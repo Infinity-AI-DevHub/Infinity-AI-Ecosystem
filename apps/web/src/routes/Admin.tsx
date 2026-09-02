@@ -7,13 +7,15 @@
  */
 import { useState } from 'react';
 import { Activity, Building2, Database, Download, Plus, ScrollText, Trash2, Users2 } from 'lucide-react';
-import { api, type Paged } from '../lib/api';
+import { ApiError, api, type Paged } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { formatDate, formatDateTime, initials, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 import { LeaveTypeAdmin } from '../components/LeaveTypeAdmin';
+import { ProjectAdmin } from '../components/ProjectAdmin';
 import { saveBlobDownload } from '../lib/desktop';
+import { RecordEditor } from '../components/RecordEditor';
 
 type Operations = {
   queue: { pending: number; oldestSeconds: number };
@@ -51,7 +53,7 @@ type Company = {
 
 type Person = { id: string; displayName: string; email: string };
 
-type Tab = 'operations' | 'audit' | 'groups' | 'company' | 'leave';
+type Tab = 'operations' | 'audit' | 'groups' | 'projects' | 'company' | 'leave';
 
 export default function Admin() {
   const { can } = useSession();
@@ -85,6 +87,7 @@ export default function Admin() {
   );
 
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
+  const [renamingGroup, setRenamingGroup] = useState<Group | null>(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
 
   return (
@@ -102,6 +105,7 @@ export default function Admin() {
             ['operations', 'Operations', true],
             ['audit', 'Audit trail', can('audit.read')],
             ['groups', 'Groups', can('user.read')],
+            ['projects', 'Projects', can('project.manage')],
             ['company', 'Company', can('settings.read')],
             ['leave', 'Leave', can('leave.manage')],
           ] as [Tab, string, boolean][]
@@ -295,6 +299,8 @@ export default function Admin() {
         </section>
       ) : null}
 
+      {tab === 'projects' ? <ProjectAdmin /> : null}
+
       {tab === 'groups' ? (
         <section className="panel">
           <header className="panel-header">
@@ -332,6 +338,32 @@ export default function Admin() {
                             Manage members
                           </button>
                         ) : null}
+                        {can('user.update') ? (
+                          <>
+                            <button type="button" className="ghost-button"
+                                    onClick={() => setRenamingGroup(group)}>
+                              Rename
+                            </button>
+                            <button
+                              type="button"
+                              className="ghost-button"
+                              onClick={async () => {
+                                try {
+                                  await api.delete(`/admin/groups/${group.id}`);
+                                  invalidate('/admin/groups');
+                                } catch (err) {
+                                  // Refused while the group still grants access to
+                                  // anything; the message names how many.
+                                  window.alert(
+                                    err instanceof ApiError ? err.message : 'That group could not be archived',
+                                  );
+                                }
+                              }}
+                            >
+                              Archive
+                            </button>
+                          </>
+                        ) : null}
                       </span>
                     </li>
                   ))}
@@ -361,6 +393,21 @@ export default function Admin() {
             setCreatingGroup(false);
             invalidate('/admin/groups');
           }}
+        />
+      ) : null}
+
+      {renamingGroup ? (
+        <RecordEditor
+          title={`Rename ${renamingGroup.name}`}
+          path={`/admin/groups/${renamingGroup.id}`}
+          savedMessage="Group updated"
+          initial={renamingGroup as unknown as Record<string, unknown>}
+          fields={[
+            { name: 'name', label: 'Name', required: true },
+            { name: 'description', label: 'Description', type: 'textarea' },
+          ]}
+          onClose={() => setRenamingGroup(null)}
+          onSaved={() => { setRenamingGroup(null); invalidate('/admin/groups'); }}
         />
       ) : null}
 

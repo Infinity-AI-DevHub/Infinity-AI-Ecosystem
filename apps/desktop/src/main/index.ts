@@ -7,7 +7,7 @@
  */
 import { app, BrowserWindow, session } from 'electron';
 import { join } from 'node:path';
-import { devServer } from './config';
+import { devServer, learnStorageOrigin } from './config';
 import { registerIpc } from './ipc';
 import { APP_SCHEME, registerSchemePrivileges, serveRenderer } from './protocol';
 import { createWindow } from './window';
@@ -44,7 +44,16 @@ if (!app.requestSingleInstanceLock()) {
     mainWindow.focus();
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    /**
+     * Learn where uploads go before the first window opens.
+     *
+     * The content security policy is stamped on every response from the app:// handler,
+     * so the storage origin has to be known before the renderer loads - otherwise the
+     * first session runs with a policy that blocks every upload.
+     */
+    await learnStorageOrigin();
+
     /**
      * Strip the Electron and Chrome version strings from the user agent.
      *

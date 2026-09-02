@@ -40,7 +40,7 @@ export async function externalRoutes(app: FastifyInstance): Promise<void> {
     const actor = requireActor(request);
     const query = parse(
       z.object({
-        status: z.enum(['active', 'archived']).optional(),
+        status: z.enum(['upcoming', 'active', 'completed', 'archived']).optional(),
         kind: z.enum(['client', 'vendor', 'partner', 'contractor']).optional(),
         q: z.string().max(200).optional(),
       }),
@@ -60,6 +60,13 @@ export async function externalRoutes(app: FastifyInstance): Promise<void> {
     const actor = requireActor(request);
     const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
     return external.getOrganization(actor, id);
+  });
+
+  app.delete('/external/organizations/:id', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = request.params as { id: string };
+    await external.deleteOrganization(actor, id);
+    return reply.code(204).send();
   });
 
   app.patch('/external/organizations/:id', async (request) => {

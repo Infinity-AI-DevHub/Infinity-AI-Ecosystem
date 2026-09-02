@@ -34,6 +34,13 @@ const GUEST_ROUTES: RegExp[] = [
   /^\/api\/v1\/calendar\/events(\/[\w-]+)?$/,
   /^\/api\/v1\/calendar\/events\/[\w-]+\/(join|rsvp)$/,
 
+  // Tasks and documents shared with them. Both listings are grant-scoped and every
+  // individual read authorizes against the specific record, so a guest sees only what
+  // was deliberately given to them.
+  /^\/api\/v1\/tasks(\/[\w-]+)?$/,
+  /^\/api\/v1\/docs\/pages\/[\w-]+$/,
+  /^\/api\/v1\/docs\/pages\/[\w-]+\/attachments$/,
+
   // Their own notifications.
   /^\/api\/v1\/notifications(\/.*)?$/,
 ];

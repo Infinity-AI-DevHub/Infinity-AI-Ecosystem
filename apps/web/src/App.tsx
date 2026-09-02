@@ -35,6 +35,7 @@ const Admin = lazy(() => import('./routes/Admin'));
 const Announcements = lazy(() => import('./routes/Announcements'));
 const Search = lazy(() => import('./routes/Search'));
 const Settings = lazy(() => import('./routes/Settings'));
+const Messages = lazy(() => import('./routes/Messages'));
 
 /**
  * Route guard. This is a navigation convenience only - the API authorizes every call
@@ -94,6 +95,7 @@ function AppRoutes() {
                   <Route path="/admin" element={<Admin />} />
                   <Route path="/search" element={<Search />} />
                   <Route path="/settings" element={<Settings />} />
+              <Route path="/messages" element={<Messages />} />
                   <Route path="*" element={<UnknownRoute />} />
                 </Routes>
               </Suspense>

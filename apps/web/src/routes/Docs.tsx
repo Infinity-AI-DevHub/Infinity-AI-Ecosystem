@@ -16,6 +16,7 @@ import { formatDateTime, relativeTime } from '../lib/format';
 import { useSession } from '../lib/session';
 import { RichText } from '../components/RichText';
 import { Attachments } from '../components/Attachments';
+import { ShareWith } from '../components/ShareWith';
 
 type Space = {
   id: string;
@@ -204,6 +205,7 @@ function PageView({ page }: { page: Page }) {
   const { can } = useSession();
   const [editing, setEditing] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [sharingPage, setSharingPage] = useState<typeof page | null>(null);
 
   // Leaving edit mode when the page changes underneath prevents carrying one page's
   // draft into another.
@@ -224,6 +226,9 @@ function PageView({ page }: { page: Page }) {
           <h3>{page.title}</h3>
         </div>
         <div className="header-controls">
+          <button type="button" className="ghost-button" onClick={() => setSharingPage(page)}>
+            Share
+          </button>
           <button type="button" className="ghost-button" onClick={() => setShowHistory((v) => !v)}>
             <History size={15} aria-hidden="true" /> History
           </button>
@@ -248,6 +253,14 @@ function PageView({ page }: { page: Page }) {
           is stored is already safe to render. Sanitizing again here would only hide it
           if that ever stopped being true. */}
       <div className="doc-body" dangerouslySetInnerHTML={{ __html: page.body }} />
+    {sharingPage ? (
+        <ShareWith
+          resourceType="doc"
+          resourceId={sharingPage.id}
+          resourceName={sharingPage.title}
+          onClose={() => setSharingPage(null)}
+        />
+      ) : null}
     </article>
   );
 }

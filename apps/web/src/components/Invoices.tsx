@@ -14,6 +14,11 @@ import { invalidate, useQuery } from '../lib/query';
 import { useSession } from '../lib/session';
 import { ErrorState, Loading } from './States';
 import { useTextPrompt } from './Prompt';
+import { InvoiceDocument, type BillingProfile, type InvoiceForDocument } from './InvoiceDocument';
+import {
+  RecordClientSignatureDialog, RequestCountersignatureDialog, SignDocumentDialog,
+  nextInternalRole, useSignatureImages, type SignatureState,
+} from './DocumentSigning';
 
 type Bucket = 'all' | 'draft' | 'pending_approval' | 'outstanding' | 'overdue' | 'paid';
 
@@ -444,11 +449,16 @@ function ComposeInvoice({ onClose, onCreated }: { onClose: () => void; onCreated
 /* ------------------------------------------------------------------- detail */
 
 function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () => void }) {
-  const { can } = useSession();
+  const { can, session } = useSession();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [paying, setPaying] = useState(false);
   const [chasing, setChasing] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [receiptFor, setReceiptFor] = useState<any | null>(null);
+  const [signingInvoice, setSigningInvoice] = useState(false);
+  const [clientCopyFor, setClientCopyFor] = useState<'invoice' | null>(null);
+  const [requesting, setRequesting] = useState(false);
   const [addingBillingEmail, setAddingBillingEmail] = useState(false);
   const { ask, element: promptDialog } = useTextPrompt();
 
@@ -456,6 +466,12 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
     api.get(`/invoices/${invoiceId}`, signal),
   );
   const invoice = detail.data;
+
+  const signatureQuery = useQuery<SignatureState>(`/signatures/invoice/${invoiceId}`, (signal) =>
+    api.get(`/signatures/invoice/${invoiceId}`, signal),
+  );
+  const signatures = useSignatureImages(signatureQuery.data);
+  const myRole = nextInternalRole(signatures, session?.user?.id);
   const clientNeedsBillingEmail = Boolean(invoice && !invoice.billing_email);
 
   async function act(run: () => Promise<unknown>) {
@@ -555,6 +571,20 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
               </div>
             ) : null}
 
+            {signatures && !signatures.intact ? (
+              <p className="field-error">
+                This invoice changed after it was signed, so the signatures no longer
+                cover it.
+              </p>
+            ) : null}
+
+            {signatures && signatures.signatures.length > 0 ? (
+              <p className="field-hint">
+                Signed by {signatures.signatures.map((sig) => sig.signer_name).join(', ')}
+                {' '}({signatures.signatures.length} of {signatures.required.length})
+              </p>
+            ) : null}
+
             <dl className="detail-list">
               {invoice.representative || invoice.billing_email ? (
                 <>
@@ -612,6 +642,10 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
                     {' · '}{p.method?.replace('_', ' ')}
                     {p.receipt_number ? ` · receipt ${p.receipt_number}` : ''}
                     {p.recorded_by_name ? ` · recorded by ${p.recorded_by_name}` : ''}
+                    {' '}
+                    <button type="button" className="ghost-button" onClick={() => setReceiptFor(p)}>
+                      View receipt
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -651,6 +685,51 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
               ) : null}
               <button type="button" className="ghost-button" onClick={onClose}>Close</button>
             </div>
+
+            {previewing ? (
+              <DocumentPreview
+                invoice={invoice}
+                signatures={signatures}
+                onClose={() => setPreviewing(false)}
+              />
+            ) : null}
+
+            {signingInvoice && myRole ? (
+              <SignInvoice
+                invoice={invoice}
+                role={myRole}
+                onClose={() => setSigningInvoice(false)}
+                onSigned={() => { setSigningInvoice(false); signatureQuery.reload(); }}
+              />
+            ) : null}
+
+            {requesting ? (
+              <RequestCountersignatureDialog
+                documentType="invoice"
+                documentId={invoiceId}
+                documentLabel={invoice.number}
+                onClose={() => setRequesting(false)}
+                onRequested={() => { setRequesting(false); signatureQuery.reload(); }}
+              />
+            ) : null}
+
+            {clientCopyFor ? (
+              <RecordClientSignatureDialog
+                documentType="invoice"
+                documentId={invoiceId}
+                role="client_1"
+                onClose={() => setClientCopyFor(null)}
+                onRecorded={() => { setClientCopyFor(null); signatureQuery.reload(); }}
+              />
+            ) : null}
+
+            {receiptFor ? (
+              <ReceiptPanel
+                invoice={invoice}
+                payment={receiptFor}
+                onClose={() => setReceiptFor(null)}
+              />
+            ) : null}
 
             {promptDialog}
 
@@ -881,6 +960,204 @@ function ReminderPolicy({
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+
+/**
+ * The document as the client will receive it.
+ *
+ * Printing goes through the browser rather than a server-side PDF: the same markup is
+ * already on screen, print styles reduce it to the sheet alone, and "Save as PDF" in the
+ * print dialog produces the file. A second rendering path would be a second thing that
+ * can disagree with what was approved.
+ */
+function DocumentPreview({
+  invoice,
+  variant = 'invoice',
+  payment,
+  signatures,
+  onClose,
+}: {
+  invoice: InvoiceForDocument;
+  variant?: 'invoice' | 'receipt';
+  payment?: any;
+  signatures?: SignatureState;
+  onClose: () => void;
+}) {
+  const profile = useQuery<BillingProfile>('/billing/settings', (signal) =>
+    api.get('/billing/settings', signal),
+  );
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <div
+        className="dialog dialog-wide"
+        role="dialog"
+        aria-label={variant === 'receipt' ? 'Receipt preview' : 'Invoice preview'}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="panel-header no-print">
+          <span className="panel-title">
+            {variant === 'receipt' ? 'Receipt preview' : 'Invoice preview'}
+          </span>
+          <div className="table-actions">
+            <button type="button" className="ghost-button" onClick={() => window.print()}>
+              Print or save as PDF
+            </button>
+            <button type="button" className="ghost-button" onClick={onClose}>Close</button>
+          </div>
+        </header>
+
+        {profile.data ? (
+          <InvoiceDocument
+            invoice={invoice}
+            profile={profile.data}
+            variant={variant}
+            payment={payment}
+            signatures={signatures?.signatures}
+            requiredRoles={signatures?.required}
+          />
+        ) : (
+          <p className="field-hint">Loading your billing details…</p>
+        )}
+
+        <p className="field-hint no-print">
+          Letterhead, payment instructions and footers come from Settings → Invoice and
+          receipt details.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+
+/** Placing a signature on the invoice itself, so what is signed is what is sent. */
+function SignInvoice({
+  invoice, role, onClose, onSigned,
+}: {
+  invoice: any; role: 'internal_1' | 'internal_2';
+  onClose: () => void; onSigned: () => void;
+}) {
+  const profile = useQuery<BillingProfile>('/billing/settings', (signal) =>
+    api.get('/billing/settings', signal),
+  );
+  if (!profile.data) return null;
+  return (
+    <SignDocumentDialog
+      documentType="invoice"
+      documentId={invoice.id}
+      documentLabel={invoice.number}
+      role={role}
+      onClose={onClose}
+      onSigned={onSigned}
+    >
+      <InvoiceDocument invoice={invoice} profile={profile.data} />
+    </SignDocumentDialog>
+  );
+}
+
+/**
+ * A receipt, with its own signatures.
+ *
+ * Four rather than three: both sides acknowledge that money changed hands, so the client
+ * has two slots where an invoice gives them one.
+ */
+function ReceiptPanel({
+  invoice, payment, onClose,
+}: { invoice: any; payment: any; onClose: () => void }) {
+  const { can, session } = useSession();
+  const [signing, setSigning] = useState(false);
+  const [clientSlot, setClientSlot] = useState<'client_1' | 'client_2' | null>(null);
+
+  const profile = useQuery<BillingProfile>('/billing/settings', (signal) =>
+    api.get('/billing/settings', signal),
+  );
+  const state = useQuery<SignatureState>(`/signatures/receipt/${payment.id}`, (signal) =>
+    api.get(`/signatures/receipt/${payment.id}`, signal),
+  );
+  const signatures = useSignatureImages(state.data);
+  const myRole = nextInternalRole(signatures, session?.user?.id);
+  const taken = new Set((signatures?.signatures ?? []).map((s) => s.role));
+
+  if (!profile.data) return null;
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <div className="dialog dialog-wide" role="dialog" aria-label="Receipt"
+           onClick={(event) => event.stopPropagation()}>
+        <header className="panel-header no-print">
+          <span className="panel-title">
+            Receipt {payment.receipt_number}
+            {signatures ? ` · ${signatures.signatures.length} of ${signatures.required.length} signed` : ''}
+          </span>
+          <div className="table-actions">
+            {can('document.sign') && myRole ? (
+              <button type="button" className="primary-button" onClick={() => setSigning(true)}>
+                Sign
+              </button>
+            ) : null}
+            {can('document.sign') && !taken.has('client_1') ? (
+              <button type="button" className="ghost-button" onClick={() => setClientSlot('client_1')}>
+                Client signature
+              </button>
+            ) : null}
+            {can('document.sign') && taken.has('client_1') && !taken.has('client_2') ? (
+              <button type="button" className="ghost-button" onClick={() => setClientSlot('client_2')}>
+                Second client signature
+              </button>
+            ) : null}
+            <button type="button" className="ghost-button" onClick={() => window.print()}>
+              Print or save as PDF
+            </button>
+            <button type="button" className="ghost-button" onClick={onClose}>Close</button>
+          </div>
+        </header>
+
+        {signatures && !signatures.intact ? (
+          <p className="field-error no-print">
+            This receipt changed after it was signed.
+          </p>
+        ) : null}
+
+        <InvoiceDocument
+          invoice={invoice}
+          profile={profile.data}
+          variant="receipt"
+          payment={payment}
+          signatures={signatures?.signatures}
+          requiredRoles={signatures?.required}
+        />
+
+        {signing && myRole ? (
+          <SignDocumentDialog
+            documentType="receipt"
+            documentId={payment.id}
+            documentLabel={payment.receipt_number}
+            role={myRole}
+            onClose={() => setSigning(false)}
+            onSigned={() => { setSigning(false); state.reload(); }}
+          >
+            <InvoiceDocument
+              invoice={invoice}
+              profile={profile.data!}
+              variant="receipt"
+              payment={payment}
+            />
+          </SignDocumentDialog>
+        ) : null}
+
+        {clientSlot ? (
+          <RecordClientSignatureDialog
+            documentType="receipt"
+            documentId={payment.id}
+            role={clientSlot}
+            onClose={() => setClientSlot(null)}
+            onRecorded={() => { setClientSlot(null); state.reload(); }}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -4,7 +4,7 @@
  * the control, not an afterthought.
  */
 import { jsonArray, many, newId, one, pool } from '../core/db.js';
-import { notFound, forbidden } from '../core/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../core/errors.js';
 import { authorize, invalidateCapabilityCache, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
 import { decodeCursor, encodeCursor } from '../core/validation.js';
@@ -119,6 +119,64 @@ export async function createGroup(actor: Actor, name: string, description?: stri
 }
 
 /** The editor needs the actual membership set, not just its count, to avoid destructive saves. */
+/**
+ * Renaming a group.
+ *
+ * Groups carry resource grants and announcement audiences, so the name is a label rather
+ * than an identifier and can change freely.
+ */
+export async function updateGroup(
+  actor: Actor,
+  groupId: string,
+  input: Partial<{ name: string; description: string }>,
+) {
+  // Same capability as createGroup: editing a group should not demand a permission that
+  // creating one does not.
+  await authorize({ actor, capability: 'user.update', resourceless: true });
+  const existing = await one('SELECT id FROM `groups` WHERE id = $1 AND company_id = $2', [
+    groupId, actor.companyId,
+  ]);
+  if (!existing) throw notFound('Group not found');
+  if (input.name !== undefined && !input.name.trim()) throw badRequest('A group needs a name');
+
+  await pool.query(
+    'UPDATE `groups` SET name = COALESCE($3, name), description = COALESCE($4, description) '
+      + 'WHERE id = $1 AND company_id = $2',
+    [groupId, actor.companyId, input.name?.trim() ?? null, input.description ?? null],
+  );
+  await auditFromActor(actor, 'group.update', {
+    resourceType: 'group', resourceId: groupId, metadata: { changed: Object.keys(input) },
+  });
+  return one('SELECT * FROM `groups` WHERE id = $1', [groupId]);
+}
+
+/**
+ * Archiving a group.
+ *
+ * Refused while the group still grants access to anything. A group is an access
+ * decision, and removing it silently would revoke permissions nobody asked to revoke -
+ * the sort of change that is only noticed when somebody cannot do their job.
+ */
+export async function archiveGroup(actor: Actor, groupId: string): Promise<void> {
+  await authorize({ actor, capability: 'user.update', resourceless: true });
+  const grants = await one<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM resource_grants
+      WHERE company_id = $1 AND subject_type = 'group' AND subject_id = $2`,
+    [actor.companyId, groupId],
+  );
+  if (Number(grants?.n ?? 0) > 0) {
+    throw conflict(
+      `This group still grants access to ${grants!.n} resource(s). Remove those grants first.`,
+    );
+  }
+  const result = await pool.query(
+    'UPDATE `groups` SET archived_at = NOW(3) WHERE id = $1 AND company_id = $2 AND archived_at IS NULL',
+    [groupId, actor.companyId],
+  );
+  if (result.rowCount === 0) throw notFound('Group not found');
+  await auditFromActor(actor, 'group.archive', { resourceType: 'group', resourceId: groupId });
+}
+
 export async function listGroupMemberIds(actor: Actor, groupId: string): Promise<string[]> {
   await authorize({ actor, capability: 'user.read', resourceless: true });
   const group = await one('SELECT 1 FROM `groups` WHERE id = $1 AND company_id = $2', [
