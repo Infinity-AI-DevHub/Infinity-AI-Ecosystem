@@ -14,6 +14,7 @@ import { formatDateTime, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 import { setNotice } from '../lib/notice';
 import { NotificationSettings } from '../components/NotificationSettings';
+import { SignatureSettings } from '../components/SignatureSettings';
 import { BillingSettings } from '../components/BillingSettings';
 
 type Delegation = {
@@ -338,6 +339,8 @@ export default function Settings() {
         </section>
 
         {can('billing.configure') ? <BillingSettings /> : null}
+
+        <SignatureSettings />
 
         <NotificationSettings />
 

@@ -13,6 +13,7 @@ import * as files from '../../domains/files.js';
 import * as approvals from '../../domains/approvals.js';
 import * as announcements from '../../domains/announcements.js';
 import * as search from '../../domains/search.js';
+import * as sharing from '../../domains/sharing.js';
 
 const idParam = z.object({ id: z.string().uuid() });
 
@@ -268,6 +269,97 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
   app.get('/projects', async (request) => {
     const actor = requireActor(request);
     return { items: await tasks.listProjects(actor) };
+  });
+
+  app.post('/calendar/events/:id/remind', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    await calendar.sendReminderNow(actor, id);
+    return reply.code(204).send();
+  });
+
+  // ---- sharing with clients and guests -----------------------------------
+  app.get('/shares/:type/:id', async (request) => {
+    const actor = requireActor(request);
+    const { type, id } = request.params as { type: sharing.ShareableType; id: string };
+    return { items: await sharing.listShares(actor, type, id) };
+  });
+
+  app.post('/shares/:type/:id', async (request) => {
+    const actor = requireActor(request);
+    const { type, id } = request.params as { type: sharing.ShareableType; id: string };
+    const input = parse(
+      z.object({
+        userIds: z.array(z.string().uuid()).min(1).max(100),
+        access: z.enum(['view', 'contribute']),
+        expiresAt: z.string().datetime().nullable().optional(),
+        note: z.string().max(1000).nullable().optional(),
+      }),
+      request.body,
+    );
+    return sharing.shareWithPeople(actor, { resourceType: type, resourceId: id, ...input });
+  });
+
+  app.delete('/shares/:type/:id/:userId', async (request, reply) => {
+    const actor = requireActor(request);
+    const { type, id, userId } = request.params as {
+      type: sharing.ShareableType; id: string; userId: string;
+    };
+    await sharing.revokeShare(actor, type, id, userId);
+    return reply.code(204).send();
+  });
+
+  // ---- messages sent by hand ---------------------------------------------
+  app.get('/messages', async (request) => {
+    const actor = requireActor(request);
+    return { items: await sharing.listMessages(actor) };
+  });
+
+  app.post('/messages', async (request, reply) => {
+    const actor = requireActor(request);
+    const input = parse(
+      z.object({
+        subject: z.string().min(1).max(300),
+        body: z.string().min(1).max(20000),
+        userIds: z.array(z.string().uuid()).optional(),
+        groupIds: z.array(z.string().uuid()).optional(),
+        orgIds: z.array(z.string().uuid()).optional(),
+        everyone: z.boolean().optional(),
+      }),
+      request.body,
+    );
+    return withIdempotency(request, reply, 'POST /messages', async () => ({
+      statusCode: 201,
+      body: await sharing.sendMessage(actor, input),
+    }));
+  });
+
+  app.patch('/projects/:id', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    const input = parse(
+      z.object({
+        name: z.string().min(1).max(120).optional(),
+        description: z.string().max(4000).optional(),
+        status: z.enum(['active', 'on_hold', 'archived']).optional(),
+        ownerId: z.string().uuid().nullable().optional(),
+        clientOrgId: z.string().uuid().nullable().optional(),
+        startsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+        endsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+      // The key is absent on purpose: task references are built from it and appear
+      // outside this system, so it cannot change.
+      }).strict(),
+      request.body,
+    );
+    return tasks.updateProject(actor, id, input);
+  });
+
+  app.delete('/projects/:id', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    // Archive, not delete: tasks and invoices reference a project and must keep resolving.
+    await tasks.archiveProject(actor, id);
+    return reply.code(204).send();
   });
 
   app.post('/projects', async (request, reply) => {

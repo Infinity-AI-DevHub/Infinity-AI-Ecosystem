@@ -14,6 +14,7 @@ import { AsyncSection, Empty, FormError } from '../components/States';
 import { formatBytes, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 import { uploadWorkspaceFile } from '../lib/uploads';
+import { ShareWith } from '../components/ShareWith';
 
 type FileRecord = {
   id: string;
@@ -33,6 +34,7 @@ type Folder = { id: string; parent_id: string | null; name: string; path: string
 export default function Files() {
   const { can } = useSession();
   const [folderId, setFolderId] = useState<string | null>(null);
+  const [sharingFolder, setSharingFolder] = useState<{ id: string; name: string } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -306,6 +308,15 @@ export default function Files() {
             setCreatingFolder(false);
             invalidate('/files/folders');
           }}
+        />
+      ) : null}
+
+      {sharingFolder ? (
+        <ShareWith
+          resourceType="folder"
+          resourceId={sharingFolder.id}
+          resourceName={sharingFolder.name}
+          onClose={() => setSharingFolder(null)}
         />
       ) : null}
     </div>

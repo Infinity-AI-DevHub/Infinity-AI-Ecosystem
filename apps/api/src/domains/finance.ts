@@ -14,8 +14,8 @@
  * receipt, because approving eleven receipts individually is how these systems become
  * hated.
  */
-import { many, newId, one, reload, transaction } from '../core/db.js';
-import { conflict, forbidden, notFound, unprocessable } from '../core/errors.js';
+import { many, newId, one, pool, reload, transaction } from '../core/db.js';
+import { badRequest, conflict, forbidden, notFound, unprocessable } from '../core/errors.js';
 import { authorize, assertSeparationOfDuties, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
 import * as approvals from './approvals.js';
@@ -492,6 +492,228 @@ export type AssetRow = {
   assigned_to: string | null;
   location: string | null;
 };
+
+/**
+ * Editing a vendor.
+ *
+ * Retiring rather than deleting: assets record which vendor they were bought from, and
+ * removing the row would erase that from every asset's history. A retired vendor leaves
+ * the pickers and stays readable everywhere it is already referenced.
+ */
+export async function updateVendor(
+  actor: Actor,
+  vendorId: string,
+  input: Partial<{
+    name: string;
+    contactEmail: string | null;
+    contactPhone: string | null;
+    taxId: string | null;
+    notes: string | null;
+    status: 'active' | 'archived';
+  }>,
+) {
+  await authorize({ actor, capability: 'vendor.manage', resourceless: true });
+  const existing = await one('SELECT id FROM vendors WHERE id = $1 AND company_id = $2', [
+    vendorId, actor.companyId,
+  ]);
+  if (!existing) throw notFound('Vendor not found');
+  if (input.name !== undefined && !input.name.trim()) throw badRequest('A vendor needs a name');
+
+  await pool.query(
+    `UPDATE vendors
+        SET name = COALESCE($3, name),
+            contact_email = COALESCE($4, contact_email),
+            contact_phone = COALESCE($5, contact_phone),
+            tax_id = COALESCE($6, tax_id),
+            notes = COALESCE($7, notes),
+            status = COALESCE($8, status)
+      WHERE id = $1 AND company_id = $2`,
+    [
+      vendorId, actor.companyId,
+      input.name?.trim() ?? null,
+      input.contactEmail?.trim().toLowerCase() ?? null,
+      input.contactPhone?.trim() ?? null,
+      input.taxId?.trim() ?? null,
+      input.notes ?? null,
+      input.status ?? null,
+    ],
+  );
+  await auditFromActor(actor, 'vendor.update', {
+    resourceType: 'vendor', resourceId: vendorId, metadata: { changed: Object.keys(input) },
+  });
+  return one('SELECT * FROM vendors WHERE id = $1', [vendorId]);
+}
+
+export async function archiveVendor(actor: Actor, vendorId: string): Promise<void> {
+  await authorize({ actor, capability: 'vendor.manage', resourceless: true });
+  const result = await pool.query(
+    `UPDATE vendors SET status = 'archived' WHERE id = $1 AND company_id = $2`,
+    [vendorId, actor.companyId],
+  );
+  if (result.rowCount === 0) throw notFound('Vendor not found');
+  await auditFromActor(actor, 'vendor.archive', { resourceType: 'vendor', resourceId: vendorId });
+}
+
+/**
+ * Adjusting a budget.
+ *
+ * The committed and spent figures are deliberately not editable: they are derived from
+ * approved and reimbursed claims, and a hand-edited total would disagree with the claims
+ * that produced it.
+ */
+export async function updateBudget(
+  actor: Actor,
+  budgetId: string,
+  input: Partial<{
+    name: string;
+    amount: number;
+    periodStart: string;
+    periodEnd: string;
+    status: 'active' | 'closed';
+  }>,
+) {
+  await authorize({ actor, capability: 'budget.manage', resourceless: true });
+  const existing = await one<{ spent_amount: string }>(
+    'SELECT spent_amount FROM budgets WHERE id = $1 AND company_id = $2',
+    [budgetId, actor.companyId],
+  );
+  if (!existing) throw notFound('Budget not found');
+  if (input.amount !== undefined) {
+    if (!(input.amount >= 0)) throw badRequest('A budget cannot be negative');
+    // Warned about rather than blocked: an overspend is a real situation, and refusing
+    // to record the corrected figure does not make it go away.
+    if (input.amount < Number(existing.spent_amount)) {
+      throw badRequest(
+        `That is below the ${existing.spent_amount} already spent. Close this budget and open a new one instead.`,
+      );
+    }
+  }
+  if (input.periodStart && input.periodEnd && input.periodEnd < input.periodStart) {
+    throw badRequest('The period cannot end before it starts');
+  }
+
+  await pool.query(
+    `UPDATE budgets
+        SET name = COALESCE($3, name),
+            amount = COALESCE($4, amount),
+            period_start = COALESCE($5, period_start),
+            period_end = COALESCE($6, period_end),
+            status = COALESCE($7, status)
+      WHERE id = $1 AND company_id = $2`,
+    [budgetId, actor.companyId, input.name?.trim() ?? null, input.amount ?? null,
+     input.periodStart ?? null, input.periodEnd ?? null, input.status ?? null],
+  );
+  await auditFromActor(actor, 'budget.update', {
+    resourceType: 'budget', resourceId: budgetId, metadata: { changed: Object.keys(input) },
+  });
+  return one('SELECT * FROM budgets WHERE id = $1', [budgetId]);
+}
+
+export async function closeBudget(actor: Actor, budgetId: string): Promise<void> {
+  await authorize({ actor, capability: 'budget.manage', resourceless: true });
+  const result = await pool.query(
+    `UPDATE budgets SET status = 'closed' WHERE id = $1 AND company_id = $2`,
+    [budgetId, actor.companyId],
+  );
+  if (result.rowCount === 0) throw notFound('Budget not found');
+  await auditFromActor(actor, 'budget.close', { resourceType: 'budget', resourceId: budgetId });
+}
+
+/**
+ * Editing an expense category.
+ *
+ * The key is immutable for the same reason a leave type's is: existing claims refer to
+ * the category, and re-keying would detach them from what they were filed under.
+ */
+export async function updateCategory(
+  actor: Actor,
+  categoryId: string,
+  input: Partial<{
+    name: string;
+    limitAmount: number | null;
+    requiresReceiptAbove: number;
+    active: boolean;
+  }>,
+) {
+  await authorize({ actor, capability: 'budget.manage', resourceless: true });
+  const existing = await one('SELECT id FROM expense_categories WHERE id = $1 AND company_id = $2', [
+    categoryId, actor.companyId,
+  ]);
+  if (!existing) throw notFound('Category not found');
+  if (input.name !== undefined && !input.name.trim()) throw badRequest('A category needs a name');
+  if (input.limitAmount != null && input.limitAmount < 0) throw badRequest('A limit cannot be negative');
+
+  await pool.query(
+    `UPDATE expense_categories
+        SET name = COALESCE($3, name),
+            limit_amount = COALESCE($4, limit_amount),
+            requires_receipt_above = COALESCE($5, requires_receipt_above),
+            active = COALESCE($6, active)
+      WHERE id = $1 AND company_id = $2`,
+    [categoryId, actor.companyId, input.name?.trim() ?? null, input.limitAmount ?? null,
+     input.requiresReceiptAbove ?? null, input.active ?? null],
+  );
+  await auditFromActor(actor, 'expense_category.update', {
+    resourceType: 'expense_category', resourceId: categoryId, metadata: { changed: Object.keys(input) },
+  });
+  return one('SELECT * FROM expense_categories WHERE id = $1', [categoryId]);
+}
+
+/**
+ * Editing an asset.
+ *
+ * Its assignment is not changed here - that goes through assignAsset, which writes the
+ * custody history. Editing the record and moving the equipment are different acts.
+ */
+export async function updateAsset(
+  actor: Actor,
+  assetId: string,
+  input: Partial<{
+    name: string;
+    category: string;
+    serialNumber: string | null;
+    vendorId: string | null;
+    purchasedOn: string | null;
+    purchaseCost: number | null;
+    warrantyUntil: string | null;
+    location: string | null;
+    notes: string | null;
+    status: string;
+  }>,
+) {
+  await authorize({ actor, capability: 'asset.manage', resourceless: true });
+  const existing = await one<{ assigned_to: string | null }>(
+    'SELECT assigned_to FROM assets WHERE id = $1 AND company_id = $2',
+    [assetId, actor.companyId],
+  );
+  if (!existing) throw notFound('Asset not found');
+  if (input.status === 'retired' && existing.assigned_to) {
+    throw conflict('This asset is still assigned to someone. Return it before retiring it.');
+  }
+
+  await pool.query(
+    `UPDATE assets
+        SET name = COALESCE($3, name),
+            category = COALESCE($4, category),
+            serial_number = COALESCE($5, serial_number),
+            vendor_id = COALESCE($6, vendor_id),
+            purchased_on = COALESCE($7, purchased_on),
+            purchase_cost = COALESCE($8, purchase_cost),
+            warranty_until = COALESCE($9, warranty_until),
+            location = COALESCE($10, location),
+            notes = COALESCE($11, notes),
+            status = COALESCE($12, status)
+      WHERE id = $1 AND company_id = $2`,
+    [assetId, actor.companyId, input.name?.trim() ?? null, input.category ?? null,
+     input.serialNumber ?? null, input.vendorId ?? null, input.purchasedOn ?? null,
+     input.purchaseCost ?? null, input.warrantyUntil ?? null, input.location ?? null,
+     input.notes ?? null, input.status ?? null],
+  );
+  await auditFromActor(actor, 'asset.update', {
+    resourceType: 'asset', resourceId: assetId, metadata: { changed: Object.keys(input) },
+  });
+  return one('SELECT * FROM assets WHERE id = $1', [assetId]);
+}
 
 export async function listAssets(
   actor: Actor,

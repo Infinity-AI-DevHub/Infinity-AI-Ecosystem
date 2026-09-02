@@ -12,6 +12,7 @@ import { auditFromActor } from '../core/audit.js';
 import { emit } from '../core/outbox.js';
 import { meetingDriver, type JoinTicket } from '../adapters/meetings.js';
 import * as searchIndex from './search.js';
+import { occurrencesBetween, parseRecurrence } from '../core/recurrence.js';
 
 export type EventRow = {
   id: string;
@@ -256,31 +257,128 @@ export async function listEvents(
        JOIN event_attendees ea ON ea.event_id = e.id AND ea.user_id = $2
        LEFT JOIN event_attendees me ON me.event_id = e.id AND me.user_id = $5
       WHERE e.company_id = $1
-        AND e.starts_at < $4 AND e.ends_at > $3
         AND e.status = 'confirmed'
+        AND (
+          -- A single meeting has to overlap the window.
+          (e.recurrence_rule IS NULL AND e.starts_at < $4 AND e.ends_at > $3)
+          -- A series only has to have started before the window closes: which of its
+          -- occurrences land inside is decided when the rule is expanded below.
+          OR (e.recurrence_rule IS NOT NULL AND e.starts_at < $4)
+        )
       ORDER BY e.starts_at`,
     [actor.companyId, targetUser, range.from, range.to, actor.userId],
   );
-  return rows.map(publicEvent);
+  return expandSeries(rows, range.from, range.to).map(publicEvent);
+}
+
+/**
+ * Turns stored rows into the occurrences that actually fall in the window.
+ *
+ * A recurring meeting is one row with a rule, so listing rows shows only the first
+ * occurrence - which is why a weekly meeting created in September vanished from the
+ * calendar in October.
+ *
+ * Each generated occurrence keeps the parent's id and carries its own start, plus an
+ * `occurrenceId` that is unique per instance so React keys and RSVP links do not collide
+ * across a series.
+ */
+function expandSeries<T extends EventRow>(rows: T[], from: Date, to: Date): T[] {
+  const out: T[] = [];
+  for (const row of rows) {
+    const rule = parseRecurrence(row.recurrence_rule);
+    if (!rule) {
+      out.push(row);
+      continue;
+    }
+    const start = new Date(row.starts_at);
+    const duration = new Date(row.ends_at).getTime() - start.getTime();
+    for (const occurrenceStart of occurrencesBetween(start, duration, rule, from, to)) {
+      out.push({
+        ...row,
+        starts_at: occurrenceStart,
+        ends_at: new Date(occurrenceStart.getTime() + duration),
+        occurrence_id: `${row.id}:${occurrenceStart.toISOString()}`,
+      } as T);
+    }
+  }
+  return out.sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
+}
+
+/**
+ * Sending a reminder now, by hand.
+ *
+ * The scheduled reminder fires once at a fixed offset. This is for the case that offset
+ * does not cover — a meeting moved forward, or half the room having forgotten — and it
+ * carries its own dedupe key so pressing the button twice does not send twice.
+ */
+export async function sendReminderNow(actor: Actor, eventId: string): Promise<void> {
+  const event = await one<{ id: string; title: string; starts_at: Date; organizer_id: string }>(
+    'SELECT id, title, starts_at, organizer_id FROM calendar_events WHERE id = $1 AND company_id = $2',
+    [eventId, actor.companyId],
+  );
+  if (!event) throw notFound('Meeting not found');
+  if (event.organizer_id !== actor.userId) {
+    await authorize({ actor, capability: 'event.update', resourceless: true });
+  }
+
+  const attendees = await many<{ user_id: string }>(
+    `SELECT user_id FROM event_attendees WHERE event_id = $1 AND rsvp <> 'declined'`,
+    [eventId],
+  );
+  if (attendees.length === 0) return;
+
+  await emit({
+    companyId: actor.companyId,
+    type: 'meeting.reminder_due',
+    actorId: actor.userId,
+    payload: {
+      eventId,
+      title: event.title,
+      startsAt: new Date(event.starts_at).toISOString(),
+      userIds: attendees.map((a) => a.user_id).filter((id) => id !== actor.userId),
+      // Distinct from the scheduled one, so sending by hand is not swallowed by the
+      // automatic reminder's dedupe key, or vice versa.
+      manual: true,
+    },
+  });
+  await auditFromActor(actor, 'meeting.reminder_sent', {
+    resourceType: 'calendar_event', resourceId: eventId,
+  });
 }
 
 /** Free/busy shows only availability, never the private content of someone's day. */
 export async function freeBusy(actor: Actor, userIds: string[], from: Date, to: Date) {
-  const rows = await many<{ user_id: string; starts_at: Date; ends_at: Date }>(
-    `SELECT ea.user_id, e.starts_at, e.ends_at
+  const rows = await many<{ user_id: string; starts_at: Date; ends_at: Date; recurrence_rule: string | null }>(
+    `SELECT ea.user_id, e.starts_at, e.ends_at, e.recurrence_rule
        FROM calendar_events e
        JOIN event_attendees ea ON ea.event_id = e.id
       WHERE e.company_id = $1
         AND JSON_CONTAINS($2, JSON_QUOTE(ea.user_id))
         AND e.status = 'confirmed'
         AND ea.rsvp <> 'declined'
-        AND e.starts_at < $4 AND e.ends_at > $3
+        AND (
+          (e.recurrence_rule IS NULL AND e.starts_at < $4 AND e.ends_at > $3)
+          OR (e.recurrence_rule IS NOT NULL AND e.starts_at < $4)
+        )
       ORDER BY e.starts_at`,
     [actor.companyId, JSON.stringify(userIds), from, to],
   );
   const busy: Record<string, { from: Date; to: Date }[]> = {};
   for (const row of rows) {
-    (busy[row.user_id] ??= []).push({ from: row.starts_at, to: row.ends_at });
+    // Same expansion as the calendar: without it a weekly meeting would show someone as
+    // free every week except the first, and the room-clash check would let it through.
+    const rule = parseRecurrence(row.recurrence_rule);
+    const start = new Date(row.starts_at);
+    const duration = new Date(row.ends_at).getTime() - start.getTime();
+    const starts = rule
+      ? occurrencesBetween(start, duration, rule, from, to)
+      : [start];
+    for (const occurrence of starts) {
+      (busy[row.user_id] ??= []).push({
+        from: occurrence,
+        to: new Date(occurrence.getTime() + duration),
+      });
+    }
   }
   return busy;
 }

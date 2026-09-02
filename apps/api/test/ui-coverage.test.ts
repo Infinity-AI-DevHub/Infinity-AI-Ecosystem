@@ -70,10 +70,34 @@ describe('interface coverage', () => {
       calls.get(stem)!.add(m[1]!);
     }
 
+    /**
+     * Paths handed to a component rather than called directly.
+     *
+     * RecordEditor takes the endpoint as a `path` prop and PATCHes it, so the call site
+     * is `api.patch(path, …)` with a variable and the literal never appears next to a
+     * verb. Treating those props as PATCH usage is accurate — that component does
+     * nothing else — and without it every screen built on it looks unreachable.
+     */
+    for (const m of client.matchAll(/path=\{`([^`]+)`\}/g)) {
+      const stem = m[1]!.replace(/\$\{[^}]*\}/g, ':x').replace(/\/$/, '');
+      if (!calls.has(stem)) calls.set(stem, new Set());
+      calls.get(stem)!.add('patch');
+    }
+
+    /**
+     * A route parameter matches any single literal segment.
+     *
+     * `/signatures/:type/:id/sign` is called as `/signatures/quotation/${id}/sign` — the
+     * client fills one parameter with a literal and interpolates the other. Comparing
+     * normalised strings misses that, so the route becomes a pattern instead.
+     */
     const covered = (verb: string, path: string) => {
-      const stem = path.replace(/\/:[a-zA-Z]+/g, '/:x').replace(/\/$/, '');
+      const pattern = new RegExp(
+        '^' + path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\/:[a-zA-Z]+/g, '/[^/]+'),
+      );
       for (const [known, verbs] of calls) {
-        if (known.startsWith(stem) && verbs.has(verb)) return true;
+        if (!verbs.has(verb)) continue;
+        if (pattern.test(known)) return true;
       }
       return false;
     };

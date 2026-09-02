@@ -8,11 +8,13 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { FolderPlus, Plus } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { TaskPriority } from '../components/TaskPriority';
 import { relativeTime, titleCase } from '../lib/format';
+import { PeoplePicker } from '../components/PeoplePicker';
+import { ShareWith } from '../components/ShareWith';
 
 type Project = {
   id: string;
@@ -36,6 +38,8 @@ type Task = {
   priority: string;
   assigneeId: string | null;
   assigneeName: string | null;
+  /** Everyone on the task. assigneeId is just the first of these. */
+  assignees: { id: string; name: string }[];
   dueAt: string | null;
   labels: string[];
   version: number;
@@ -151,7 +155,12 @@ export default function Tasks() {
                               <strong>{task.title}</strong>
                               <span className="task-meta">
                                 {task.reference}
-                                {task.assigneeName ? ` · ${task.assigneeName}` : ''}
+                                {/* Everyone on it, and "Unassigned" said out loud rather
+                                    than left as a gap - an unowned task is the one that
+                                    needs picking up. */}
+                                {(task.assignees ?? []).length === 0
+                                  ? ' · Unassigned'
+                                  : ` · ${task.assignees.map((p) => p.name).join(', ')}`}
                                 {task.dueAt ? ` · due ${relativeTime(task.dueAt)}` : ''}
                               </span>
                             </button>
@@ -237,6 +246,8 @@ function TaskDialog({
   detail: ReturnType<typeof useQuery<TaskDetail>>;
   onClose: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const [comment, setComment] = useState('');
 
   const addComment = useMutation(
@@ -265,27 +276,42 @@ function TaskDialog({
           <ErrorState error={detail.error} onRetry={detail.reload} />
         ) : detail.data ? (
           <>
-            <h3 id="task-dialog-title">{detail.data.title}</h3>
-            <p className="task-meta">
-              {detail.data.reference} · {titleCase(detail.data.status)} ·{' '}
-              {titleCase(detail.data.priority)} priority
-              {detail.data.assigneeName ? ` · ${detail.data.assigneeName}` : ' · Unassigned'}
-            </p>
+            <header className="task-detail-head">
+              <div>
+                <span className="task-detail-ref">{detail.data.reference}</span>
+                <h3 id="task-dialog-title" className="task-detail-title">{detail.data.title}</h3>
+              </div>
+              <div className="table-actions">
+                <button type="button" className="ghost-button" onClick={() => setSharing(true)}>
+                  Share
+                </button>
+                <button type="button" className="ghost-button" onClick={() => setEditing(true)}>
+                  Edit
+                </button>
+                <button type="button" className="ghost-button" onClick={onClose}>Close</button>
+              </div>
+            </header>
 
-            {detail.data.description ? <p>{detail.data.description}</p> : null}
+            <div className="task-detail-body">
+              <div>
+                {detail.data.description ? (
+                  <p className="message-text">{detail.data.description}</p>
+                ) : (
+                  <p className="field-hint">No description.</p>
+                )}
 
-            {detail.data.dependencies.length > 0 ? (
-              <section>
-                <h4>Depends on</h4>
-                <ul className="dependency-list">
-                  {detail.data.dependencies.map((dependency) => (
-                    <li key={dependency.id}>
-                      {dependency.title} — {titleCase(dependency.status)}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
+                {detail.data.dependencies.length > 0 ? (
+                  <section>
+                    <h4>Blocked by</h4>
+                    <ul className="dependency-list">
+                      {detail.data.dependencies.map((dependency) => (
+                        <li key={dependency.id}>
+                          {dependency.title} — {titleCase(dependency.status)}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
 
             <section>
               <h4>Comments</h4>
@@ -323,6 +349,40 @@ function TaskDialog({
               </form>
             </section>
 
+              </div>
+
+              {/* The facts rail: the answers people open a task to check, in one place
+                  rather than run together in a single line of metadata. */}
+              <dl className="task-facts">
+                <div className="task-fact">
+                  <dt>Status</dt>
+                  <dd><span className="status-tag status-invited">{titleCase(detail.data.status)}</span></dd>
+                </div>
+                <div className="task-fact">
+                  <dt>Priority</dt>
+                  <dd>{titleCase(detail.data.priority)}</dd>
+                </div>
+                <div className="task-fact">
+                  <dt>Assigned to</dt>
+                  <dd className="assignee-stack">
+                    {(detail.data.assignees ?? []).length === 0 ? (
+                      <span className="field-hint">Nobody yet</span>
+                    ) : (
+                      detail.data.assignees!.map((person) => (
+                        <span key={person.id} className="chip">{person.name}</span>
+                      ))
+                    )}
+                  </dd>
+                </div>
+                {detail.data.dueAt ? (
+                  <div className="task-fact">
+                    <dt>Due</dt>
+                    <dd>{new Date(detail.data.dueAt).toLocaleDateString()}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            </div>
+
             <section>
               <h4>History</h4>
               <ul className="activity-list">
@@ -338,9 +398,22 @@ function TaskDialog({
               </ul>
             </section>
 
-            <div className="dialog-actions">
-              <button type="button" className="ghost-button" onClick={onClose}>Close</button>
-            </div>
+            {sharing ? (
+              <ShareWith
+                resourceType="task"
+                resourceId={detail.data.id}
+                resourceName={detail.data.reference}
+                onClose={() => setSharing(false)}
+              />
+            ) : null}
+
+            {editing ? (
+              <EditTaskDialog
+                task={detail.data}
+                onClose={() => setEditing(false)}
+                onSaved={() => { setEditing(false); detail.reload(); invalidate('/tasks'); }}
+              />
+            ) : null}
           </>
         ) : null}
       </div>
@@ -589,6 +662,136 @@ function CreateProjectDialog({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+
+/**
+ * Editing a task.
+ *
+ * Assignment is a set, not a person: work is shared, and forcing one name onto a task
+ * means the other people doing it are invisible to everyone looking at the board.
+ *
+ * The version is sent back with the change, so two people editing the same task at once
+ * get a conflict rather than one silently overwriting the other.
+ */
+function EditTaskDialog({
+  task,
+  onClose,
+  onSaved,
+}: {
+  task: TaskDetail;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description ?? '');
+  const [status, setStatus] = useState(task.status);
+  const [priority, setPriority] = useState(task.priority);
+  const [dueAt, setDueAt] = useState(task.dueAt ? String(task.dueAt).slice(0, 10) : '');
+  const [assigneeIds, setAssigneeIds] = useState<string[]>(
+    (task.assignees ?? []).map((person) => person.id),
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const people = useQuery<{ items: { id: string; display_name: string; email_display: string }[] }>(
+    '/users?limit=200',
+    (signal) => api.get('/users?limit=200', signal),
+  );
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      await api.patch(
+        `/tasks/${task.id}`,
+        {
+          title,
+          description,
+          status,
+          priority,
+          dueAt: dueAt ? new Date(`${dueAt}T17:00:00`).toISOString() : null,
+          assigneeIds,
+        },
+        { ifMatch: task.version },
+      );
+      onSaved();
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.status === 412
+            ? 'Someone else changed this task while you were editing. Close and reopen it.'
+            : err.message
+          : 'That could not be saved',
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <form
+        className="dialog dialog-wide"
+        role="dialog"
+        aria-label={`Edit ${task.reference}`}
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={submit}
+      >
+        <h3>Edit {task.reference}</h3>
+
+        <label className="field">
+          <span>Title</span>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={300} />
+        </label>
+
+        <label className="field">
+          <span>Description</span>
+          <textarea rows={4} value={description} onChange={(e) => setDescription(e.target.value)} />
+        </label>
+
+        <div className="field-row">
+          <label className="field">
+            <span>Status</span>
+            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+              {['todo', 'in_progress', 'blocked', 'in_review', 'done', 'cancelled'].map((value) => (
+                <option key={value} value={value}>{titleCase(value)}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Priority</span>
+            <select value={priority} onChange={(e) => setPriority(e.target.value)}>
+              {['low', 'medium', 'high', 'urgent'].map((value) => (
+                <option key={value} value={value}>{titleCase(value)}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Due date</span>
+            <input type="date" value={dueAt} onChange={(e) => setDueAt(e.target.value)} />
+          </label>
+        </div>
+
+        <PeoplePicker
+          label="Assigned to"
+          people={people.data?.items ?? []}
+          selected={assigneeIds}
+          onChange={setAssigneeIds}
+          emptyHint="Nobody assigned — it will show on the board as unassigned."
+        />
+
+        {error ? <p className="field-error">{error}</p> : null}
+        <div className="dialog-actions">
+          <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary-button" disabled={saving || !title.trim()}>
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

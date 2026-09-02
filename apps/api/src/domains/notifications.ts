@@ -25,6 +25,7 @@ const SEVERITY: Record<string, Severity> = {
   'file.quarantined': 'critical',
   // Someone is blocked until this person acts.
   'approval.awaiting': 'warning',
+  'signature.requested': 'warning',
   'invoice.overdue': 'warning',
   // Outcomes worth confirming rather than interrupting for.
   'approval.progress': 'success',
@@ -52,7 +53,14 @@ export type NotificationInput = {
   dedupeKey?: string;
 };
 
-export async function create(input: NotificationInput, db: Queryable = pool): Promise<void> {
+/**
+ * Returns whether a notification was actually created.
+ *
+ * The outbox delivers at least once, so a handler may run twice for the same event. The
+ * dedupe key already stops a duplicate row — but a handler that also sends an email needs
+ * to know it was a duplicate, or the person is notified once and emailed twice.
+ */
+export async function create(input: NotificationInput, db: Queryable = pool): Promise<boolean> {
   // INSERT IGNORE lets the dedupe key silently drop a repeat rather than raising,
   // which is what makes a redelivered event safe to process twice.
   const id = newId();
@@ -73,7 +81,7 @@ export async function create(input: NotificationInput, db: Queryable = pool): Pr
       input.dedupeKey ?? null,
     ],
   );
-  if (res.rowCount === 0) return; // deduplicated
+  if (res.rowCount === 0) return false; // deduplicated
   publishToUser(input.userId, 'notification.created', {
     id,
     type: input.type,
@@ -84,6 +92,7 @@ export async function create(input: NotificationInput, db: Queryable = pool): Pr
     severity: severityFor(input.type),
     createdAt: new Date().toISOString(),
   });
+  return true;
 }
 
 /** Fan-out helper that skips the actor so people are not notified of their own actions. */

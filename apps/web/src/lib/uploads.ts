@@ -62,7 +62,17 @@ export async function uploadWorkspaceFile<T>(file: File, options: UploadOptions 
       body: file,
     });
   } catch {
-    throw new Error('The connection was interrupted during upload. Check your connection and try again.');
+    /**
+     * fetch rejects identically for a dropped connection and for a refused one - a CORS
+     * policy on the bucket, or a content security policy in the client. Blaming the
+     * network sends people to check their wifi for a configuration problem, so the
+     * message names both possibilities.
+     */
+    throw new Error(
+      'The upload could not reach storage. This is usually the storage bucket refusing '
+        + 'the request rather than a connection problem — ask an administrator to check '
+        + 'the bucket CORS settings.',
+    );
   }
   if (!stored.ok) throw await uploadResponseError(stored);
 

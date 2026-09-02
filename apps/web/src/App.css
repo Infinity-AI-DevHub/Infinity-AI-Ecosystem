@@ -2494,3 +2494,224 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   vertical-align: baseline;
 }
 .receipt-read { color: var(--brand-400); }
+
+/* --------------------------------------------------------------- people picker */
+.picker-chips {
+  display: flex; flex-wrap: wrap; gap: var(--sp-2);
+  min-height: 30px; margin-bottom: var(--sp-2); align-items: center;
+}
+.chip-remove {
+  border: 0; background: transparent; color: inherit; cursor: pointer;
+  font-size: var(--text-md); line-height: 1; padding: 0 0 0 var(--sp-1); opacity: .8;
+}
+.chip-remove:hover { opacity: 1; }
+.picker-list {
+  list-style: none; margin: var(--sp-2) 0 0; padding: 0;
+  max-height: 200px; overflow-y: auto;
+  border: 1px solid var(--border-default); border-radius: var(--r-md);
+  background: var(--bg-surface);
+}
+.picker-option {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: center; gap: var(--sp-2);
+  width: 100%; padding: var(--sp-2) var(--sp-3);
+  border: 0; background: transparent; text-align: left; cursor: pointer;
+  font: inherit; font-size: var(--text-sm); color: var(--fg-primary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.picker-list li:last-child .picker-option { border-bottom: 0; }
+.picker-option:hover { background: var(--bg-hover); }
+.picker-option-on { background: var(--bg-selected); }
+.picker-tick { color: var(--fg-accent); font-weight: var(--weight-bold); }
+
+/* ------------------------------------------------------------------ task detail */
+.task-detail-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--sp-4); padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--border-subtle); margin-bottom: var(--sp-4);
+}
+.task-detail-ref {
+  font: var(--weight-semi) var(--text-2xs)/1 var(--font-mono);
+  letter-spacing: var(--tracking-caps); color: var(--fg-tertiary);
+}
+.task-detail-title { font-size: var(--text-xl); margin: var(--sp-2) 0 0; letter-spacing: var(--tracking-tight); }
+/* Two columns: the work on the left, its facts on the right. */
+.task-detail-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: var(--sp-6); }
+@media (max-width: 860px) { .task-detail-body { grid-template-columns: 1fr; } }
+.task-facts {
+  display: grid; gap: var(--sp-3); align-content: start;
+  padding: var(--sp-4); background: var(--bg-sunken); border-radius: var(--r-md);
+}
+.task-fact { display: grid; gap: 3px; }
+.task-fact dt {
+  font-size: var(--text-2xs); text-transform: uppercase;
+  letter-spacing: var(--tracking-caps); color: var(--fg-tertiary);
+}
+.task-fact dd { margin: 0; font-size: var(--text-sm); color: var(--fg-primary); }
+.assignee-stack { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+
+/* ------------------------------------------------------ invoice / receipt sheet
+   Styled as paper rather than as application chrome: this is what a client reads,
+   and it is the same markup that prints. Sized to A4 proportions so the preview
+   and the printed page agree. */
+.doc-sheet {
+  --doc-accent: var(--brand-500);
+  max-width: 760px;
+  margin: 0 auto;
+  padding: var(--sp-8);
+  background: #ffffff;
+  /* Explicitly light: a client's invoice does not follow the reader's dark mode. */
+  color: #1a2430;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+.doc-head {
+  display: flex; justify-content: space-between; gap: var(--sp-6);
+  padding-bottom: var(--sp-5); border-bottom: 3px solid var(--doc-accent);
+}
+.doc-title {
+  margin: 0; font-size: 26px; letter-spacing: var(--tracking-tight);
+  color: var(--doc-accent); text-transform: uppercase;
+}
+.doc-number { margin: 2px 0 0; font: 600 var(--text-md)/1.2 var(--font-mono); color: #1a2430; }
+.doc-sub { margin: 2px 0 0; font-size: var(--text-xs); color: #5b6a7a; }
+.doc-from { display: grid; gap: 1px; text-align: right; font-size: var(--text-xs); color: #45535f; }
+.doc-from strong { font-size: var(--text-sm); color: #1a2430; }
+
+.doc-parties { display: flex; justify-content: space-between; gap: var(--sp-6); margin: var(--sp-5) 0; }
+.doc-parties > div { display: grid; gap: 1px; font-size: var(--text-xs); color: #45535f; }
+.doc-parties strong { font-size: var(--text-md); color: #1a2430; }
+.doc-label {
+  font-size: var(--text-2xs); text-transform: uppercase;
+  letter-spacing: var(--tracking-caps); color: #7a8794; margin-bottom: 3px;
+}
+.doc-dates { display: grid; grid-template-columns: auto auto; gap: 2px var(--sp-4); margin: 0; text-align: right; }
+.doc-dates dt { font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: var(--tracking-caps); color: #7a8794; }
+.doc-dates dd { margin: 0; font-size: var(--text-xs); }
+
+.doc-lines { width: 100%; border-collapse: collapse; margin: var(--sp-5) 0; font-variant-numeric: tabular-nums; }
+.doc-lines th {
+  text-align: left; padding: var(--sp-2) var(--sp-2);
+  border-bottom: 1px solid #d8dfe8; font-size: var(--text-2xs);
+  text-transform: uppercase; letter-spacing: var(--tracking-caps); color: #7a8794;
+}
+.doc-lines td { padding: var(--sp-2); border-bottom: 1px solid #eef2f6; }
+.doc-num { text-align: right; }
+
+.doc-totals {
+  margin-left: auto; width: min(300px, 100%);
+  display: grid; gap: 3px; font-variant-numeric: tabular-nums;
+}
+.doc-totals > div { display: flex; justify-content: space-between; font-size: var(--text-sm); }
+.doc-total-row {
+  padding-top: var(--sp-2); margin-top: var(--sp-1);
+  border-top: 1px solid #d8dfe8; font-weight: var(--weight-bold);
+}
+.doc-receipt-amount {
+  margin: var(--sp-6) 0; padding: var(--sp-5);
+  background: #f6f8fa; border-radius: var(--r-md); text-align: center;
+}
+.doc-receipt-amount strong { display: block; font-size: 28px; color: var(--doc-accent); }
+.doc-block { margin-top: var(--sp-5); font-size: var(--text-xs); color: #45535f; }
+.doc-block p { margin: 3px 0 0; white-space: pre-wrap; }
+.doc-footer {
+  margin-top: var(--sp-6); padding-top: var(--sp-4);
+  border-top: 1px solid #eef2f6; font-size: var(--text-2xs);
+  color: #7a8794; text-align: center; white-space: pre-wrap;
+}
+
+/* Printing: the sheet alone, edge to edge, with nothing of the application around it. */
+@media print {
+  body * { visibility: hidden; }
+  .doc-sheet, .doc-sheet * { visibility: visible; }
+  .doc-sheet {
+    position: absolute; inset: 0; margin: 0; max-width: none;
+    border: 0; box-shadow: none; padding: 16mm;
+  }
+  .dialog-scrim { position: static; background: none; }
+}
+@media print { .no-print { display: none !important; } }
+
+/* The billing designer: settings and the document they describe, side by side, so a
+   change to the letterhead is visible where it lands rather than after a save. */
+.billing-designer {
+  display: grid;
+  grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
+  gap: var(--sp-5);
+  align-items: start;
+}
+@media (max-width: 1100px) { .billing-designer { grid-template-columns: 1fr; } }
+.billing-preview {
+  position: sticky; top: calc(var(--topbar-height) + var(--sp-4));
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  overflow: hidden;
+}
+/* Scaled down rather than scrolled: the shape of the page is the thing being judged. */
+.billing-preview-scale {
+  transform: scale(0.72);
+  transform-origin: top center;
+  height: 560px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ------------------------------------------------------------------ signatures */
+.signature-preview {
+  display: grid; place-items: center;
+  min-height: 90px; padding: var(--sp-3);
+  /* A chequerboard, so a transparent PNG is visibly transparent rather than
+     looking like it has a white box around it. */
+  background-color: var(--bg-sunken);
+  background-image:
+    linear-gradient(45deg, rgba(128,128,128,.10) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(128,128,128,.10) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(128,128,128,.10) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(128,128,128,.10) 75%);
+  background-size: 14px 14px;
+  background-position: 0 0, 0 7px, 7px -7px, -7px 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  margin-bottom: var(--sp-3);
+}
+.signature-preview img { max-height: 70px; max-width: 100%; }
+
+/* --------------------------------------------------------- signature placement */
+.placer-surface { position: relative; overflow: hidden; border-radius: var(--r-md); }
+.placer-signature {
+  position: absolute;
+  cursor: grab;
+  user-select: none;
+  /* A dashed outline while placing, so an image with a transparent background is
+     still visibly a thing you can grab. */
+  outline: 1px dashed var(--brand-400);
+  outline-offset: 3px;
+  touch-action: none;
+}
+.placer-signature:focus-visible { outline: 2px solid var(--brand-500); }
+.placer-dragging { cursor: grabbing; opacity: .85; }
+.placer-controls { margin-top: var(--sp-3); }
+.placer-controls input[type='range'] { width: 200px; }
+
+/* Signature blocks on a document. Slots are drawn whether filled or not — an empty
+   slot tells the reader what is still outstanding. */
+.doc-signatures {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--sp-5); margin-top: var(--sp-8);
+}
+.doc-sig-slot { display: grid; gap: 2px; }
+.doc-sig-slot img { max-height: 52px; max-width: 100%; object-fit: contain; object-position: left bottom; }
+.doc-sig-blank { height: 52px; }
+.doc-sig-rule { border-bottom: 1px solid #1a2430; margin-bottom: 4px; }
+.doc-sig-role {
+  font-size: var(--text-2xs); text-transform: uppercase;
+  letter-spacing: var(--tracking-caps); color: #7a8794;
+}
+.doc-sig-name { font-size: var(--text-xs); font-weight: var(--weight-semi); color: #1a2430; }
+.doc-sig-date { font-size: var(--text-2xs); color: #7a8794; }

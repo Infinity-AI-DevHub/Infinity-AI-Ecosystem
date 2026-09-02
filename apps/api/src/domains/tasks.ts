@@ -14,7 +14,7 @@ import {
   reload,
   transaction,
 } from '../core/db.js';
-import { conflict, notFound, preconditionFailed, unprocessable } from '../core/errors.js';
+import { badRequest, conflict, notFound, preconditionFailed, unprocessable } from '../core/errors.js';
 import { authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
 import { emit } from '../core/outbox.js';
@@ -133,6 +133,96 @@ export async function listProjects(actor: Actor) {
   );
 }
 
+/**
+ * Editing a project.
+ *
+ * The key is immutable, like a leave type's: task references are built from it
+ * (`WEB-14`), and they appear in commit messages, chat and email long after the task
+ * itself is closed. Renaming freely is fine; re-keying would orphan every reference.
+ */
+export async function updateProject(
+  actor: Actor,
+  projectId: string,
+  input: Partial<{
+    name: string;
+    description: string;
+    status: 'active' | 'on_hold' | 'archived';
+    ownerId: string | null;
+    clientOrgId: string | null;
+    startsOn: string | null;
+    endsOn: string | null;
+  }>,
+): Promise<ProjectRow> {
+  await authorize({ actor, capability: 'project.manage', resourceless: true });
+  const existing = await one<ProjectRow>(
+    'SELECT * FROM projects WHERE id = $1 AND company_id = $2',
+    [projectId, actor.companyId],
+  );
+  if (!existing) throw notFound('Project not found');
+
+  if (input.name !== undefined && !input.name.trim()) throw badRequest('A project needs a name');
+  if (input.startsOn && input.endsOn && input.endsOn < input.startsOn) {
+    throw badRequest('The end date cannot be before the start date');
+  }
+  if (input.ownerId) await assertCompanyMember(actor.companyId, input.ownerId);
+
+  await pool.query(
+    `UPDATE projects
+        SET name = COALESCE($3, name),
+            description = COALESCE($4, description),
+            status = COALESCE($5, status),
+            owner_id = COALESCE($6, owner_id),
+            client_org_id = COALESCE($7, client_org_id),
+            starts_on = COALESCE($8, starts_on),
+            ends_on = COALESCE($9, ends_on)
+      WHERE id = $1 AND company_id = $2`,
+    [
+      projectId, actor.companyId,
+      input.name?.trim() ?? null,
+      input.description ?? null,
+      input.status ?? null,
+      input.ownerId ?? null,
+      input.clientOrgId ?? null,
+      input.startsOn ?? null,
+      input.endsOn ?? null,
+    ],
+  );
+  await auditFromActor(actor, 'project.update', {
+    resourceType: 'project', resourceId: projectId, metadata: { changed: Object.keys(input) },
+  });
+  return (await one<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId]))!;
+}
+
+/**
+ * Archiving a project.
+ *
+ * Deliberately not a delete. Tasks, invoices and time all point at a project, and
+ * removing it would take a year of work with it. Archiving hides it from the pickers
+ * while every reference still resolves - which is what "delete" is nearly always meant
+ * to achieve here.
+ */
+export async function archiveProject(actor: Actor, projectId: string): Promise<void> {
+  await authorize({ actor, capability: 'project.manage', resourceless: true });
+  const open = await one<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM tasks
+      WHERE project_id = $1 AND company_id = $2 AND status NOT IN ('done','cancelled')`,
+    [projectId, actor.companyId],
+  );
+  if (Number(open?.n ?? 0) > 0) {
+    throw conflict(
+      `This project still has ${open!.n} task(s) open. Close or move them before archiving it.`,
+    );
+  }
+  const result = await pool.query(
+    `UPDATE projects SET status = 'archived' WHERE id = $1 AND company_id = $2`,
+    [projectId, actor.companyId],
+  );
+  if (result.rowCount === 0) throw notFound('Project not found');
+  await auditFromActor(actor, 'project.archive', {
+    resourceType: 'project', resourceId: projectId,
+  });
+}
+
 export async function createTask(
   actor: Actor,
   projectId: string,
@@ -140,6 +230,8 @@ export async function createTask(
     title: string;
     description?: string;
     assigneeId?: string | null;
+    /** Several people on one task. The first becomes the primary assignee. */
+    assigneeIds?: string[];
     priority?: string;
     dueAt?: string | null;
     labels?: string[];
@@ -149,6 +241,7 @@ export async function createTask(
 ): Promise<TaskRow> {
   await requireProject(actor, projectId, 'task.create');
   if (input.assigneeId) await assertCompanyMember(actor.companyId, input.assigneeId);
+  for (const id of input.assigneeIds ?? []) await assertCompanyMember(actor.companyId, id);
 
   const task = await transaction(async (tx) => {
     // Lock the project row so two concurrent creations cannot claim the same number.
@@ -178,6 +271,18 @@ export async function createTask(
         JSON.stringify([]),
       ],
     );
+    // A task may start life with several people on it.
+    const initial = [...new Set(input.assigneeIds ?? (input.assigneeId ? [input.assigneeId] : []))];
+    for (const userId of initial) {
+      await tx.query(
+        'INSERT INTO task_assignees (task_id, user_id, assigned_by) VALUES ($1,$2,$3)',
+        [taskId, userId, actor.userId],
+      );
+    }
+    if (initial.length > 0 && !input.assigneeId) {
+      await tx.query('UPDATE tasks SET assignee_id = $2 WHERE id = $1', [taskId, initial[0]]);
+    }
+
     const created = (await reload<TaskRow>(tx, 'tasks', taskId))!;
 
     for (const dependencyId of input.dependsOn ?? []) {
@@ -247,7 +352,13 @@ export async function listTasks(
 ) {
   if (filters.projectId) await requireProject(actor, filters.projectId, 'task.update');
   return many<TaskRow & { assignee_name: string | null; project_key: string }>(
-    `SELECT t.*, u.display_name AS assignee_name, p.key AS project_key
+    `SELECT t.*, u.display_name AS assignee_name, p.key AS project_key,
+            -- Every assignee, not just the primary one. JSON_ARRAYAGG over a LEFT JOIN
+            -- yields [null] rather than [] for an unassigned task, so it is filtered
+            -- to a real empty array in publicTask().
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', au.id, 'name', au.display_name))
+               FROM task_assignees ta JOIN users au ON au.id = ta.user_id
+              WHERE ta.task_id = t.id) AS assignees
        FROM tasks t
        JOIN projects p ON p.id = t.project_id
        JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
@@ -278,6 +389,8 @@ export async function updateTask(
     status: string;
     priority: string;
     assigneeId: string | null;
+    /** Replaces the whole set. Absent means "leave the assignees alone". */
+    assigneeIds: string[];
     dueAt: string | null;
     labels: unknown;
     position: number;
@@ -290,7 +403,8 @@ export async function updateTask(
     actor.companyId,
   ]);
   if (!existing) throw notFound('Task not found');
-  await requireProject(actor, existing.project_id, input.assigneeId !== undefined ? 'task.assign' : 'task.update');
+  const changingAssignees = input.assigneeId !== undefined || input.assigneeIds !== undefined;
+  await requireProject(actor, existing.project_id, changingAssignees ? 'task.assign' : 'task.update');
   if (expectedVersion !== null && existing.version !== expectedVersion) throw preconditionFailed();
   if (input.assigneeId) await assertCompanyMember(actor.companyId, input.assigneeId);
 
@@ -336,6 +450,37 @@ export async function updateTask(
         input.position ?? null,
       ],
     );
+    /**
+     * Assignees, when the caller sent a set.
+     *
+     * Replaced wholesale rather than diffed: the client sends who should be on the task,
+     * not a sequence of add and remove operations, so a lost request cannot leave the
+     * set half-applied.
+     *
+     * tasks.assignee_id is kept in step as the primary assignee, because notifications
+     * and the search index read that column.
+     */
+    if (input.assigneeIds !== undefined) {
+      const unique = [...new Set(input.assigneeIds)];
+      await tx.query('DELETE FROM task_assignees WHERE task_id = $1', [taskId]);
+      for (const userId of unique) {
+        await tx.query(
+          `INSERT INTO task_assignees (task_id, user_id, assigned_by) VALUES ($1,$2,$3)`,
+          [taskId, userId, actor.userId],
+        );
+      }
+      await tx.query('UPDATE tasks SET assignee_id = $2 WHERE id = $1', [taskId, unique[0] ?? null]);
+    } else if ('assigneeId' in input) {
+      // The single-assignee path stays supported, and keeps the join table consistent.
+      await tx.query('DELETE FROM task_assignees WHERE task_id = $1', [taskId]);
+      if (input.assigneeId) {
+        await tx.query(
+          `INSERT INTO task_assignees (task_id, user_id, assigned_by) VALUES ($1,$2,$3)`,
+          [taskId, input.assigneeId, actor.userId],
+        );
+      }
+    }
+
     const task = (await reload<TaskRow>(tx, 'tasks', taskId))!;
 
     // Activity history: one row per changed field.
@@ -388,10 +533,17 @@ export async function updateTask(
 }
 
 export async function getTask(actor: Actor, taskId: string) {
-  const task = await one<TaskRow>('SELECT * FROM tasks WHERE id = $1 AND company_id = $2', [
-    taskId,
-    actor.companyId,
-  ]);
+  const task = await one<TaskRow>(
+    `SELECT t.*, u.display_name AS assignee_name, p.\`key\` AS project_key,
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', au.id, 'name', au.display_name))
+               FROM task_assignees ta JOIN users au ON au.id = ta.user_id
+              WHERE ta.task_id = t.id) AS assignees
+       FROM tasks t
+       JOIN projects p ON p.id = t.project_id
+       LEFT JOIN users u ON u.id = t.assignee_id
+      WHERE t.id = $1 AND t.company_id = $2`,
+    [taskId, actor.companyId],
+  );
   if (!task) throw notFound('Task not found');
   await requireProject(actor, task.project_id, 'task.update');
   const [comments, activity, dependencies, watchers] = await Promise.all([
@@ -469,7 +621,22 @@ export async function indexTask(taskId: string): Promise<void> {
   });
 }
 
-export function publicTask(row: TaskRow & { assignee_name?: string | null; project_key?: string }) {
+export function publicTask(
+  row: TaskRow & {
+    assignee_name?: string | null;
+    project_key?: string;
+    assignees?: unknown;
+  },
+) {
+  /**
+   * JSON_ARRAYAGG over a LEFT JOIN produces [null] for a task with no assignees, and the
+   * driver hands JSON back either parsed or as a string depending on the column type.
+   * Normalising here means no caller has to know either of those things.
+   */
+  const raw = typeof row.assignees === 'string' ? JSON.parse(row.assignees) : row.assignees;
+  const assignees = Array.isArray(raw)
+    ? raw.filter((entry): entry is { id: string; name: string } => Boolean(entry && (entry as { id?: string }).id))
+    : [];
   return {
     id: row.id,
     projectId: row.project_id,
@@ -482,6 +649,7 @@ export function publicTask(row: TaskRow & { assignee_name?: string | null; proje
     priority: row.priority,
     assigneeId: row.assignee_id,
     assigneeName: row.assignee_name ?? null,
+    assignees,
     reporterId: row.reporter_id,
     dueAt: row.due_at,
     labels: jsonArray(row.labels),

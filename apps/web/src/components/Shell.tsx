@@ -59,6 +59,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/files', label: 'Files', icon: FilesIcon, capability: 'file.read' },
   { to: '/docs', label: 'Documents', icon: BookText, capability: 'doc.read' },
   { to: '/announcements', label: 'Announcements', icon: Megaphone, badge: 'announcements' },
+  { to: '/messages', label: 'Messages', icon: Megaphone, capability: 'message.broadcast' },
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, capability: 'request.create', badge: 'approvals' },
   { to: '/leave', label: 'Leave', icon: Palmtree, capability: 'leave.request', badge: 'leave' },
   { to: '/finance', label: 'Finance', icon: Wallet, capability: 'expense.submit', badge: 'invoices' },
