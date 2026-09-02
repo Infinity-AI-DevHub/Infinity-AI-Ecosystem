@@ -9,6 +9,7 @@
  * disagree with the invoice the client received.
  */
 import { useMemo, useState } from 'react';
+import { openDocumentPdf } from '../lib/documents-pdf';
 import { api, ApiError, idempotencyKey, type Paged } from '../lib/api';
 import { invalidate, useQuery } from '../lib/query';
 import { useSession } from '../lib/session';
@@ -1003,8 +1004,12 @@ function DocumentPreview({
             {variant === 'receipt' ? 'Receipt preview' : 'Invoice preview'}
           </span>
           <div className="table-actions">
-            <button type="button" className="ghost-button" onClick={() => window.print()}>
-              Print or save as PDF
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => void openDocumentPdf('receipt', payment.id)}
+            >
+              Download PDF
             </button>
             <button type="button" className="ghost-button" onClick={onClose}>Close</button>
           </div>
@@ -1108,8 +1113,12 @@ function ReceiptPanel({
                 Second client signature
               </button>
             ) : null}
-            <button type="button" className="ghost-button" onClick={() => window.print()}>
-              Print or save as PDF
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => void openDocumentPdf('receipt', payment.id)}
+            >
+              Download PDF
             </button>
             <button type="button" className="ghost-button" onClick={onClose}>Close</button>
           </div>

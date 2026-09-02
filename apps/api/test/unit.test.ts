@@ -446,3 +446,122 @@ describe('recurrence', () => {
     assert.equal(parseRecurrence(null), null);
   });
 });
+
+/**
+ * PDF output.
+ *
+ * A malformed PDF is not obviously wrong from the code — it looks like a Buffer of the
+ * right size until a client opens it and sees nothing. These assert the structure a
+ * reader actually needs.
+ */
+describe('pdf', () => {
+  it('produces a structurally valid document', async () => {
+    const { PdfDocument } = await import('../src/core/pdf.js');
+    const doc = new PdfDocument();
+    doc.text(48, 60, 'INVOICE', { size: 22, font: 'bold' });
+    doc.textRight(547, 60, '1,234.56');
+    doc.line(48, 80, 547);
+    const bytes = doc.toBuffer();
+    const text = bytes.toString('latin1');
+
+    assert.ok(text.startsWith('%PDF-1.4'), 'has a PDF header');
+    assert.ok(text.includes('/Type /Catalog'), 'has a catalog');
+    assert.ok(text.includes('xref'), 'has a cross-reference table');
+    assert.ok(text.trimEnd().endsWith('%%EOF'), 'is terminated');
+
+    // The xref offsets must actually point at their objects, or readers reject the file.
+    const start = Number(text.slice(text.lastIndexOf('startxref') + 9).trim().split('\n')[0]);
+    assert.ok(text.slice(start).startsWith('xref'), 'startxref points at the table');
+  });
+
+  it('escapes characters that would break the content stream', async () => {
+    const { PdfDocument } = await import('../src/core/pdf.js');
+    const doc = new PdfDocument();
+    // Unescaped, these would terminate the string early and corrupt every later object.
+    doc.text(0, 0, 'Acme (Pvt) Ltd \\ "quoted"');
+    const text = doc.toBuffer().toString('latin1');
+    assert.ok(text.includes('Acme \\(Pvt\\) Ltd'), 'parentheses escaped');
+  });
+
+  it('measures text so right-aligned figures line up', async () => {
+    const { textWidth } = await import('../src/core/pdf.js');
+    // Every digit in Helvetica is the same width; a money column depends on it.
+    assert.equal(textWidth('1111', 10), textWidth('9999', 10));
+    assert.ok(textWidth('W', 10, 'bold') > textWidth('i', 10, 'bold'));
+    assert.ok(textWidth('Total', 10, 'bold') > textWidth('Total', 10, 'regular'));
+  });
+});
+
+/**
+ * PNG decoding, for signatures on a PDF.
+ *
+ * PDF cannot carry a PNG as-is, so the bytes are inflated, un-filtered and handed over
+ * as raw samples. Every stage of that is silently wrong-looking rather than throwing:
+ * a mis-applied filter produces a plausible buffer of the right length containing noise.
+ */
+describe('png decoding', () => {
+  const build = async (colourType: number, bytesPerPixel: number) => {
+    const zlib = await import('node:zlib');
+    const width = 4;
+    const height = 3;
+    const raw: number[] = [];
+    for (let y = 0; y < height; y += 1) {
+      raw.push(0); // filter: none
+      for (let x = 0; x < width; x += 1) {
+        for (let c = 0; c < bytesPerPixel; c += 1) raw.push((x * 40 + y * 10 + c * 5) & 0xff);
+      }
+    }
+    const crcTable: number[] = [];
+    for (let n = 0; n < 256; n += 1) {
+      let c = n;
+      for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      crcTable[n] = c >>> 0;
+    }
+    const crc = (buf: Buffer) => {
+      let c = 0xffffffff;
+      for (const byte of buf) c = crcTable[(c ^ byte) & 0xff]! ^ (c >>> 8);
+      return (c ^ 0xffffffff) >>> 0;
+    };
+    const chunk = (tag: string, data: Buffer) => {
+      const body = Buffer.concat([Buffer.from(tag, 'latin1'), data]);
+      const length = Buffer.alloc(4);
+      length.writeUInt32BE(data.length);
+      const checksum = Buffer.alloc(4);
+      checksum.writeUInt32BE(crc(body));
+      return Buffer.concat([length, body, checksum]);
+    };
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(width, 0);
+    ihdr.writeUInt32BE(height, 4);
+    ihdr[8] = 8; ihdr[9] = colourType;
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk('IHDR', ihdr),
+      chunk('IDAT', zlib.deflateSync(Buffer.from(raw))),
+      chunk('IEND', Buffer.alloc(0)),
+    ]);
+  };
+
+  it('reads an RGBA image and keeps its alpha', async () => {
+    const { decodePng } = await import('../src/core/png.js');
+    const decoded = decodePng(await build(6, 4));
+    assert.ok(decoded, 'decoded');
+    assert.equal(decoded!.width, 4);
+    assert.equal(decoded!.height, 3);
+    assert.equal(decoded!.rgb.length, 4 * 3 * 3, 'three bytes per pixel');
+    assert.ok(decoded!.alpha, 'alpha retained — a signature is transparent around the ink');
+  });
+
+  it('reports an opaque image as having no mask', async () => {
+    const { decodePng } = await import('../src/core/png.js');
+    const decoded = decodePng(await build(2, 3));
+    assert.ok(decoded);
+    assert.equal(decoded!.alpha, null, 'no soft mask needed when nothing is transparent');
+  });
+
+  it('refuses anything that is not a PNG rather than emitting noise', async () => {
+    const { decodePng } = await import('../src/core/png.js');
+    assert.equal(decodePng(Buffer.from('not an image at all')), null);
+    assert.equal(decodePng(Buffer.alloc(4)), null);
+  });
+});

@@ -10,6 +10,8 @@ import * as invoicing from '../../domains/invoicing.js';
 import * as billingSettings from '../../domains/billing-settings.js';
 import * as quotations from '../../domains/quotations.js';
 import * as signatures from '../../domains/signatures.js';
+import * as documentRender from '../../domains/document-render.js';
+import { authorize } from '../../core/authz.js';
 
 const idParam = z.object({ id: z.string().uuid() });
 const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
@@ -518,6 +520,37 @@ export async function financeRoutes(app: FastifyInstance): Promise<void> {
     );
     await signatures.recordClientSignature(actor, { documentType: type, documentId: id, ...input });
     return reply.code(204).send();
+  });
+
+  /**
+   * The document as a PDF.
+   *
+   * The same renderer the email uses, so what somebody downloads is byte-for-byte what
+   * the client received rather than a second rendering that can drift from it.
+   */
+  app.get('/documents/:kind/:id/pdf', async (request, reply) => {
+    const actor = requireActor(request);
+    const { kind, id } = request.params as { kind: 'invoice' | 'quotation' | 'receipt'; id: string };
+    if (!['invoice', 'quotation', 'receipt'].includes(kind)) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'Unknown document type' } });
+    }
+    await authorize({
+      actor,
+      capability: kind === 'quotation' ? 'quotation.read' : 'invoice.read',
+      resourceless: true,
+    });
+
+    const model = await documentRender.buildModel(kind, id);
+    if (!model) return reply.code(404).send({ error: { code: 'not_found', message: 'Not found' } });
+    model.signatures = await documentRender.signatureSlots(kind, id);
+    const profile = await documentRender.billingProfile(actor.companyId);
+
+    return reply
+      .header('content-type', 'application/pdf')
+      // inline, not attachment: people expect to look at it before saving it.
+      .header('content-disposition', `inline; filename="${model.number || kind}.pdf"`)
+      .header('cache-control', 'no-store')
+      .send(documentRender.renderPdf(model, profile));
   });
 
   app.get('/billing/settings', async (request) => {

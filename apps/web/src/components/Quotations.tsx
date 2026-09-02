@@ -6,6 +6,7 @@
  * somebody opens this screen to answer.
  */
 import { useMemo, useState } from 'react';
+import { openDocumentPdf } from '../lib/documents-pdf';
 import { api, ApiError, idempotencyKey } from '../lib/api';
 import { invalidate, useQuery } from '../lib/query';
 import { useSession } from '../lib/session';
@@ -453,8 +454,12 @@ function QuotationDetail({
             {error ? <p className="field-error">{error}</p> : null}
 
             <div className="dialog-actions">
-              <button type="button" className="ghost-button" onClick={() => window.print()}>
-                Print or save as PDF
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => void openDocumentPdf('quotation', quotationId)}
+              >
+                Download PDF
               </button>
 
               {can('quotation.manage') && internalCount >= 2 && quotation.status !== 'sent'
