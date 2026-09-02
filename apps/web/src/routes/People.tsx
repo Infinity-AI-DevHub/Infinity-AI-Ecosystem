@@ -7,7 +7,7 @@
  */
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Copy, Plus, ShieldOff, ShieldCheck, UserMinus, UserPlus } from 'lucide-react';
+import { Copy, Mail, Plus, ShieldOff, ShieldCheck, UserMinus, UserPlus } from 'lucide-react';
 import { api, idempotencyKey, type Paged, type User } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
@@ -26,6 +26,7 @@ export default function People() {
   const [statusFilter, setStatusFilter] = useState('');
   const [inviting, setInviting] = useState(false);
   const [invitationUrl, setInvitationUrl] = useState<string | null>(null);
+  const [invitationNotice, setInvitationNotice] = useState('');
   const [offboarding, setOffboarding] = useState<User | null>(null);
 
   const listKey = `/users?limit=100${search ? `&q=${encodeURIComponent(search)}` : ''}${
@@ -48,6 +49,22 @@ export default function People() {
   const reactivate = useMutation(async (id: string) => api.post(`/users/${id}/reactivate`, {}), {
     invalidates: ['/users'],
   });
+
+  const resendInvitation = useMutation(
+    async (id: string) =>
+      api.post<{ invitation: { url: string; expiresInHours: number } }>(
+        `/users/${id}/invitation`,
+        {},
+        { idempotencyKey: idempotencyKey() },
+      ),
+    {
+      invalidates: ['/users'],
+      onSuccess: (result) => {
+        setInvitationUrl(result.invitation.url);
+        setInvitationNotice('Invitation resent');
+      },
+    },
+  );
 
   const changeLevel = useMutation(
     async ({ id, accessLevel, version }: { id: string; accessLevel: string; version: number }) =>
@@ -72,10 +89,10 @@ export default function People() {
       {invitationUrl ? (
         <div className="auth-success" role="status">
           <div>
-            <strong>Account created</strong>
+            <strong>{invitationNotice || 'Account created'}</strong>
             <p>
-              Send this single-use activation link to the person. It expires in 72 hours.
-              An email has also been queued.
+              The previous activation link is no longer valid. This new single-use link
+              expires in 72 hours, and a fresh email has been queued.
             </p>
             <code className="invitation-link">{invitationUrl}</code>
           </div>
@@ -225,6 +242,24 @@ export default function People() {
 
               <EmploymentHistory userId={selected.id} />
 
+              {can('user.create') && selected.status === 'invited' ? (
+                <div className="person-actions">
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={resendInvitation.pending}
+                    onClick={() => void resendInvitation.mutate(selected.id)}
+                  >
+                    <Mail size={15} aria-hidden="true" />
+                    {resendInvitation.pending ? 'Sending invitation…' : 'Resend invitation'}
+                  </button>
+                  <p className="field-hint">
+                    Invalidates the old activation link and emails a new one that expires in 72 hours.
+                  </p>
+                  <FormError error={resendInvitation.error} />
+                </div>
+              ) : null}
+
               {can('user.suspend') && selected.id !== session?.user?.id ? (
                 <div className="person-actions">
                   {selected.status === 'suspended' ? (
@@ -311,6 +346,7 @@ export default function People() {
           onCreated={(url) => {
             setInviting(false);
             setInvitationUrl(url);
+            setInvitationNotice('Account created');
             invalidate('/users');
           }}
         />

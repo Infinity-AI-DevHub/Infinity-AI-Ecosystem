@@ -879,12 +879,11 @@ export async function reissueInvitation(
 ): Promise<{ token: string; url: string }> {
   const user = await findUserById(userId);
   if (!user || user.company_id !== actor.companyId) throw notFound('Account not found');
-  if (user.status === 'active') throw conflict('This account is already active');
-  // An offboarded account is closed for good. Activation would refuse the link anyway,
-  // but issuing one at all suggests a departed employee can be let back in by clicking
-  // it - and hands out a live-looking credential for an account that must stay shut.
-  if (user.status === 'offboarded') {
-    throw conflict('This account has been offboarded; create a new account instead');
+  // Activation links are only for people who have never completed account setup. A
+  // suspended account has already activated and must be managed through reactivation;
+  // an offboarded account must be created again if they return.
+  if (user.status !== 'invited') {
+    throw conflict('Only an invited account can receive a new activation link');
   }
 
   const token = generateToken();

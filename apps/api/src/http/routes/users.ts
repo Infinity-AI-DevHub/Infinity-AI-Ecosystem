@@ -154,11 +154,17 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     return identity.publicUser(await identity.reactivateUser(actor, id, request.requestContext));
   });
 
-  app.post('/users/:id/invitation', async (request) => {
+  app.post('/users/:id/invitation', async (request, reply) => {
     const actor = requireActor(request);
     await authorize({ actor, capability: 'user.create', resourceless: true });
     const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
-    return identity.reissueInvitation(actor, id, request.requestContext);
+    return withIdempotency(request, reply, 'POST /users/:id/invitation', async () => {
+      const invitation = await identity.reissueInvitation(actor, id, request.requestContext);
+      return {
+        statusCode: 200,
+        body: { invitation: { url: invitation.url, expiresInHours: 72 } },
+      };
+    });
   });
 
   app.get('/departments', async (request) => {

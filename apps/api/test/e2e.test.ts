@@ -324,8 +324,25 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(crypto.hashToken(token), invitation!.token_hash);
 
     const anonymous = new Client(app);
-    const activated = await anonymous.post('/api/v1/auth/activate', {
+    const resent = await admin.post(
+      `/api/v1/users/${staffId}/invitation`,
+      {},
+      { 'idempotency-key': `resend-${staffEmail}` },
+    );
+    assert.equal(resent.status, 200);
+    assert.equal(resent.body.invitation.expiresInHours, 72);
+    const replacementToken = new URL(resent.body.invitation.url).searchParams.get('token')!;
+    assert.notEqual(replacementToken, token);
+
+    // A resend revokes the previous link before issuing the replacement.
+    const expiredByResend = await anonymous.post('/api/v1/auth/activate', {
       token,
+      password: STAFF_PASSWORD,
+    });
+    assert.equal(expiredByResend.status, 400);
+
+    const activated = await anonymous.post('/api/v1/auth/activate', {
+      token: replacementToken,
       password: STAFF_PASSWORD,
     });
     assert.equal(activated.status, 201);
@@ -333,7 +350,7 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
 
     // The same invitation cannot be replayed.
     const replay = await anonymous.post('/api/v1/auth/activate', {
-      token,
+      token: replacementToken,
       password: STAFF_PASSWORD,
     });
     assert.equal(replay.status, 400);

@@ -10,7 +10,8 @@
  * Outputs:
  *   build/icon.png       1024, full bleed        -> Windows .ico, and the fallback
  *   build/icon-mac.png   1024, inset to 824      -> macOS .icns
- *   ../web/public/favicon.svg                    -> both web bundles
+ *   ../web/public/favicon.svg                    -> web favicon and in-product logo
+ *   ../web/public/icon-192.png, icon-512.png     -> installable web-app icons
  *
  * electron-builder converts the PNGs to .icns and .ico itself at package time.
  */
@@ -72,7 +73,10 @@ console.log('Rendering icons from build/icon.svg');
 render(join(buildDir, 'icon.png'), 1024, 0);
 render(join(buildDir, 'icon-mac.png'), 1024, 100);
 
-// The web favicon is the same artwork; SVG serves every size, so no raster is needed.
-const favicon = resolve(here, '..', '..', 'web', 'public', 'favicon.svg');
+// The web favicon and installable icons use the same artwork as the desktop client.
+const webPublic = resolve(here, '..', '..', 'web', 'public');
+const favicon = join(webPublic, 'favicon.svg');
 writeFileSync(favicon, svg);
 console.log(`  favicon.svg      -> apps/web/public`);
+render(join(webPublic, 'icon-192.png'), 192, 0);
+render(join(webPublic, 'icon-512.png'), 512, 0);
