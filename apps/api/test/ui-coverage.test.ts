@@ -58,6 +58,35 @@ function walk(dir: string, out: string[] = []): string[] {
  * all three features looked built but unusable - which is exactly how they were
  * reported. Nothing in the type system connects the two numbers, so it is checked here.
  */
+/**
+ * An internal notice must not be emailed to a client.
+ *
+ * Guests carry the same company_id as colleagues, so any recipient query that selects on
+ * company_id alone reaches them too. That is how a company-wide announcement about
+ * office closures went out to a client contact - the message composer had always
+ * excluded guests here, and the announcement handler never had.
+ */
+describe('announcement audience', () => {
+  it('never selects guests as recipients', () => {
+    const src = readFileSync('src/workers/handlers.ts', 'utf8');
+    const start = src.indexOf('const onAnnouncementPublished');
+    assert.ok(start > -1, 'announcement handler not found - update this test');
+    const body = src.slice(start, src.indexOf('\n};', start));
+
+    // Every recipient query inside the handler, as the SQL actually sent.
+    const queries = [...body.matchAll(/`(SELECT[\s\S]*?)`/g)].map((m) => m[1]!);
+    const fromUsers = queries.filter((q) => /FROM users/i.test(q));
+    assert.ok(fromUsers.length > 0, 'no recipient queries found - update this test');
+
+    const leaky = fromUsers.filter((q) => !/access_level\s*<>\s*'guest'/.test(q));
+    assert.deepEqual(
+      leaky,
+      [],
+      `these announcement queries would email guests:\n${leaky.join('\n---\n')}`,
+    );
+  });
+});
+
 describe('client paging', () => {
   it('never asks for more than the API will return', () => {
     const cap = Number(

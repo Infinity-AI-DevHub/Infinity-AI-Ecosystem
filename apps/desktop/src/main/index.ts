@@ -106,9 +106,18 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc(() => mainWindow);
     mainWindow = createWindow();
 
+    /*
+     * The root, not the file.
+     *
+     * Naming index.html put that in the router's path, which matches no route, so the
+     * app opened on "That page does not exist" every single launch and you had to click
+     * something in the sidebar to get anywhere. The protocol handler already serves the
+     * shell for any extensionless path, so "/" loads the same document and the router
+     * sees a path it knows.
+     */
     void (devServer
       ? mainWindow.loadURL(devServer)
-      : mainWindow.loadURL(`${APP_SCHEME}://-/index.html`));
+      : mainWindow.loadURL(`${APP_SCHEME}://-/`));
 
     mainWindow.on('closed', () => {
       mainWindow = null;

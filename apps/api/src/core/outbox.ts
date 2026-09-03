@@ -41,6 +41,7 @@ export type DomainEventType =
   | 'approval.decided'
   | 'approval.completed'
   | 'announcement.published'
+  | 'announcement.updated'
   | 'notification.created';
 
 export type OutboxEvent = {

@@ -7,10 +7,11 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { BarChart3, Check, Megaphone, Plus, Trash2 } from 'lucide-react';
+import { BarChart3, Check, Megaphone, Pencil, Plus, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
+import { useNotify } from '../lib/notify';
 import { formatDateTime, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 
@@ -163,6 +164,25 @@ function AnnouncementDetail({
     { onSuccess: onChanged },
   );
 
+  const { notify } = useNotify();
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(announcement.title);
+  const [editBody, setEditBody] = useState(announcement.body);
+
+  const edit = useMutation(
+    async () => api.patch(`/announcements/${announcement.id}`, {
+      title: editTitle,
+      body: editBody,
+    }),
+    {
+      invalidates: ['/announcements'],
+      onSuccess: () => {
+        setEditing(false);
+        notify({ severity: 'success', title: 'Announcement updated and everyone told again' });
+      },
+    },
+  );
+
   const withdraw = useMutation(async () => api.delete(`/announcements/${announcement.id}`), {
     invalidates: ['/announcements'],
     onSuccess: onWithdrawn,
@@ -242,6 +262,23 @@ function AnnouncementDetail({
             <BarChart3 size={14} aria-hidden="true" /> Reach
           </button>
 
+          {/* Correcting a notice that has gone out. Without this the only remedy was to
+              withdraw it and publish a second one, which reads as a mistake and leaves
+              two records of the same thing. */}
+          {can('announcement.manage') ? (
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => {
+                setEditTitle(announcement.title);
+                setEditBody(announcement.body);
+                setEditing(true);
+              }}
+            >
+              <Pencil size={14} aria-hidden="true" /> Edit
+            </button>
+          ) : null}
+
           {can('announcement.manage') ? (
             <button
               type="button"
@@ -276,6 +313,51 @@ function AnnouncementDetail({
             </dl>
           ) : null}
         </section>
+      ) : null}
+
+      {editing ? (
+        <div className="dialog-scrim" role="presentation" onClick={() => setEditing(false)}>
+          <form
+            className="dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Edit ${announcement.title}`}
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => { event.preventDefault(); void edit.mutate(); }}
+          >
+            <h3>Edit announcement</h3>
+            <p className="field-hint">
+              Everyone it was addressed to is told again, so the correction actually
+              reaches them. Who it goes to cannot be changed here — a notice aimed at a
+              different group is a new announcement.
+            </p>
+
+            <label className="field">
+              <span>Title</span>
+              <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required />
+            </label>
+
+            <label className="field">
+              <span>Announcement</span>
+              <textarea rows={10} value={editBody} onChange={(e) => setEditBody(e.target.value)} required />
+            </label>
+
+            <FormError error={edit.error} />
+
+            <div className="dialog-actions">
+              <button type="button" className="ghost-button" onClick={() => setEditing(false)}>
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="primary-button"
+                disabled={edit.pending || !editTitle.trim() || !editBody.trim()}
+              >
+                {edit.pending ? 'Saving…' : 'Save and notify again'}
+              </button>
+            </div>
+          </form>
+        </div>
       ) : null}
     </article>
   );

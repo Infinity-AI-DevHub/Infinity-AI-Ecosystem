@@ -3,7 +3,7 @@
  * scheduling, acknowledgements, expiry and administrator moderation.
  */
 import { jsonArrayOverlaps, many, newId, one, pool, reload, transaction } from '../core/db.js';
-import { notFound } from '../core/errors.js';
+import { conflict, notFound } from '../core/errors.js';
 import { authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
 import { emit } from '../core/outbox.js';
@@ -28,6 +28,19 @@ export type AnnouncementRow = {
   state: string;
   created_at: Date;
 };
+
+/**
+ * The stored audience, however the driver hands it back.
+ *
+ * MySQL JSON columns arrive already parsed on some driver versions and as a string on
+ * others, and getting this wrong silently addresses a notice to nobody.
+ */
+function parseAudience(value: unknown): Audience {
+  if (typeof value === 'string') {
+    try { return JSON.parse(value) as Audience; } catch { return { scope: 'company' }; }
+  }
+  return (value as Audience) ?? { scope: 'company' };
+}
 
 export async function create(
   actor: Actor,
@@ -91,6 +104,103 @@ export async function create(
     body: announcement.body,
     aclCompanyWide: audience.scope === 'company',
     aclGroupIds: audience.scope === 'group' ? audience.groupIds : [],
+    link: `/announcements/${announcement.id}`,
+  });
+  return announcement;
+}
+
+/**
+ * Correcting an announcement that has already gone out.
+ *
+ * A notice with the wrong date or venue is worse than no notice, and the only remedy
+ * before this was to withdraw it and publish a second one - which reads as a mistake and
+ * leaves two records. The audience is deliberately not editable: re-aiming a notice at a
+ * different group after it has been read by the first one is a new announcement, not an
+ * edit of this one.
+ *
+ * Everyone it was addressed to is told again, because a correction nobody sees is not a
+ * correction.
+ */
+export async function update(
+  actor: Actor,
+  announcementId: string,
+  input: {
+    title?: string;
+    body?: string;
+    priority?: 'normal' | 'important' | 'critical';
+    requiresAck?: boolean;
+    expiresAt?: string | null;
+  },
+): Promise<AnnouncementRow> {
+  const existing = await one<AnnouncementRow>(
+    'SELECT * FROM announcements WHERE id = $1 AND company_id = $2',
+    [announcementId, actor.companyId],
+  );
+  if (!existing) throw notFound('Announcement not found');
+  if (existing.state !== 'published') {
+    throw conflict('A withdrawn announcement cannot be edited');
+  }
+
+  await authorize({
+    actor,
+    capability: 'announcement.create',
+    resourceType: 'announcement',
+    resourceId: announcementId,
+    membership: existing.author_id === actor.userId,
+  });
+
+  const announcement = await transaction(async (tx) => {
+    await tx.query(
+      `UPDATE announcements
+          SET title = COALESCE($1, title),
+              body = COALESCE($2, body),
+              priority = COALESCE($3, priority),
+              requires_ack = COALESCE($4, requires_ack),
+              expires_at = CASE WHEN $6 THEN $5 ELSE expires_at END
+        WHERE id = $7 AND company_id = $8`,
+      [
+        input.title?.trim() ?? null,
+        input.body ?? null,
+        input.priority ?? null,
+        input.requiresAck ?? null,
+        input.expiresAt ? new Date(input.expiresAt) : null,
+        input.expiresAt !== undefined,
+        announcementId,
+        actor.companyId,
+      ],
+    );
+    const saved = (await reload<AnnouncementRow>(tx, 'announcements', announcementId))!;
+    await auditFromActor(
+      actor,
+      'announcement.edit',
+      { resourceType: 'announcement', resourceId: announcementId, metadata: { title: saved.title } },
+      tx,
+    );
+    await emit(
+      {
+        companyId: actor.companyId,
+        type: 'announcement.updated',
+        actorId: actor.userId,
+        payload: {
+          announcementId,
+          title: saved.title,
+          audience: parseAudience(saved.audience),
+        },
+      },
+      tx,
+    );
+    return saved;
+  });
+
+  const audience = parseAudience(announcement.audience);
+  await searchIndex.index({
+    companyId: actor.companyId,
+    docType: 'announcement',
+    resourceId: announcement.id,
+    title: announcement.title,
+    body: announcement.body,
+    aclCompanyWide: audience.scope === 'company',
+    aclGroupIds: audience.scope === 'group' ? audience.groupIds ?? [] : [],
     link: `/announcements/${announcement.id}`,
   });
   return announcement;

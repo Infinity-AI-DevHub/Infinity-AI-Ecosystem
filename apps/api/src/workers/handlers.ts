@@ -1012,23 +1012,37 @@ const onAnnouncementPublished: Handler = async (event) => {
   let recipients: { id: string }[] = [];
   if (audience.scope === 'company') {
     recipients = await many<{ id: string }>(
-      // An announcement to the whole company means the whole company, including people
-      // who have been given an account but have not signed in yet.
-      `SELECT id FROM users WHERE company_id = $1 AND status IN ('invited', 'active')`,
+      /*
+       * The whole company means the whole company - including people who have an account
+       * but have not signed in yet.
+       *
+       * It does not mean guests. A client contact shares the company_id, so without the
+       * access_level guard an internal notice about office closures, pay or policy is
+       * emailed straight to the client. The message composer has always excluded them
+       * here; this query never did.
+       */
+      `SELECT id FROM users
+        WHERE company_id = $1 AND status IN ('invited', 'active')
+          AND access_level <> 'guest'`,
       [event.company_id],
     );
   } else if (audience.scope === 'department') {
     recipients = await many<{ id: string }>(
       `SELECT id FROM users
-        WHERE company_id = $1 AND status = 'active'
+        WHERE company_id = $1 AND status IN ('invited', 'active')
+          AND access_level <> 'guest'
           AND JSON_CONTAINS($2, JSON_QUOTE(department_id))`,
       [event.company_id, JSON.stringify(audience.departmentIds ?? [])],
     );
   } else if (audience.scope === 'group') {
     recipients = await many<{ id: string }>(
+      // Guests excluded here as well: an announcement is an internal notice, and a group
+      // that happens to include a client contact must not turn one into an outbound
+      // email to them.
       `SELECT DISTINCT u.id FROM users u
          JOIN group_members gm ON gm.user_id = u.id
-        WHERE u.company_id = $1 AND u.status = 'active'
+        WHERE u.company_id = $1 AND u.status IN ('invited', 'active')
+          AND u.access_level <> 'guest'
           AND JSON_CONTAINS($2, JSON_QUOTE(gm.group_id))`,
       [event.company_id, JSON.stringify(audience.groupIds ?? [])],
     );
@@ -1044,7 +1058,9 @@ const onAnnouncementPublished: Handler = async (event) => {
       link: `/announcements/${announcementId}`,
       resourceType: 'announcement',
       resourceId: announcementId,
-      dedupeKey: `announcement:${announcementId}:${userId}`,
+      // The edit carries its own key: an update deduped against the original would be
+      // silently swallowed, which is the one case where people most need telling again.
+      dedupeKey: `announcement:${announcementId}:${event.type}:${userId}`,
     }),
     event.actor_id,
   );
@@ -1055,12 +1071,15 @@ const onAnnouncementPublished: Handler = async (event) => {
    * The whole point of one is that people see it, and a company-wide notice that only
    * appears to whoever happens to open the app that week is not an announcement.
    */
+  const edited = event.type === 'announcement.updated';
+
   await emailUsers(
     recipients.map((r) => r.id).filter((id) => id !== event.actor_id),
     {
-      subject: title,
+      subject: edited ? `Updated: ${title}` : title,
       lines: [
         title,
+        edited ? 'This announcement has been updated. The current version reads:' : '',
         '',
         // Read here rather than carried on the event: an announcement body can be long,
         // and the outbox row is not the place for it.
@@ -1111,6 +1130,8 @@ export const handlers: Record<string, Handler> = {
     await onApprovalSettled(event);
   },
   'announcement.published': onAnnouncementPublished,
+  // Same delivery, different wording - see the `edited` branch inside.
+  'announcement.updated': onAnnouncementPublished,
 };
 
 export { logger, publish, publishToUser };

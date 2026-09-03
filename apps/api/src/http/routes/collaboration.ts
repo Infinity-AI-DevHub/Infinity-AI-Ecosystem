@@ -406,6 +406,10 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
         title: z.string().min(1).max(300),
         description: z.string().max(50_000).optional(),
         assigneeId: z.string().uuid().nullable().optional(),
+        // A task can be on several people. createTask has always handled this; the
+        // schema simply never let it through, so the only way to put a second person on
+        // a task was to create it and then edit it.
+        assigneeIds: z.array(z.string().uuid()).max(50).optional(),
         priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
         dueAt: z.string().datetime().nullable().optional(),
         labels: z.array(z.string().max(40)).max(20).optional(),
@@ -667,6 +671,22 @@ export async function announcementRoutes(app: FastifyInstance): Promise<void> {
     );
     reply.code(201);
     return announcements.create(actor, input);
+  });
+
+  app.patch('/announcements/:id', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    const input = parse(
+      z.object({
+        title: z.string().min(1).max(300).optional(),
+        body: z.string().min(1).max(50_000).optional(),
+        priority: z.enum(['normal', 'important', 'critical']).optional(),
+        requiresAck: z.boolean().optional(),
+        expiresAt: z.string().datetime().nullable().optional(),
+      }),
+      request.body,
+    );
+    return announcements.update(actor, id, input);
   });
 
   app.get('/announcements/:id', async (request) => {
