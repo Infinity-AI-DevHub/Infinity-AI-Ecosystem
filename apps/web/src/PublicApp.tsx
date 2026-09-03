@@ -25,7 +25,10 @@ import { PortalShell } from './routes/portal/PortalShell';
 import { PortalSignIn } from './routes/portal/PortalSignIn';
 import { PortalHome } from './routes/portal/PortalHome';
 import { PortalInvoices, PortalQuotations } from './routes/portal/PortalInvoices';
-import { PortalDocuments, PortalTasks } from './routes/portal/PortalShared';
+import { PortalDocuments } from './routes/portal/PortalShared';
+import { PortalTasks } from './routes/portal/PortalTasks';
+import { PortalPayments, PortalSend } from './routes/portal/PortalBilling';
+import { PortalMeetings, PortalNotices } from './routes/portal/PortalMeetings';
 import { PortalGuard } from './routes/portal/PortalGuard';
 import './App.css';
 import './styles/portal.css';
@@ -69,8 +72,12 @@ export default function PublicApp() {
           <Route index element={<PortalHome />} />
           <Route path="invoices" element={<PortalInvoices />} />
           <Route path="quotations" element={<PortalQuotations />} />
+          <Route path="payments" element={<PortalPayments />} />
           <Route path="documents" element={<PortalDocuments />} />
+          <Route path="send" element={<PortalSend />} />
+          <Route path="meetings" element={<PortalMeetings />} />
           <Route path="tasks" element={<PortalTasks />} />
+          <Route path="notices" element={<PortalNotices />} />
         </Route>
 
         <Route path="/activate" element={<Activate />} />

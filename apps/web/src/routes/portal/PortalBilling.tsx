@@ -5,13 +5,14 @@
  * need to send us. They were three different conversations by email before this.
  */
 import { useState } from 'react';
-import { AlertTriangle, CalendarClock, Upload } from 'lucide-react';
+import { AlertTriangle, CalendarClock, Download, Eye, Upload } from 'lucide-react';
 import { api, ApiError } from '../../lib/api';
 import { invalidate, useQuery } from '../../lib/query';
 import { AsyncSection, Empty } from '../../components/States';
 import { formatCurrency, formatDate } from '../../lib/format';
 import { EvidenceUpload, type AttachedFile } from '../../components/EvidenceUpload';
 import { FilePreview, type PreviewTarget } from '../../components/FilePreview';
+import { downloadPortalDocumentPdf, openPortalDocumentPdf } from '../../lib/documents-pdf';
 
 type Payment = {
   id: string; amount: number; paid_on: string; method: string | null;
@@ -43,6 +44,7 @@ const STATUS_WORDS: Record<string, string> = {
 };
 
 export function PortalPayments() {
+  const [pdfError, setPdfError] = useState<string | null>(null);
   const next = useQuery<{ next: NextPayment }>('/portal/next-payment', (signal) =>
     api.get('/portal/next-payment', signal),
   );
@@ -105,6 +107,7 @@ export function PortalPayments() {
                       <th scope="col">Method</th>
                       <th scope="col">Reference</th>
                       <th scope="col" className="num">Amount</th>
+                      <th scope="col">Receipt</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -117,6 +120,31 @@ export function PortalPayments() {
                         <td className="num">
                           {formatCurrency(payment.amount, payment.currency)}
                         </td>
+                        <td className="table-actions">
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={() => {
+                              setPdfError(null);
+                              void openPortalDocumentPdf('receipt', payment.id)
+                                .catch(() => setPdfError('The receipt could not be opened.'));
+                            }}
+                          >
+                            <Eye size={14} aria-hidden="true" /> View
+                          </button>
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={() => {
+                              setPdfError(null);
+                              const name = payment.receipt_number || `receipt-${payment.id.slice(0, 8)}`;
+                              void downloadPortalDocumentPdf('receipt', payment.id, `${name}.pdf`)
+                                .catch(() => setPdfError('The receipt could not be downloaded.'));
+                            }}
+                          >
+                            <Download size={14} aria-hidden="true" /> Download
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -125,6 +153,7 @@ export function PortalPayments() {
             )
           }
         </AsyncSection>
+        {pdfError ? <p className="field-error" role="alert">{pdfError}</p> : null}
       </section>
     </>
   );
@@ -208,6 +237,7 @@ export function PortalSend() {
           onChange={(next) => { setFiles(next); setSent(false); }}
           label="The document"
           hint="PDFs, images or scans."
+          uploadOptions={{ purpose: 'portal_submission' }}
         />
 
         <label className="field">

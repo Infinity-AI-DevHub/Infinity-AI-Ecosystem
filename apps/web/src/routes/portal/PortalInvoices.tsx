@@ -6,12 +6,13 @@
  * them would duplicate the table, the money formatting and the empty states.
  */
 import { useState } from 'react';
-import { AlertTriangle, ArrowLeft, Download } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Download, Eye } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useQuery } from '../../lib/query';
 import { AsyncSection, Empty } from '../../components/States';
 import { formatCurrency, formatDate } from '../../lib/format';
 import { FilePreview, type PreviewTarget } from '../../components/FilePreview';
+import { downloadPortalDocumentPdf, openPortalDocumentPdf } from '../../lib/documents-pdf';
 
 type Invoice = {
   id: string; number: string; status: string; currency: string;
@@ -178,6 +179,8 @@ function DocumentDetail({
   kind, id, onBack,
 }: { kind: 'invoices' | 'quotations'; id: string; onBack: () => void }) {
   const [previewing, setPreviewing] = useState<PreviewTarget | null>(null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const pdfKind = kind === 'invoices' ? 'invoice' : 'quotation';
   const detail = useQuery<Invoice & {
     lines: Line[];
     payments?: { amount: number; paid_on: string; method: string | null; reference: string | null }[];
@@ -203,10 +206,36 @@ function DocumentDetail({
                   {doc.valid_until ? ` · valid until ${formatDate(doc.valid_until)}` : ''}
                 </p>
               </div>
-              <span className={`status-tag ${STATUS_TONE[doc.status] ?? 'status-pending'}`}>
-                {STATUS_WORDS[doc.status] ?? doc.status}
-              </span>
+              <div className="portal-document-actions">
+                <span className={`status-tag ${STATUS_TONE[doc.status] ?? 'status-pending'}`}>
+                  {STATUS_WORDS[doc.status] ?? doc.status}
+                </span>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => {
+                    setPdfError(null);
+                    void openPortalDocumentPdf(pdfKind, doc.id)
+                      .catch(() => setPdfError('The PDF could not be opened.'));
+                  }}
+                >
+                  <Eye size={14} aria-hidden="true" /> View PDF
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => {
+                    setPdfError(null);
+                    void downloadPortalDocumentPdf(pdfKind, doc.id, `${doc.number}.pdf`)
+                      .catch(() => setPdfError('The PDF could not be downloaded.'));
+                  }}
+                >
+                  <Download size={14} aria-hidden="true" /> Download PDF
+                </button>
+              </div>
             </header>
+
+            {pdfError ? <p className="field-error" role="alert">{pdfError}</p> : null}
 
             {doc.summary ? <p className="portal-doc-summary">{doc.summary}</p> : null}
 

@@ -9,7 +9,7 @@
 import { useState } from 'react';
 import { Paperclip, X } from 'lucide-react';
 import { ApiError } from '../lib/api';
-import { uploadWorkspaceFile } from '../lib/uploads';
+import { uploadWorkspaceFile, type UploadOptions } from '../lib/uploads';
 
 export type AttachedFile = { id: string; name: string };
 
@@ -19,12 +19,14 @@ export function EvidenceUpload({
   label = 'Evidence',
   hint,
   max = 10,
+  uploadOptions,
 }: {
   files: AttachedFile[];
   onChange: (files: AttachedFile[]) => void;
   label?: string;
   hint?: string;
   max?: number;
+  uploadOptions?: UploadOptions;
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +42,7 @@ export function EvidenceUpload({
     try {
       const added: AttachedFile[] = [];
       for (const file of Array.from(chosen).slice(0, room)) {
-        const uploaded = await uploadWorkspaceFile<{ id: string }>(file);
+        const uploaded = await uploadWorkspaceFile<{ id: string }>(file, uploadOptions);
         added.push({ id: uploaded.id, name: file.name });
       }
       onChange([...files, ...added]);

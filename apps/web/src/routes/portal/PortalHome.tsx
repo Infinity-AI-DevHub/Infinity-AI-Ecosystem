@@ -7,7 +7,7 @@
  * organisation in SQL.
  */
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, FileText, FolderOpen, Receipt } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CreditCard, FileText, FolderOpen, Receipt, Upload } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useQuery } from '../../lib/query';
 import { AsyncSection } from '../../components/States';
@@ -83,9 +83,19 @@ export function PortalHome() {
               <span><strong>Quotations</strong>Proposals we have sent, and what they cover.</span>
               <ArrowRight size={15} aria-hidden="true" />
             </Link>
+            <Link to="/portal/payments" className="portal-jump-card">
+              <CreditCard size={18} aria-hidden="true" />
+              <span><strong>Payments &amp; receipts</strong>Due dates, recorded payments and downloadable receipts.</span>
+              <ArrowRight size={15} aria-hidden="true" />
+            </Link>
             <Link to="/portal/documents" className="portal-jump-card">
               <FolderOpen size={18} aria-hidden="true" />
               <span><strong>Documents</strong>Files and pages shared with you by the team.</span>
+              <ArrowRight size={15} aria-hidden="true" />
+            </Link>
+            <Link to="/portal/send" className="portal-jump-card">
+              <Upload size={18} aria-hidden="true" />
+              <span><strong>Send us a document</strong>Upload an invoice, remittance advice or requested file.</span>
               <ArrowRight size={15} aria-hidden="true" />
             </Link>
           </nav>

@@ -118,6 +118,7 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     process.env.DATA_ENCRYPTION_KEY ??= 'a'.repeat(64);
     process.env.NOTIFY_DRIVER = 'log';
     process.env.NOTIFY_DEFAULT_DOMAIN = 'e2e.test';
+    process.env.CORS_EXTRA_ORIGINS = 'http://portal.e2e.test';
     process.env.RATE_API_PER_MIN = '100000';
     process.env.RATE_LOGIN_PER_MIN = '10000';
 
@@ -1612,8 +1613,26 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     );
     assert.equal(internal.status, 422);
 
+    // The client may have missed or lost the first email. Reissuing from the existing
+    // guest record must keep them on the portal and make the earlier link unusable.
+    const firstToken = new URL(invited.body.invitationUrl).searchParams.get('token')!;
+    const reissued = await admin.post(
+      `/api/v1/external/guests/${invited.body.userId}/invitation`,
+      {},
+      { 'idempotency-key': `guest-resend-${Date.now()}` },
+    );
+    assert.equal(reissued.status, 200);
+    assert.match(reissued.body.invitation.invitationUrl, /\/portal\/activate\?token=/);
+    const token = new URL(reissued.body.invitation.invitationUrl).searchParams.get('token')!;
+
     const guest = new Client(app);
-    const token = new URL(invited.body.invitationUrl).searchParams.get('token')!;
+    assert.equal(
+      (await guest.post('/api/v1/auth/activate', {
+        token: firstToken,
+        password: 'Guest-Passphrase-2026!',
+      })).status,
+      400,
+    );
     assert.equal(
       (await guest.post('/api/v1/auth/activate', { token, password: 'Guest-Passphrase-2026!' }))
         .status,
@@ -1621,13 +1640,110 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     );
     // Their address belongs to the client, so it will never match a verified domain -
     // sign-in has to resolve the company through the guest account itself.
-    assert.equal(
-      (await guest.post('/api/v1/auth/login', {
-        email: guestEmail,
-        password: 'Guest-Passphrase-2026!',
-      })).status,
-      200,
+    const guestLogin = await guest.post('/api/v1/auth/login', {
+      email: guestEmail,
+      password: 'Guest-Passphrase-2026!',
+    });
+    assert.equal(guestLogin.status, 200);
+    guest.csrfToken = guestLogin.body.csrfToken as string;
+
+    // Commercial documents remain available as real PDFs from the authenticated portal,
+    // including a receipt for a recorded payment. The URL is stable, while the portal
+    // decides whether to open it in a tab or save the returned bytes as a download.
+    const invoiceId = randomUUID();
+    const quotationId = randomUUID();
+    const paymentId = randomUUID();
+    const suffix = Date.now().toString().slice(-7);
+    await db.query(
+      `INSERT INTO invoices
+         (id, company_id, client_org_id, number, status, currency, issue_date, due_date,
+          subtotal, tax_amount, total, amount_paid, sent_at, created_by)
+       VALUES ($1,$2,$3,$4,'partially_paid','LKR','2026-09-01','2026-09-30',
+               1000,0,1000,250,NOW(3),$5)`,
+      [invoiceId, companyId, org.body.id, `INV-${suffix}`, adminId],
     );
+    await db.query(
+      `INSERT INTO invoice_payments
+         (id, company_id, invoice_id, amount, paid_on, method, reference,
+          receipt_number, receipt_sent_at, recorded_by)
+       VALUES ($1,$2,$3,250,'2026-09-03','bank_transfer','PORTAL-E2E',$4,NOW(3),$5)`,
+      [paymentId, companyId, invoiceId, `REC-${suffix}`, adminId],
+    );
+    await db.query(
+      `INSERT INTO quotations
+         (id, company_id, org_id, number, status, currency, issue_date, valid_until,
+          subtotal, tax_amount, total, summary, sent_at, created_by)
+       VALUES ($1,$2,$3,$4,'sent','LKR','2026-09-01','2026-10-01',
+               1800,0,1800,'Portal quotation',NOW(3),$5)`,
+      [quotationId, companyId, org.body.id, `QUO-${suffix}`, adminId],
+    );
+    for (const [kind, id] of [
+      ['invoice', invoiceId], ['quotation', quotationId], ['receipt', paymentId],
+    ] as const) {
+      const pdf = await guest.get(`/api/v1/portal/documents/${kind}/${id}/pdf`);
+      assert.equal(pdf.status, 200, `${kind} PDF should be available to its client`);
+      assert.match(String(pdf.headers['content-type']), /^application\/pdf/);
+      assert.match(String(pdf.headers['content-disposition']), /inline; filename=".+\.pdf"/);
+      assert.match(String(pdf.body.raw), /^%PDF-/);
+    }
+
+    // The guest task listing is open, but it is grant-scoped and therefore empty before
+    // any task is shared with this person.
+    const tasks = await guest.get('/api/v1/tasks');
+    assert.equal(tasks.status, 200);
+    assert.deepEqual(tasks.body.items, []);
+
+    // A folder's selected level must survive the round trip. View permits reads only;
+    // contribute adds uploads and replacement versions, including in descendants.
+    const folder = await admin.post('/api/v1/files/folders', { name: `Client ${Date.now()}` });
+    assert.equal(folder.status, 201);
+    const fileId = randomUUID();
+    await db.query(
+      `INSERT INTO files (id, company_id, folder_id, name, owner_id, mime_type, state)
+       VALUES ($1,$2,$3,'brief.pdf',$4,'application/pdf','active')`,
+      [fileId, companyId, folder.body.id, adminId],
+    );
+
+    assert.equal((await admin.post(`/api/v1/shares/folder/${folder.body.id}`, {
+      userIds: [invited.body.userId], access: 'view',
+    })).status, 200);
+    let visibleFolders = await guest.get('/api/v1/files/folders');
+    assert.equal(Boolean(visibleFolders.body.items[0]?.can_contribute), false);
+    assert.equal((await guest.post('/api/v1/files/uploads', {
+      filename: 'client-note.txt', mimeType: 'text/plain', sizeBytes: 4,
+      folderId: folder.body.id,
+    })).status, 403);
+    assert.equal((await guest.post('/api/v1/files/uploads', {
+      filename: 'brief-v2.pdf', mimeType: 'application/pdf', sizeBytes: 4, fileId,
+    })).status, 403);
+
+    assert.equal((await admin.post(`/api/v1/shares/folder/${folder.body.id}`, {
+      userIds: [invited.body.userId], access: 'contribute',
+    })).status, 200);
+    const savedShare = await admin.get(`/api/v1/shares/folder/${folder.body.id}`);
+    assert.deepEqual(savedShare.body.items[0].capabilities, [
+      'file.read', 'file.create', 'file.update',
+    ]);
+    visibleFolders = await guest.get('/api/v1/files/folders');
+    assert.equal(Boolean(visibleFolders.body.items[0]?.can_contribute), true);
+    const contributeUpload = await guest.post('/api/v1/files/uploads', {
+      filename: 'client-note.txt', mimeType: 'text/plain', sizeBytes: 4,
+      folderId: folder.body.id,
+    }, { origin: 'http://portal.e2e.test' });
+    assert.equal(contributeUpload.status, 201, JSON.stringify(contributeUpload.body));
+    assert.equal((await guest.post('/api/v1/files/uploads', {
+      filename: 'brief-v2.pdf', mimeType: 'application/pdf', sizeBytes: 4, fileId,
+    })).status, 201);
+
+    // Contribution does not become drive administration or an unscoped root upload.
+    assert.equal((await guest.post('/api/v1/files/folders', { name: 'Guest root' })).status, 403);
+    assert.equal((await guest.post('/api/v1/files/uploads', {
+      filename: 'root.txt', mimeType: 'text/plain', sizeBytes: 4,
+    })).status, 403);
+    assert.equal((await guest.post('/api/v1/files/uploads', {
+      filename: 'client-invoice.pdf', mimeType: 'application/pdf', sizeBytes: 4,
+      purpose: 'portal_submission',
+    })).status, 201);
 
     // Everything company-wide is closed. Several of these listings scope by company
     // alone, which is correct for an employee and wrong for an external contact, so the
@@ -1636,7 +1752,6 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
       '/api/v1/users',
       '/api/v1/announcements',
       '/api/v1/search?q=a',
-      '/api/v1/tasks',
       '/api/v1/chat/rooms',
       '/api/v1/admin/audit',
       '/api/v1/external/organizations',
@@ -1644,6 +1759,18 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
       const denied = await guest.get(path);
       assert.equal(denied.status, 403, `${path} should be closed to guests, got ${denied.status}`);
     }
+
+    // A browser holding a guest cookie must still be able to sign in as a different
+    // account. The guest boundary protects data routes, not authentication itself.
+    const accountSwitcher = new Client(app);
+    const switchedGuestLogin = await accountSwitcher.post('/api/v1/auth/login', {
+      email: guestEmail, password: 'Guest-Passphrase-2026!',
+    });
+    assert.equal(switchedGuestLogin.status, 200);
+    accountSwitcher.csrfToken = switchedGuestLogin.body.csrfToken as string;
+    assert.equal((await accountSwitcher.post('/api/v1/auth/login', {
+      email: ADMIN_EMAIL, password: ADMIN_PASSWORD,
+    })).status, 200);
 
     // And they are not a colleague: the directory must not list them.
     const directory = await admin.get('/api/v1/users?limit=100');

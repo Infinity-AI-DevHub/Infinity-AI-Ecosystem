@@ -403,6 +403,94 @@ export async function listGuests(actor: Actor, organizationId?: string): Promise
 }
 
 /**
+ * Reissues a guest's portal invitation.
+ *
+ * This is intentionally separate from the employee invitation flow: the same activation
+ * token is used, but the message and return URL must lead to the client portal. Reusing
+ * the staff reissue helper would send a client to a workspace they are not allowed into.
+ */
+export async function reissueGuestInvitation(
+  actor: Actor,
+  guestId: string,
+  ctx: { ip: string | null; userAgent: string | null; correlationId: string | null },
+): Promise<{ invitationUrl: string; expiresInHours: number }> {
+  await authorize({ actor, capability: 'guest.manage', resourceless: true });
+
+  const guest = await one<{
+    id: string;
+    email: string;
+    display_name: string;
+    status: string;
+    organization_name: string;
+  }>(
+    `SELECT u.id, u.email, u.display_name, u.status, o.name AS organization_name
+       FROM users u
+       JOIN external_memberships m ON m.user_id = u.id AND m.company_id = u.company_id
+       JOIN external_organizations o ON o.id = m.organization_id AND o.company_id = m.company_id
+      WHERE u.id = $1 AND u.company_id = $2 AND u.access_level = 'guest'`,
+    [guestId, actor.companyId],
+  );
+  if (!guest) throw notFound('Guest not found');
+  if (guest.status !== 'invited') {
+    throw conflict('Only a guest who has not activated their account can receive a new activation link');
+  }
+
+  const token = generateToken();
+  await transaction(async (tx) => {
+    // Replacement means replacement: every older unused link becomes invalid before the
+    // new one is committed, so forwarded or delayed email cannot activate the account.
+    await tx.query(
+      'UPDATE invitations SET used_at = NOW(3) WHERE user_id = $1 AND used_at IS NULL',
+      [guest.id],
+    );
+    await tx.query(
+      `INSERT INTO invitations (id, company_id, user_id, token_hash, expires_at, created_by)
+       VALUES ($1,$2,$3,$4, DATE_ADD(NOW(3), INTERVAL $5 HOUR), $6)`,
+      [
+        newId(),
+        actor.companyId,
+        guest.id,
+        hashToken(token),
+        config.security.invitationTtlHours,
+        actor.userId,
+      ],
+    );
+    await auditFromActor(
+      actor,
+      'guest.invitation_reissued',
+      {
+        resourceType: 'user',
+        resourceId: guest.id,
+        metadata: { organizationName: guest.organization_name, email: guest.email },
+      },
+      tx,
+    );
+    await emit(
+      {
+        companyId: actor.companyId,
+        type: 'user.invited',
+        actorId: actor.userId,
+        correlationId: ctx.correlationId,
+        payload: {
+          userId: guest.id,
+          email: guest.email,
+          displayName: guest.display_name,
+          invitationToken: token,
+          portal: true,
+          organisationName: guest.organization_name,
+        },
+      },
+      tx,
+    );
+  });
+
+  return {
+    invitationUrl: `${config.publicUrl}/portal/activate?token=${token}`,
+    expiresInHours: config.security.invitationTtlHours,
+  };
+}
+
+/**
  * Grants a guest access to one specific resource.
  *
  * This is the only thing that makes a guest's capabilities mean anything, so it is the

@@ -555,6 +555,7 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
         sizeBytes: z.number().int().positive(),
         folderId: z.string().uuid().nullable().optional(),
         fileId: z.string().uuid().optional(),
+        purpose: z.literal('portal_submission').optional(),
       }),
       request.body,
     );

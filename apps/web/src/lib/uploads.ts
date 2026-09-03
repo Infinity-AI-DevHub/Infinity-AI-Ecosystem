@@ -5,6 +5,7 @@ type UploadSession = { uploadId: string; uploadUrl: string };
 export type UploadOptions = {
   folderId?: string | null;
   fileId?: string;
+  purpose?: 'portal_submission';
 };
 
 const completionDelays = [0, 350, 1_000];
@@ -52,6 +53,7 @@ export async function uploadWorkspaceFile<T>(file: File, options: UploadOptions 
     sizeBytes: file.size,
     folderId: options.folderId ?? null,
     fileId: options.fileId,
+    purpose: options.purpose,
   });
 
   let stored: Response;

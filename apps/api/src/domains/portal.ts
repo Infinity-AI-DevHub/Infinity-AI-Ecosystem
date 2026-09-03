@@ -17,6 +17,7 @@ import { many, newId, one, query } from '../core/db.js';
 import { forbidden, notFound } from '../core/errors.js';
 import { authorize, type Actor } from '../core/authz.js';
 import { countVisibleFiles } from './files.js';
+import { publicTask } from './tasks.js';
 import { emit } from '../core/outbox.js';
 
 export type PortalOrganisation = {
@@ -251,6 +252,21 @@ export async function listPayments(actor: Actor) {
   return rows.map((row) => ({ ...row, amount: money(row.amount) }));
 }
 
+/** One receipt, proven to belong to this caller's organisation before PDF rendering. */
+export async function getPayment(actor: Actor, paymentId: string) {
+  const org = await myOrganisation(actor);
+  const payment = await one<{ id: string }>(
+    `SELECT p.id
+       FROM invoice_payments p
+       JOIN invoices i ON i.id = p.invoice_id
+      WHERE p.id = $1 AND i.company_id = $2 AND i.client_org_id = $3
+        AND i.sent_at IS NOT NULL`,
+    [paymentId, actor.companyId, org.id],
+  );
+  if (!payment) throw notFound('Receipt not found');
+  return payment;
+}
+
 /**
  * What is due next.
  *
@@ -400,4 +416,90 @@ export async function listUploads(actor: Actor) {
       LIMIT 100`,
     [actor.companyId, org.id],
   );
+}
+
+/* --------------------------------------------------------- projects and work */
+
+/**
+ * The client's own projects.
+ *
+ * Scoped by `projects.client_org_id`, which is what makes a project theirs. This is a
+ * different relationship from the rest of the portal's sharing: files and documents are
+ * given out one at a time, but a project *belongs* to a client, and every task in it is
+ * work being done for them. Sharing those task by task would be busywork that nobody
+ * would keep up with, and the first missed share would leave the client believing the
+ * work had stopped.
+ */
+export async function listProjects(actor: Actor) {
+  const org = await myOrganisation(actor);
+  return many<{ id: string; name: string; key: string; status: string }>(
+    `SELECT p.id, p.name, p.key, p.status, p.description, p.starts_on, p.ends_on
+       FROM projects p
+      WHERE p.company_id = $1 AND p.client_org_id = $2
+      ORDER BY p.status = 'archived', p.name`,
+    [actor.companyId, org.id],
+  );
+}
+
+/**
+ * Tasks in one of the client's projects.
+ *
+ * The project is verified against their organisation before anything is read, so an id
+ * belonging to another client's project returns nothing rather than someone else's board.
+ * Read-only throughout: there is no portal route that writes a task, and the client's
+ * copy deliberately carries no status control.
+ */
+export async function listTasks(actor: Actor, projectId: string) {
+  const org = await myOrganisation(actor);
+
+  const project = await one<{ id: string }>(
+    `SELECT id FROM projects
+      WHERE id = $1 AND company_id = $2 AND client_org_id = $3`,
+    [projectId, actor.companyId, org.id],
+  );
+  // Not found rather than forbidden: whether another client has a project by this id is
+  // not something this caller should be able to learn.
+  if (!project) throw notFound('Project not found');
+
+  const rows = await many(
+    `SELECT t.*, u.display_name AS assignee_name, p.key AS project_key,
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', au.id, 'name', au.display_name))
+               FROM task_assignees ta JOIN users au ON au.id = ta.user_id
+              WHERE ta.task_id = t.id) AS assignees
+       FROM tasks t
+       JOIN projects p ON p.id = t.project_id
+       LEFT JOIN users u ON u.id = t.assignee_id
+      WHERE t.company_id = $1 AND t.project_id = $2 AND p.client_org_id = $3
+      ORDER BY t.position, t.created_at DESC
+      LIMIT 500`,
+    [actor.companyId, projectId, org.id],
+  );
+  return rows.map((row) => publicTask(row as never));
+}
+
+/**
+ * One task, for the client to read.
+ *
+ * Comments and internal notes are deliberately absent. A task's discussion is where
+ * colleagues talk to each other about the client's work, and handing that over
+ * unedited is how a portal becomes something people are afraid to use.
+ */
+export async function getTask(actor: Actor, taskId: string) {
+  const org = await myOrganisation(actor);
+  const row = await one(
+    `SELECT t.*, u.display_name AS assignee_name, p.key AS project_key, p.name AS project_name,
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', au.id, 'name', au.display_name))
+               FROM task_assignees ta JOIN users au ON au.id = ta.user_id
+              WHERE ta.task_id = t.id) AS assignees
+       FROM tasks t
+       JOIN projects p ON p.id = t.project_id
+       LEFT JOIN users u ON u.id = t.assignee_id
+      WHERE t.id = $1 AND t.company_id = $2 AND p.client_org_id = $3`,
+    [taskId, actor.companyId, org.id],
+  );
+  if (!row) throw notFound('Task not found');
+  return {
+    ...publicTask(row as never),
+    projectName: (row as { project_name: string }).project_name,
+  };
 }
