@@ -7,6 +7,10 @@
 -- Times are UTC. The "day" a session belongs to is computed from the person's own
 -- timezone at read time - a Colombo team on UTC would see its working day split at
 -- 05:30, which is not a day anybody recognises.
+--
+-- Inherit the database charset and collation. The referenced UUID columns inherited
+-- them from the database too, and forcing utf8mb4_unicode_ci here makes the foreign
+-- keys incompatible on MySQL 8 databases that use utf8mb4_0900_ai_ci.
 CREATE TABLE attendance_sessions (
   id             CHAR(36)     NOT NULL PRIMARY KEY,
   company_id     CHAR(36)     NOT NULL,
@@ -52,7 +56,7 @@ CREATE TABLE attendance_sessions (
   CONSTRAINT fk_attendance_company FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE,
   CONSTRAINT fk_attendance_user    FOREIGN KEY (user_id)    REFERENCES users (id)     ON DELETE CASCADE,
   CONSTRAINT fk_attendance_reviewer FOREIGN KEY (reviewed_by) REFERENCES users (id)   ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 CREATE INDEX idx_attendance_user_day ON attendance_sessions (company_id, user_id, clocked_in_at);
 CREATE INDEX idx_attendance_review   ON attendance_sessions (company_id, review_state, clocked_in_at);
@@ -75,7 +79,7 @@ CREATE TABLE attendance_evidence (
   CONSTRAINT fk_evidence_session FOREIGN KEY (session_id) REFERENCES attendance_sessions (id) ON DELETE CASCADE,
   CONSTRAINT fk_evidence_file    FOREIGN KEY (file_id)    REFERENCES files (id) ON DELETE CASCADE,
   CONSTRAINT uq_evidence_file UNIQUE (session_id, file_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 CREATE INDEX idx_evidence_session ON attendance_evidence (session_id);
 
