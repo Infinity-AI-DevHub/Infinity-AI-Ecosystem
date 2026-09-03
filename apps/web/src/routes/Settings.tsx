@@ -338,12 +338,12 @@ export default function Settings() {
           <FormError error={withdrawCover.error} />
         </section>
 
-        {/* Anchored so Finance can send people straight here: invoice branding and
-            payment instructions are looked for beside the invoices, not in a personal
-            settings page nobody thinks to open. */}
-        {can('billing.configure') ? <div id="billing"><BillingSettings /></div> : null}
+        {/* Direct children of the grid. Wrapping these in plain divs made each panel a
+            grandchild, which took it out of the grid's own track sizing and let the
+            panels overlap each other. */}
+        {can('billing.configure') ? <BillingSettings /> : null}
 
-        <div id="signature"><SignatureSettings /></div>
+        <SignatureSettings />
 
         <NotificationSettings />
 

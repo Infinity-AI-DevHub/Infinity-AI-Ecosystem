@@ -19,6 +19,9 @@ type Profile = {
   tax_registration: string | null; contact_email: string | null; contact_phone: string | null;
   payment_instructions: string | null; invoice_footer: string | null;
   receipt_footer: string | null; accent_colour: string | null;
+  logo_file_id?: string | null;
+  /** Decoded once by billingProfile, because the renderer is synchronous. */
+  logo?: { width: number; height: number; rgb: Buffer; alpha: Buffer | null } | null;
 };
 
 export type RenderModel = {
@@ -108,8 +111,24 @@ export function renderPdf(model: RenderModel, profile: Profile): Buffer {
   const ink: Colour = [0.10, 0.14, 0.19];
 
   // ---- letterhead ----------------------------------------------------------
-  doc.text(MARGIN, MARGIN + 14, TITLE[model.kind], { size: 22, font: 'bold', colour: accent });
-  doc.text(MARGIN, MARGIN + 32, model.number, { size: 11, font: 'bold', colour: ink });
+  /*
+   * The logo sits above the document title rather than beside it. Beside it, a wide
+   * logo and a long legal name collide in the middle of the page; stacked, both have
+   * the full column width and the title still reads as the first thing on the page.
+   * Height is capped and the width follows the aspect ratio, so a square mark and a
+   * long wordmark both land sensibly without anybody configuring anything.
+   */
+  let titleTop = MARGIN + 14;
+  if (profile.logo) {
+    const cap = 30;
+    const logoH = Math.min(cap, profile.logo.height);
+    const logoW = (profile.logo.width / profile.logo.height) * logoH;
+    doc.image(MARGIN, MARGIN - 4, profile.logo, Math.min(logoW, 180));
+    titleTop = MARGIN + logoH + 22;
+  }
+
+  doc.text(MARGIN, titleTop, TITLE[model.kind], { size: 22, font: 'bold', colour: accent });
+  doc.text(MARGIN, titleTop + 18, model.number, { size: 11, font: 'bold', colour: ink });
 
   let headRight = MARGIN + 8;
   doc.textRight(RIGHT, headRight, profile.legal_name ?? '', { size: 10, font: 'bold', colour: ink });
@@ -127,7 +146,7 @@ export function renderPdf(model: RenderModel, profile: Profile): Buffer {
 
   // A rule in the company colour, which is most of what makes a page look like a
   // document rather than a printout.
-  const ruleTop = Math.max(headRight + 6, MARGIN + 52);
+  const ruleTop = Math.max(headRight + 6, titleTop + 30);
   doc.rect(MARGIN, ruleTop, RIGHT - MARGIN, 2.2, accent);
 
   // ---- parties -------------------------------------------------------------
@@ -170,17 +189,18 @@ export function renderPdf(model: RenderModel, profile: Profile): Buffer {
     cursor += 82;
   } else {
     const cols = { qty: MARGIN + 300, unit: MARGIN + 380, tax: MARGIN + 430, amount: RIGHT };
-    doc.text(MARGIN, cursor, 'DESCRIPTION', { size: 7.5, font: 'bold', colour: muted });
+    // A tinted band behind the column headings. Floating grey labels above hairlines
+    // read as captions; a band reads as a table, which is what this is.
+    doc.rect(MARGIN, cursor - 11, RIGHT - MARGIN, 20, [0.957, 0.969, 0.976]);
+    doc.text(MARGIN + 8, cursor, 'DESCRIPTION', { size: 7.5, font: 'bold', colour: muted });
     doc.textRight(cols.qty, cursor, 'QTY', { size: 7.5, font: 'bold', colour: muted });
     doc.textRight(cols.unit, cursor, 'UNIT', { size: 7.5, font: 'bold', colour: muted });
     doc.textRight(cols.tax, cursor, 'TAX', { size: 7.5, font: 'bold', colour: muted });
-    doc.textRight(cols.amount, cursor, 'AMOUNT', { size: 7.5, font: 'bold', colour: muted });
-    cursor += 6;
-    doc.line(MARGIN, cursor, RIGHT, { colour: [0.80, 0.84, 0.88] });
-    cursor += 15;
+    doc.textRight(cols.amount, cursor - 0, 'AMOUNT', { size: 7.5, font: 'bold', colour: muted });
+    cursor += 20;
 
     for (const line of model.lines) {
-      const used = doc.paragraph(MARGIN, cursor, line.description, 280, { size: 9.5, colour: ink });
+      const used = doc.paragraph(MARGIN + 8, cursor, line.description, 280, { size: 9.5, colour: ink });
       doc.textRight(cols.qty, cursor, String(line.quantity), { size: 9.5, colour: ink });
       doc.textRight(cols.unit, cursor, amount(line.unitPrice), { size: 9.5, colour: ink });
       doc.textRight(cols.tax, cursor, line.taxRate > 0 ? `${line.taxRate}%` : '-', { size: 9.5, colour: muted });
@@ -199,13 +219,21 @@ export function renderPdf(model: RenderModel, profile: Profile): Buffer {
     row('Subtotal', money(model.subtotal, model.currency));
     if (model.tax > 0) row('Tax', money(model.tax, model.currency));
     doc.line(totalsLeft, cursor - 4, RIGHT, { colour: [0.80, 0.84, 0.88] });
-    cursor += 6;
-    row(model.kind === 'quotation' ? 'Total' : 'Total due', money(model.total, model.currency), true);
+    cursor += 8;
+
+    // The figure the reader is actually looking for, on a band of its own.
+    const totalLabel = model.kind === 'quotation' ? 'Total' : 'Total due';
+    const totalValue = model.amountPaid > 0
+      ? money(model.total - model.amountPaid, model.currency)
+      : money(model.total, model.currency);
     if (model.amountPaid > 0) {
       row('Paid', `-${money(model.amountPaid, model.currency)}`);
-      row('Balance', money(model.total - model.amountPaid, model.currency), true);
     }
-    cursor += 8;
+    doc.rect(totalsLeft - 12, cursor - 12, RIGHT - totalsLeft + 12, 28, [0.957, 0.969, 0.976]);
+    doc.text(totalsLeft, cursor + 5, model.amountPaid > 0 ? 'Balance' : totalLabel,
+      { size: 10, font: 'bold', colour: ink });
+    doc.textRight(RIGHT - 4, cursor + 5, totalValue, { size: 12.5, font: 'bold', colour: accent });
+    cursor += 34;
   }
 
   // ---- terms, instructions, footer ----------------------------------------
@@ -363,7 +391,7 @@ export function renderEmailHtml(model: RenderModel, profile: Profile, intro: str
 /** Billing settings, with defaults, so a caller never has to handle their absence. */
 export async function billingProfile(companyId: string): Promise<Profile> {
   const row = await one<Profile>('SELECT * FROM billing_settings WHERE company_id = $1', [companyId]);
-  if (row) return row;
+  if (row) return { ...row, logo: await loadLogo(row.logo_file_id ?? null) };
   const company = await one<{ name: string; legal_name: string | null }>(
     'SELECT name, legal_name FROM companies WHERE id = $1', [companyId],
   );
@@ -372,7 +400,35 @@ export async function billingProfile(companyId: string): Promise<Profile> {
     address_line1: null, address_line2: null, city: null, postal_code: null, country: null,
     tax_registration: null, contact_email: null, contact_phone: null,
     payment_instructions: null, invoice_footer: null, receipt_footer: null, accent_colour: null,
+    logo_file_id: null, logo: null,
   };
+}
+
+/**
+ * The company logo, decoded ready to draw.
+ *
+ * PNG only: the PDF writer embeds raw pixels, and a JPEG or SVG would need a decoder
+ * apiece. A logo that cannot be read is not an error - the document falls back to the
+ * legal name in type, which is what it did before logos existed at all.
+ */
+async function loadLogo(fileId: string | null): Promise<Profile['logo']> {
+  if (!fileId) return null;
+  const row = await one<{ object_key: string | null; mime_type: string | null }>(
+    `SELECT v.object_key, f.mime_type
+       FROM files f
+       LEFT JOIN file_versions v ON v.file_id = f.id AND v.version = f.current_version
+      WHERE f.id = $1`,
+    [fileId],
+  );
+  if (!row?.object_key || row.mime_type !== 'image/png') return null;
+  try {
+    const stream = await readStream(row.object_key);
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+    return decodePng(Buffer.concat(chunks));
+  } catch {
+    return null;
+  }
 }
 
 /** Assembles the model for an invoice, a quotation, or a payment receipt. */

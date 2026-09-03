@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { useQuery } from '../lib/query';
 import { useNotify } from '../lib/notify';
+import { uploadWorkspaceFile } from '../lib/uploads';
 import { InvoiceDocument } from './InvoiceDocument';
 
 type Settings = {
@@ -28,6 +29,7 @@ type Settings = {
   invoice_prefix: string;
   receipt_prefix: string;
   accent_colour: string | null;
+  logo_file_id: string | null;
 };
 
 /**
@@ -73,11 +75,43 @@ export function BillingSettings() {
   const [saving, setSaving] = useState(false);
   const [previewMode, setPreviewMode] = useState<'invoice' | 'receipt'>('invoice');
   const [error, setError] = useState<string | null>(null);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+
+  async function uploadLogo(file: File) {
+    setLogoError(null);
+    setLogoBusy(true);
+    try {
+      if (file.type !== 'image/png') {
+        throw new Error('Use a PNG. The document writer embeds pixels directly, and a JPEG or SVG cannot be read.');
+      }
+      const uploaded = await uploadWorkspaceFile<{ id: string }>(file);
+      set({ logo_file_id: uploaded.id });
+      const link = await api.get<{ url: string }>(`/files/${uploaded.id}/download`);
+      setLogoUrl(link.url);
+    } catch (err) {
+      setLogoError(err instanceof ApiError ? err.message : (err as Error).message);
+    } finally {
+      setLogoBusy(false);
+    }
+  }
 
   // Seeded once the server answers; edits after that are the person's, not a refetch's.
   useEffect(() => {
     if (query.data && !form) setForm(query.data);
   }, [query.data, form]);
+
+  // The stored logo is a file id; the preview needs a short-lived URL for it.
+  useEffect(() => {
+    const fileId = query.data?.logo_file_id;
+    if (!fileId) return;
+    let cancelled = false;
+    void api.get<{ url: string }>(`/files/${fileId}/download`)
+      .then((link) => { if (!cancelled) setLogoUrl(link.url); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [query.data?.logo_file_id]);
 
   if (!form) return <section className="panel"><p className="field-hint">Loading…</p></section>;
 
@@ -105,6 +139,7 @@ export function BillingSettings() {
         defaultDueDays: Number(form!.default_due_days),
         invoicePrefix: form!.invoice_prefix,
         receiptPrefix: form!.receipt_prefix,
+        logoFileId: form!.logo_file_id,
       });
       notify({ severity: 'success', title: 'Billing details saved' });
       query.reload();
@@ -241,6 +276,48 @@ export function BillingSettings() {
           already issued keep the prefix they were issued under.
         </p>
       </fieldset>
+
+      {/* The mark that heads every invoice, quotation and receipt. Replaceable, because
+          a logo changes and re-cutting the PDF writer for it would be absurd. */}
+      <div className="field">
+        <span className="label-row">Company logo</span>
+        <div className="logo-setting">
+          <div className="logo-preview">
+            {logoUrl ? (
+              <img src={logoUrl} alt="Company logo" />
+            ) : (
+              <span className="field-hint">No logo — documents show the legal name instead.</span>
+            )}
+          </div>
+          <div className="logo-actions">
+            <label className="ghost-button logo-upload">
+              {form.logo_file_id ? 'Replace logo' : 'Upload logo'}
+              <input
+                type="file"
+                accept="image/png"
+                hidden
+                disabled={logoBusy}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void uploadLogo(file);
+                  event.target.value = '';
+                }}
+              />
+            </label>
+            {form.logo_file_id ? (
+              <button type="button" className="ghost-button"
+                      onClick={() => { set({ logo_file_id: null }); setLogoUrl(null); }}>
+                Remove
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <p className="field-hint">
+          A PNG with a transparent background. It is placed above the document title and
+          scaled to fit, so any reasonable shape works. Save to apply it.
+        </p>
+        {logoError ? <p className="field-error">{logoError}</p> : null}
+      </div>
 
       <div className="field">
         <label htmlFor="bs-accent">Accent colour</label>

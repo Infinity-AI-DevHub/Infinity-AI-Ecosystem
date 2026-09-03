@@ -6,7 +6,7 @@
  * short-lived signed URLs requested at click time - never long-lived links in markup.
  */
 import { useMemo, useRef, useState } from 'react';
-import { Download, FolderPlus, History, Link2, RotateCcw, Share2, ShieldAlert, Trash2, Upload } from 'lucide-react';
+import { Download, FolderPlus, GripVertical, History, Link2, Pencil, RotateCcw, Share2, ShieldAlert, Trash2, Upload } from 'lucide-react';
 import { api, ApiError, idempotencyKey, NetworkError } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { saveDownload } from '../lib/desktop';
@@ -15,6 +15,8 @@ import { formatBytes, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 import { uploadWorkspaceFile } from '../lib/uploads';
 import { ShareWith } from '../components/ShareWith';
+import { useConfirm, useTextPrompt } from '../components/Prompt';
+import { useNotify } from '../lib/notify';
 
 type FileRecord = {
   id: string;
@@ -29,7 +31,7 @@ type FileRecord = {
   updatedAt: string;
 };
 
-type Folder = { id: string; parent_id: string | null; name: string; path: string };
+type Folder = { id: string; parent_id: string | null; name: string; path: string; sort_order?: number };
 
 export default function Files() {
   const { can } = useSession();
@@ -42,10 +44,95 @@ export default function Files() {
   const [sharingFile, setSharingFile] = useState<FileRecord | null>(null);
   const [showRecycled, setShowRecycled] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { ask: askText, element: promptElement } = useTextPrompt();
+  const { confirm, element: confirmElement } = useConfirm();
+  const { notify } = useNotify();
+  // Local order while a drag is in flight, so the list follows the pointer instead of
+  // waiting for the server to answer.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [order, setOrder] = useState<string[] | null>(null);
 
   const folders = useQuery<{ items: Folder[] }>('/files/folders', (signal) =>
     api.get('/files/folders', signal),
   );
+
+  /*
+   * Folder order, rename and removal.
+   *
+   * The order is held locally while dragging and written once on drop - one request per
+   * hover would be a request per pixel, and the list has to keep up with the pointer.
+   */
+  const orderedFolders = useMemo(() => {
+    const items = folders.data?.items ?? [];
+    if (!order) return items;
+    const byId = new Map(items.map((f) => [f.id, f]));
+    const arranged = order.map((id) => byId.get(id)).filter(Boolean) as Folder[];
+    // Anything that appeared since the drag started still gets shown.
+    return [...arranged, ...items.filter((f) => !order.includes(f.id))];
+  }, [folders.data, order]);
+
+  function moveDragged(overId: string) {
+    if (!dragId || dragId === overId) return;
+    const ids = orderedFolders.map((f) => f.id);
+    const from = ids.indexOf(dragId);
+    const to = ids.indexOf(overId);
+    if (from < 0 || to < 0) return;
+    ids.splice(to, 0, ids.splice(from, 1)[0]!);
+    setOrder(ids);
+  }
+
+  async function persistOrder() {
+    if (!order) return;
+    try {
+      await api.put('/files/folders/order', { folderIds: order });
+      invalidate('/files/folders');
+    } catch {
+      notify({ severity: 'warning', title: 'That order could not be saved' });
+      setOrder(null);
+    }
+  }
+
+  async function renameFolder(folder: Folder) {
+    const next = await askText({
+      title: `Rename ${folder.name}`,
+      label: 'Folder name',
+      initialValue: folder.name,
+      singleLine: true,
+      confirmLabel: 'Rename',
+    });
+    if (!next || next === folder.name) return;
+    try {
+      await api.patch(`/files/folders/${folder.id}`, { name: next });
+      invalidate('/files/folders');
+      notify({ severity: 'success', title: `Renamed to ${next}` });
+    } catch (err) {
+      notify({
+        severity: 'warning',
+        title: err instanceof ApiError ? err.message : 'That folder could not be renamed',
+      });
+    }
+  }
+
+  async function removeFolder(folder: Folder) {
+    const confirmed = await confirm({
+      title: `Delete ${folder.name}?`,
+      description: 'The folder has to be empty. Files and sub-folders are never removed with it.',
+      confirmLabel: 'Delete folder',
+      destructive: true,
+    });
+    if (!confirmed) return;
+    try {
+      await api.delete(`/files/folders/${folder.id}`);
+      if (folderId === folder.id) setFolderId(null);
+      invalidate('/files/folders');
+      notify({ severity: 'success', title: `${folder.name} deleted` });
+    } catch (err) {
+      notify({
+        severity: 'warning',
+        title: err instanceof ApiError ? err.message : 'That folder could not be deleted',
+      });
+    }
+  }
 
   const listKey = `/files?limit=100${folderId ? `&folderId=${folderId}` : ''}${
     showRecycled ? '&recycled=true' : ''
@@ -157,14 +244,33 @@ export default function Files() {
                 All files
               </button>
             </li>
-            {(folders.data?.items ?? []).map((folder) => (
-              <li key={folder.id} className="folder-row">
+            {orderedFolders.map((folder) => (
+              <li
+                key={folder.id}
+                className={`folder-row ${dragId === folder.id ? 'folder-dragging' : ''}`}
+                draggable
+                onDragStart={() => setDragId(folder.id)}
+                onDragEnd={() => { setDragId(null); void persistOrder(); }}
+                onDragOver={(event) => { event.preventDefault(); moveDragged(folder.id); }}
+              >
+                <span className="folder-grip" aria-hidden="true" title="Drag to reorder">
+                  <GripVertical size={14} />
+                </span>
                 <button
                   type="button"
                   className={`folder-button ${folderId === folder.id ? 'folder-active' : ''}`}
                   onClick={() => setFolderId(folder.id)}
                 >
                   {folder.name}
+                </button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  title={`Rename ${folder.name}`}
+                  aria-label={`Rename ${folder.name}`}
+                  onClick={() => void renameFolder(folder)}
+                >
+                  <Pencil size={14} aria-hidden="true" />
                 </button>
                 {/* Sharing a folder with a client or a guest was built and then left
                     with nothing to open it, so the whole feature was invisible. */}
@@ -176,6 +282,15 @@ export default function Files() {
                   onClick={() => setSharingFolder({ id: folder.id, name: folder.name })}
                 >
                   <Share2 size={15} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  title={`Delete ${folder.name}`}
+                  aria-label={`Delete ${folder.name}`}
+                  onClick={() => void removeFolder(folder)}
+                >
+                  <Trash2 size={14} aria-hidden="true" />
                 </button>
               </li>
             ))}
@@ -330,6 +445,9 @@ export default function Files() {
           onClose={() => setSharingFolder(null)}
         />
       ) : null}
+
+      {promptElement}
+      {confirmElement}
     </div>
   );
 }

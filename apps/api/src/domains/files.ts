@@ -56,9 +56,14 @@ async function requireFileAccess(actor: Actor, fileId: string, capability: strin
 }
 
 export async function listFolders(actor: Actor) {
-  return many('SELECT id, parent_id, name, path, owner_id FROM folders WHERE company_id = $1 ORDER BY path', [
-    actor.companyId,
-  ]);
+  // sort_order first, then path: an explicit arrangement wins, and anything never
+  // dragged keeps its old alphabetical-by-path position rather than jumping around.
+  return many(
+    `SELECT id, parent_id, name, path, owner_id, sort_order
+       FROM folders WHERE company_id = $1
+      ORDER BY sort_order, path`,
+    [actor.companyId],
+  );
 }
 
 export async function createFolder(actor: Actor, name: string, parentId: string | null) {
@@ -85,6 +90,112 @@ export async function createFolder(actor: Actor, name: string, parentId: string 
     [folderId, actor.companyId, parentId, clean, actor.userId, path],
   );
   return { id: folderId, parent_id: parentId, name: clean, path };
+}
+
+/**
+ * Renaming a folder.
+ *
+ * `path` is derived from the name and is what every descendant's path is built on, so a
+ * rename has to rewrite the subtree as well. Doing it in one UPDATE with a prefix match
+ * keeps the whole move atomic - a half-renamed tree would strand files under a path that
+ * no longer resolves.
+ */
+export async function renameFolder(actor: Actor, folderId: string, name: string) {
+  await authorize({ actor, capability: 'file.create', resourceless: true });
+  const clean = safeFilename(name).replace(/\//g, '');
+  if (!clean) throw unprocessable('Folder name is required', [{ field: 'name', message: 'Enter a name' }]);
+
+  const folder = await one<{ id: string; parent_id: string | null; path: string }>(
+    'SELECT id, parent_id, path FROM folders WHERE id = $1 AND company_id = $2',
+    [folderId, actor.companyId],
+  );
+  if (!folder) throw notFound('Folder not found');
+
+  const parent = folder.parent_id
+    ? await one<{ path: string }>('SELECT path FROM folders WHERE id = $1 AND company_id = $2',
+        [folder.parent_id, actor.companyId])
+    : null;
+  const nextPath = `${parent?.path ?? ''}/${clean}`;
+  if (nextPath === folder.path) return { id: folderId, name: clean, path: nextPath };
+
+  const clash = await one('SELECT 1 FROM folders WHERE company_id = $1 AND path = $2 AND id <> $3',
+    [actor.companyId, nextPath, folderId]);
+  if (clash) throw conflict('A folder with that name already exists here');
+
+  await transaction(async (tx) => {
+    await tx.query('UPDATE folders SET name = $1, path = $2 WHERE id = $3 AND company_id = $4',
+      [clean, nextPath, folderId, actor.companyId]);
+    // Descendants: swap the old prefix for the new one, leaving the rest of each path
+    // untouched. The trailing slash stops "/Admin" also matching "/Administration".
+    await tx.query(
+      `UPDATE folders
+          SET path = CONCAT($1, SUBSTRING(path, CHAR_LENGTH($2) + 1))
+        WHERE company_id = $3 AND path LIKE CONCAT($2, '/%')`,
+      [nextPath, folder.path, actor.companyId],
+    );
+  });
+
+  await auditFromActor(actor, 'folder.renamed', {
+    resourceType: 'folder', resourceId: folderId,
+    metadata: { from: folder.path, to: nextPath },
+  });
+  return { id: folderId, name: clean, path: nextPath };
+}
+
+/**
+ * Removing a folder.
+ *
+ * Refused while anything is still inside it, including sub-folders. Deleting a folder
+ * and silently orphaning - or worse, recycling - the files in it is the kind of action
+ * people only discover afterwards.
+ */
+export async function deleteFolder(actor: Actor, folderId: string) {
+  await authorize({ actor, capability: 'file.delete', resourceless: true });
+  const folder = await one<{ id: string; path: string }>(
+    'SELECT id, path FROM folders WHERE id = $1 AND company_id = $2',
+    [folderId, actor.companyId],
+  );
+  if (!folder) throw notFound('Folder not found');
+
+  const children = await one<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM folders WHERE company_id = $1 AND parent_id = $2',
+    [actor.companyId, folderId],
+  );
+  if (Number(children?.n ?? 0) > 0) {
+    throw conflict('This folder still has folders inside it. Remove those first.');
+  }
+
+  const files = await one<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM files
+      WHERE company_id = $1 AND folder_id = $2 AND state <> 'recycled'`,
+    [actor.companyId, folderId],
+  );
+  if (Number(files?.n ?? 0) > 0) {
+    throw conflict(`This folder still holds ${files!.n} file(s). Move or recycle them first.`);
+  }
+
+  await pool.query('DELETE FROM folders WHERE id = $1 AND company_id = $2', [folderId, actor.companyId]);
+  await auditFromActor(actor, 'folder.deleted', {
+    resourceType: 'folder', resourceId: folderId, metadata: { path: folder.path },
+  });
+}
+
+/** The order folders are shown in, written as one list so positions cannot collide. */
+export async function reorderFolders(actor: Actor, orderedIds: string[]) {
+  await authorize({ actor, capability: 'file.create', resourceless: true });
+  const rows = await many<{ id: string }>(
+    `SELECT id FROM folders WHERE company_id = $1
+       AND id IN (${orderedIds.map((_, i) => `$${i + 2}`).join(',') || "''"})`,
+    [actor.companyId, ...orderedIds],
+  );
+  if (rows.length !== orderedIds.length) throw notFound('One of those folders no longer exists');
+
+  await transaction(async (tx) => {
+    for (const [index, id] of orderedIds.entries()) {
+      await tx.query('UPDATE folders SET sort_order = $1 WHERE id = $2 AND company_id = $3',
+        [index, id, actor.companyId]);
+    }
+  });
 }
 
 export type UploadSession = {

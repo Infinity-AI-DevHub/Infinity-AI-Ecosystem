@@ -79,6 +79,7 @@ export async function updateSettings(
     invoicePrefix: string;
     receiptPrefix: string;
     accentColour: string | null;
+    logoFileId: string | null;
   }>,
 ): Promise<BillingSettings> {
   await authorize({ actor, capability: 'billing.configure', resourceless: true });
@@ -120,7 +121,10 @@ export async function updateSettings(
             default_due_days = COALESCE($15, default_due_days),
             invoice_prefix = COALESCE($16, invoice_prefix),
             receipt_prefix = COALESCE($17, receipt_prefix),
-            accent_colour = COALESCE($18, accent_colour)
+            accent_colour = COALESCE($18, accent_colour),
+            -- Not COALESCE: null here means "remove the logo", which the others have no
+            -- equivalent of. The flag separates "not supplied" from "cleared".
+            logo_file_id = CASE WHEN $19 THEN $20 ELSE logo_file_id END
       WHERE company_id = $1`,
     [
       actor.companyId,
@@ -131,6 +135,7 @@ export async function updateSettings(
       input.invoiceFooter ?? null, input.receiptFooter ?? null, input.defaultTerms ?? null,
       input.defaultDueDays ?? null, input.invoicePrefix ?? null,
       input.receiptPrefix ?? null, input.accentColour ?? null,
+      input.logoFileId !== undefined, input.logoFileId ?? null,
     ],
   );
 
