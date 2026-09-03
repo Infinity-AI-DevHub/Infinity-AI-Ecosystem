@@ -20,6 +20,7 @@ import { badRequest, conflict, forbidden, notFound } from '../core/errors.js';
 import { authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
 import { emit } from '../core/outbox.js';
+import { downloadUrl } from './files.js';
 
 export type DocumentType = 'quotation' | 'invoice' | 'receipt';
 export type SignatureRole = 'internal_1' | 'internal_2' | 'client_1' | 'client_2';
@@ -411,7 +412,7 @@ export async function requestCountersignature(
 export type Verification = {
   documentHash: string;
   required: SignatureRole[];
-  signatures: (SignatureRow & { valid: boolean })[];
+  signatures: (SignatureRow & { valid: boolean; imageUrl: string | null })[];
   complete: boolean;
   /** True when every signature was made against the document as it stands now. */
   intact: boolean;
@@ -436,7 +437,21 @@ export async function verify(
     [documentType, documentId, actor.companyId],
   );
   const required = REQUIRED_ROLES[documentType];
-  const signatures = rows.map((row) => ({ ...row, valid: row.signed_hash === document.hash }));
+  // The row only knows which file holds the signature image. Every reader of this -
+  // the quotation, invoice and receipt previews alike - needs something it can put in
+  // an <img>, so resolve it once here rather than leaving each caller to remember.
+  const signatures = await Promise.all(rows.map(async (row) => {
+    const base = { ...row, valid: row.signed_hash === document.hash };
+    if (!row.image_file_id) return { ...base, imageUrl: null };
+    try {
+      const link = await downloadUrl(actor, row.image_file_id);
+      return { ...base, imageUrl: link.url };
+    } catch {
+      // An unreadable image must not take the whole document down with it: the name
+      // and date still say who signed and when.
+      return { ...base, imageUrl: null };
+    }
+  }));
   return {
     documentHash: document.hash,
     required,

@@ -40,14 +40,19 @@ export function ShareWith({
   const [selected, setSelected] = useState<string[]>([]);
   const [access, setAccess] = useState<'view' | 'contribute'>('view');
   const [note, setNote] = useState('');
-  const [people, setPeople] = useState<{ id: string; display_name: string; email_display: string; access_level: string }[]>([]);
+  const [people, setPeople] = useState<{
+    id: string; display_name: string; email_display: string;
+    access_level: string; organisation_name?: string | null;
+  }[]>([]);
   const [shares, setShares] = useState<Share[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   async function load() {
     const [directory, current] = await Promise.all([
-      api.get<{ items: typeof people }>('/users?limit=200'),
+      // Not the employee directory: that one leaves guests out by design, which meant
+      // the one kind of person this dialog exists to reach could never be selected.
+      api.get<{ items: typeof people }>('/shares/candidates'),
       api.get<{ items: Share[] }>(`/shares/${resourceType}/${resourceId}`),
     ]);
     setPeople(directory.items);

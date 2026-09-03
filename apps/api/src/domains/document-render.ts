@@ -85,8 +85,13 @@ function formatDate(value: unknown): string {
   });
 }
 
-const money = (value: number, currency: string) =>
-  `${currency} ${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Grouped digits without the currency code, for the columns where the code is already
+// stated once in the totals. A line reading 450000.00 beside a total reading
+// LKR 450,000.00 looks like two different numbers.
+const amount = (value: number) =>
+  value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const money = (value: number, currency: string) => `${currency} ${amount(value)}`;
 
 const TITLE: Record<DocumentKind, string> = {
   invoice: 'INVOICE', quotation: 'QUOTATION', receipt: 'RECEIPT',
@@ -177,9 +182,9 @@ export function renderPdf(model: RenderModel, profile: Profile): Buffer {
     for (const line of model.lines) {
       const used = doc.paragraph(MARGIN, cursor, line.description, 280, { size: 9.5, colour: ink });
       doc.textRight(cols.qty, cursor, String(line.quantity), { size: 9.5, colour: ink });
-      doc.textRight(cols.unit, cursor, line.unitPrice.toFixed(2), { size: 9.5, colour: ink });
+      doc.textRight(cols.unit, cursor, amount(line.unitPrice), { size: 9.5, colour: ink });
       doc.textRight(cols.tax, cursor, line.taxRate > 0 ? `${line.taxRate}%` : '-', { size: 9.5, colour: muted });
-      doc.textRight(cols.amount, cursor, line.amount.toFixed(2), { size: 9.5, colour: ink });
+      doc.textRight(cols.amount, cursor, amount(line.amount), { size: 9.5, colour: ink });
       cursor += Math.max(used, 14) + 4;
       doc.line(MARGIN, cursor - 6, RIGHT, { colour: [0.93, 0.95, 0.96] });
     }
@@ -283,7 +288,7 @@ export function renderEmailHtml(model: RenderModel, profile: Profile, intro: str
             ${esc(line.description)}
           </td>
           <td align="right" style="padding:8px 0;border-bottom:1px solid #eef2f6;font:14px Helvetica,Arial,sans-serif;color:#1a2430;white-space:nowrap">
-            ${esc(line.amount.toFixed(2))}
+            ${esc(amount(line.amount))}
           </td>
         </tr>`).join('');
 
@@ -485,7 +490,11 @@ export async function signatureSlots(
             v.object_key, f.mime_type
        FROM document_signatures s
        LEFT JOIN files f ON f.id = s.image_file_id
-       LEFT JOIN file_versions v ON v.file_id = f.id AND v.version_number = f.current_version
+       -- The column is 'version', not 'version_number'. Getting that wrong made every
+       -- document email fail: the query threw, the send threw, and the outbox retried
+       -- silently until it gave up. No backticks here on purpose - this is inside a
+       -- template literal, and one would end the string.
+       LEFT JOIN file_versions v ON v.file_id = f.id AND v.version = f.current_version
       WHERE s.document_type = $1 AND s.document_id = $2`,
     [kind, documentId],
   );

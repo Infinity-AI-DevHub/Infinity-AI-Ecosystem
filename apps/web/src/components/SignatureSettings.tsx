@@ -13,7 +13,7 @@ import { api, ApiError } from '../lib/api';
 import { uploadWorkspaceFile } from '../lib/uploads';
 import { useNotify } from '../lib/notify';
 
-export function SignatureSettings() {
+export function SignatureSettings({ onSaved }: { onSaved?: () => void } = {}) {
   const { notify } = useNotify();
   const input = useRef<HTMLInputElement>(null);
   const [fileId, setFileId] = useState<string | null>(null);
@@ -46,6 +46,7 @@ export function SignatureSettings() {
       await api.put('/me/signature', { fileId: uploaded.id });
       notify({ severity: 'success', title: 'Signature saved' });
       await load();
+      onSaved?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : (err as Error).message);
     } finally {

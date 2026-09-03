@@ -65,9 +65,9 @@ export default function Tasks() {
   );
 
   const activeProject = projectId ?? projects.data?.items[0]?.id ?? null;
-  const listKey = activeProject ? `/tasks?projectId=${activeProject}&limit=200` : null;
+  const listKey = activeProject ? `/tasks?projectId=${activeProject}&limit=100` : null;
   const tasks = useQuery<{ items: Task[] }>(listKey, (signal) =>
-    api.get(`/tasks?projectId=${activeProject}&limit=200`, signal),
+    api.get(`/tasks?projectId=${activeProject}&limit=100`, signal),
   );
 
   const detailKey = taskId ? `/tasks/${taskId}` : null;
@@ -697,8 +697,8 @@ function EditTaskDialog({
   const [saving, setSaving] = useState(false);
 
   const people = useQuery<{ items: { id: string; display_name: string; email_display: string }[] }>(
-    '/users?limit=200',
-    (signal) => api.get('/users?limit=200', signal),
+    '/users?limit=100',
+    (signal) => api.get('/users?limit=100', signal),
   );
 
   async function submit(event: React.FormEvent) {

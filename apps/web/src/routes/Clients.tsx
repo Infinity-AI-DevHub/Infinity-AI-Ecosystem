@@ -602,9 +602,15 @@ function InviteGuestDialog({
       <div className="dialog-scrim" role="presentation" onClick={onDone}>
         <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="guest-done" onClick={(e) => e.stopPropagation()}>
           <h3 id="guest-done">Guest invited</h3>
+          {/* The invitation email goes out on its own. Saying "send them this link" made
+              it read as a manual step and left people wondering whether anything was
+              actually sent - the link is the fallback, not the method. */}
           <p className="field-hint">
-            Send them this activation link. They can sign in once they set a password — and
-            will still see nothing until you share something with them.
+            An invitation email is on its way to them now. They can sign in once they set
+            a password, and will still see nothing until you share something with them.
+          </p>
+          <p className="field-hint">
+            If it does not arrive, send them this link yourself:
           </p>
           <code className="invitation-link">{invitationUrl}</code>
           <div className="dialog-actions">

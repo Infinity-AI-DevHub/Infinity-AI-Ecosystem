@@ -52,6 +52,13 @@ type Summary = {
   paid_amount: string;
 };
 
+// Grouped digits without a currency code, for columns whose totals state it once.
+const grouped = (value: string | number | undefined) =>
+  Number(value ?? 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
 const money = (value: string | number, currency = 'LKR') =>
   `${currency} ${Number(value ?? 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
@@ -377,7 +384,7 @@ function ComposeInvoice({ onClose, onCreated }: { onClose: () => void; onCreated
                            onChange={(e) => setLine(index, { taxRate: e.target.value })} />
                   </td>
                   <td style={{ textAlign: 'right' }}>
-                    {(Number(line.quantity || 0) * Number(line.unitPrice || 0)).toFixed(2)}
+                    {grouped(Number(line.quantity || 0) * Number(line.unitPrice || 0))}
                   </td>
                   <td>
                     {lines.length > 1 ? (
@@ -400,9 +407,9 @@ function ComposeInvoice({ onClose, onCreated }: { onClose: () => void; onCreated
         </button>
 
         <dl className="claim-total">
-          <dt>Subtotal</dt><dd>{preview.subtotal.toFixed(2)}</dd>
-          <dt>Tax</dt><dd>{preview.tax.toFixed(2)}</dd>
-          <dt><strong>Total</strong></dt><dd><strong>{preview.total.toFixed(2)}</strong></dd>
+          <dt>Subtotal</dt><dd>{grouped(preview.subtotal)}</dd>
+          <dt>Tax</dt><dd>{grouped(preview.tax)}</dd>
+          <dt><strong>Total</strong></dt><dd><strong>{grouped(preview.total)}</strong></dd>
         </dl>
 
         <label className="field">
@@ -507,6 +514,21 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
                 </p>
               </div>
               <div className="header-controls">
+                {/* Preview and signing were built but never given a way in, which made
+                    the invoice look like a bare list of fields next to a quotation that
+                    shows the real document. They sit first because looking at what the
+                    client will receive comes before deciding anything about it. */}
+                <button type="button" className="ghost-button" onClick={() => setPreviewing(true)}>
+                  Preview &amp; PDF
+                </button>
+
+                {can('document.sign') && myRole && invoice.status !== 'void' ? (
+                  <button type="button" className="ghost-button"
+                          onClick={() => setSigningInvoice(true)}>
+                    Sign as {myRole === 'internal_1' ? 'first' : 'second'} signatory
+                  </button>
+                ) : null}
+
                 {invoice.status === 'draft' && can('invoice.manage') && !clientNeedsBillingEmail ? (
                   <button type="button" className="primary-button" disabled={busy}
                           onClick={() => act(() => api.post(`/invoices/${invoiceId}/submit`, {},
@@ -622,9 +644,9 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
                     <tr key={l.id}>
                       <td>{l.description}</td>
                       <td>{Number(l.quantity)}</td>
-                      <td>{Number(l.unit_price).toFixed(2)}</td>
+                      <td>{grouped(l.unit_price)}</td>
                       <td>{Number(l.tax_rate)}%</td>
-                      <td style={{ textAlign: 'right' }}>{Number(l.amount).toFixed(2)}</td>
+                      <td style={{ textAlign: 'right' }}>{grouped(l.amount)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -856,7 +878,7 @@ function RecordPayment({
       <form className="dialog" role="dialog" aria-label="Record payment"
             onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <h3>Record payment</h3>
-        <p className="field-hint">Outstanding: {currency} {balance.toFixed(2)}</p>
+        <p className="field-hint">Outstanding: {currency} {grouped(balance)}</p>
         <label className="field">
           <span>Amount received</span>
           <input type="number" min="0.01" step="0.01" max={balance} value={amount}

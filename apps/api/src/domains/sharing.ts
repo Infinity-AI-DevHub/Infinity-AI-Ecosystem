@@ -80,8 +80,11 @@ export async function shareWithPeople(
   if (!resource) throw notFound('That could not be found');
 
   const people = await many<{ id: string; display_name: string; access_level: string }>(
+    // 'invited' as well as 'active': a guest is invited precisely so that something can
+    // then be shared with them, and the invitation itself says they will see nothing
+    // until it is. Requiring activation first made the documented order impossible.
     `SELECT id, display_name, access_level FROM users
-      WHERE company_id = $1 AND status = 'active'
+      WHERE company_id = $1 AND status IN ('invited', 'active')
         AND id IN (${input.userIds.map((_, i) => `$${i + 2}`).join(',')})`,
     [actor.companyId, ...input.userIds],
   );
@@ -139,6 +142,42 @@ export async function shareWithPeople(
 }
 
 /** Who currently has this, and at what level. */
+/**
+ * Who a document, task or folder can be shared with.
+ *
+ * Deliberately not the employee directory: that one excludes guests on purpose, so a
+ * client contact never reads as a colleague. But sharing is the one place where the
+ * whole point is to reach those external people, and pointing the share picker at the
+ * directory meant an invited guest could never be selected - the feature was unusable
+ * from the moment it was built.
+ *
+ * Guests carry the organisation they belong to, so the picker can say whose side a
+ * person is on rather than showing a bare name.
+ */
+export async function shareCandidates(actor: Actor) {
+  await authorize({ actor, capability: 'user.read', resourceless: true });
+  return many<{
+    id: string; display_name: string; email_display: string;
+    access_level: string; organisation_name: string | null;
+  }>(
+    `SELECT u.id, u.display_name, u.email_display, u.access_level,
+            o.name AS organisation_name
+       FROM users u
+       LEFT JOIN external_memberships m
+              ON m.user_id = u.id AND m.company_id = u.company_id
+       LEFT JOIN external_organizations o ON o.id = m.organization_id
+      WHERE u.company_id = $1
+        AND u.status IN ('invited', 'active')
+        AND u.id <> $2
+        -- An expired guest keeps the account but has lost access, so offering them as a
+        -- share recipient would only produce a share that resolves to nothing.
+        AND (m.access_expires_at IS NULL OR m.access_expires_at > NOW(3))
+      ORDER BY u.access_level = 'guest', u.display_name
+      LIMIT 500`,
+    [actor.companyId, actor.userId],
+  );
+}
+
 export async function listShares(actor: Actor, resourceType: ShareableType, resourceId: string) {
   await authorize({ actor, capability: SHARE_CAPABILITY[resourceType], resourceless: true });
   return many(
@@ -195,7 +234,11 @@ export async function sendMessage(
 
   if (input.everyone) {
     for (const row of await many<{ id: string }>(
-      `SELECT id FROM users WHERE company_id = $1 AND status = 'active' AND access_level <> 'guest'`,
+      // Colleagues who have not activated yet are still colleagues, and a message to
+      // "everyone in the company" that quietly skips them is worse than useless.
+      // Guests stay excluded: "everyone" means the company, not its clients.
+      `SELECT id FROM users
+        WHERE company_id = $1 AND status IN ('invited', 'active') AND access_level <> 'guest'`,
       [actor.companyId],
     )) ids.add(row.id);
   }
@@ -221,8 +264,10 @@ export async function sendMessage(
 
   const recipients = await many<{ id: string; email_display: string; display_name: string }>(
     ids.size === 0 ? 'SELECT NULL AS id, NULL AS email_display, NULL AS display_name WHERE FALSE'
+      // 'invited' as well: the picker offers them, so refusing them here produced a
+      // message that reached nobody for a selection that looked perfectly valid.
       : `SELECT id, email_display, display_name FROM users
-          WHERE company_id = $1 AND status = 'active'
+          WHERE company_id = $1 AND status IN ('invited', 'active')
             AND id IN (${[...ids].map((_, i) => `$${i + 2}`).join(',')})`,
     ids.size === 0 ? [] : [actor.companyId, ...ids],
   );

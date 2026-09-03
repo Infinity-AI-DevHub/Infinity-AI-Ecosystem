@@ -394,8 +394,6 @@ function ScheduleDialog({
       >
         <h3 id="schedule-title">Schedule a meeting</h3>
 
-        <FormError error={create.error} />
-
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -562,6 +560,10 @@ function ScheduleDialog({
             />
             Include a video room
           </label>
+
+          {/* Beside the button that caused it. At the top of the dialog it rendered
+              above the scroll, so a rejected submit looked like nothing happening. */}
+          <FormError error={create.error} />
 
           <div className="dialog-actions">
             <button type="button" className="ghost-button" onClick={onClose}>

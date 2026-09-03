@@ -10,7 +10,26 @@
  */
 import { useMemo, useState } from 'react';
 
-export type Person = { id: string; display_name: string; email_display?: string };
+/**
+ * A person, in either shape the API serves.
+ *
+ * `/users` returns camelCase (`displayName`), while the share and directory queries
+ * return the column names (`display_name`). Pickers were written against one convention
+ * and fed from the other, so they rendered the right number of rows with no text in
+ * them - a list of blank bars. Both are accepted here and read through `nameOf`.
+ */
+export type Person = {
+  id: string;
+  display_name?: string;
+  displayName?: string;
+  email_display?: string;
+  email?: string;
+  /** Set for people outside the company, so a client contact never reads as a colleague. */
+  organisation_name?: string | null;
+};
+
+const nameOf = (person: Person) => person.display_name ?? person.displayName ?? 'Unknown';
+const emailOf = (person: Person) => person.email_display ?? person.email ?? '';
 
 export function PeoplePicker({
   people,
@@ -33,8 +52,9 @@ export function PeoplePicker({
     if (!needle) return people;
     return people.filter(
       (p) =>
-        p.display_name.toLowerCase().includes(needle) ||
-        (p.email_display ?? '').toLowerCase().includes(needle),
+        nameOf(p).toLowerCase().includes(needle) ||
+        emailOf(p).toLowerCase().includes(needle) ||
+        (p.organisation_name ?? '').toLowerCase().includes(needle),
     );
   }, [people, filter]);
 
@@ -51,11 +71,11 @@ export function PeoplePicker({
         ) : (
           selected.map((id) => (
             <span key={id} className="chip chip-active">
-              {byId.get(id)?.display_name ?? 'Unknown'}
+              {byId.get(id) ? nameOf(byId.get(id)!) : 'Unknown'}
               <button
                 type="button"
                 className="chip-remove"
-                aria-label={`Remove ${byId.get(id)?.display_name ?? 'person'}`}
+                aria-label={`Remove ${byId.get(id) ? nameOf(byId.get(id)!) : 'person'}`}
                 onClick={() => toggle(id)}
               >
                 ×
@@ -89,9 +109,12 @@ export function PeoplePicker({
                   onClick={() => toggle(person.id)}
                 >
                   <span className="picker-tick" aria-hidden="true">{isOn ? '✓' : ''}</span>
-                  <span>{person.display_name}</span>
-                  {person.email_display ? (
-                    <span className="field-hint">{person.email_display}</span>
+                  <span>{nameOf(person)}</span>
+                  {person.organisation_name ? (
+                    <span className="chip chip-quiet">{person.organisation_name}</span>
+                  ) : null}
+                  {emailOf(person) ? (
+                    <span className="field-hint">{emailOf(person)}</span>
                   ) : null}
                 </button>
               </li>

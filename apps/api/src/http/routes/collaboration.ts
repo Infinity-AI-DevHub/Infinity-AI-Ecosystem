@@ -279,6 +279,13 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- sharing with clients and guests -----------------------------------
+  // Deliberately before the parameterised route: "candidates" would otherwise be read
+  // as a resource type.
+  app.get('/shares/candidates', async (request) => {
+    const actor = requireActor(request);
+    return { items: await sharing.shareCandidates(actor) };
+  });
+
   app.get('/shares/:type/:id', async (request) => {
     const actor = requireActor(request);
     const { type, id } = request.params as { type: sharing.ShareableType; id: string };
