@@ -39,6 +39,35 @@ export type FileRow = {
 };
 
 /** Ownership, an explicit grant, or folder membership authorizes a file operation. */
+/**
+ * Whether a grant on some folder reaches this file.
+ *
+ * The same rule the listing uses, so a file that appears in someone's list can also be
+ * opened by them. They disagreed before: the listing was taught about folder grants and
+ * this was not, which showed a client a document and then refused to hand it over.
+ *
+ * Only ever widens access. An explicit deny is still decided ahead of membership by the
+ * authorization pipeline, so this cannot override one.
+ */
+async function reachedByFolderGrant(actor: Actor, folderId: string | null): Promise<boolean> {
+  if (!folderId) return false;
+  const row = await one<{ ok: number }>(
+    `SELECT 1 AS ok
+       FROM resource_grants g
+       JOIN folders gf ON gf.id = g.resource_id AND gf.company_id = $1
+       JOIN folders ff ON ff.id = $2
+      WHERE g.resource_type = 'folder' AND g.effect = 'allow'
+        AND g.company_id = $1
+        AND (g.expires_at IS NULL OR g.expires_at > NOW(3))
+        AND ((g.subject_type = 'user' AND g.subject_id = $3)
+          OR (g.subject_type = 'group' AND JSON_CONTAINS($4, JSON_QUOTE(g.subject_id))))
+        AND (ff.id = gf.id OR ff.path LIKE CONCAT(gf.path, '/%'))
+      LIMIT 1`,
+    [actor.companyId, folderId, actor.userId, JSON.stringify(actor.groupIds)],
+  );
+  return Boolean(row);
+}
+
 async function requireFileAccess(actor: Actor, fileId: string, capability: string) {
   const file = await one<FileRow>('SELECT * FROM files WHERE id = $1 AND company_id = $2', [
     fileId,
@@ -50,19 +79,47 @@ async function requireFileAccess(actor: Actor, fileId: string, capability: strin
     capability,
     resourceType: 'file',
     resourceId: fileId,
-    membership: file.owner_id === actor.userId,
+    membership:
+      file.owner_id === actor.userId || (await reachedByFolderGrant(actor, file.folder_id)),
   });
   return file;
 }
 
 export async function listFolders(actor: Actor) {
+  /*
+   * Colleagues see the whole tree; a guest sees only what was given to them.
+   *
+   * This listing was company-wide for everyone, and folder names describe the business:
+   * who the clients are, what the projects are called, which deals are in progress. A
+   * client contact holds a row in the same company as the staff, so "scope by company"
+   * handed them the lot - they could not open any of it, but they could read every name.
+   *
+   * Descendants of a granted folder are included, because that is what being given a
+   * folder means. The trailing slash keeps '/Designs' from matching '/Designs archive'.
+   */
+  const guest = actor.accessLevel === 'guest';
+
   // sort_order first, then path: an explicit arrangement wins, and anything never
   // dragged keeps its old alphabetical-by-path position rather than jumping around.
   return many(
-    `SELECT id, parent_id, name, path, owner_id, sort_order
-       FROM folders WHERE company_id = $1
-      ORDER BY sort_order, path`,
-    [actor.companyId],
+    `SELECT f.id, f.parent_id, f.name, f.path, f.owner_id, f.sort_order
+       FROM folders f
+      WHERE f.company_id = $1
+        AND (
+          NOT $2
+          OR EXISTS (
+            SELECT 1 FROM resource_grants g
+              JOIN folders gf ON gf.id = g.resource_id AND gf.company_id = f.company_id
+             WHERE g.resource_type = 'folder' AND g.effect = 'allow'
+               AND g.company_id = f.company_id
+               AND (g.expires_at IS NULL OR g.expires_at > NOW(3))
+               AND ((g.subject_type = 'user' AND g.subject_id = $3)
+                 OR (g.subject_type = 'group' AND JSON_CONTAINS($4, JSON_QUOTE(g.subject_id))))
+               AND (f.id = gf.id OR f.path LIKE CONCAT(gf.path, '/%'))
+          )
+        )
+      ORDER BY f.sort_order, f.path`,
+    [actor.companyId, guest, actor.userId, JSON.stringify(actor.groupIds)],
   );
 }
 
@@ -496,6 +553,53 @@ async function finalizeUpload(
   return file;
 }
 
+/**
+ * Which files a person may see.
+ *
+ * Shared by the listing and the count so the two can never disagree — a summary that
+ * claims three shared documents while the list shows none is its own kind of bug.
+ *
+ * Placeholders are positional and fixed: $3 the viewer, $4 their group ids as JSON,
+ * $5 whether they are an administrator. Any caller must bind them in that order.
+ */
+const VISIBLE_FILE = `
+(
+          f.owner_id = $3
+          OR EXISTS (
+            SELECT 1 FROM resource_grants g
+             WHERE g.resource_type = 'file' AND g.resource_id = f.id AND g.effect = 'allow'
+               AND (g.expires_at IS NULL OR g.expires_at > NOW(3))
+               AND ((g.subject_type = 'user' AND g.subject_id = $3)
+                 OR (g.subject_type = 'group' AND JSON_CONTAINS($4, JSON_QUOTE(g.subject_id))))
+          )
+          /*
+           * A grant on a folder reaches the files inside it, and inside its subfolders.
+           *
+           * Without this, sharing a folder handed the recipient the folder and nothing
+           * else: they saw an empty directory, because the only grant this listing
+           * consulted was one naming an individual file. Folder sharing is how a client
+           * is given a set of documents, so the whole feature did nothing.
+           *
+           * Descendants are matched on the stored path rather than by walking parent_id,
+           * which would need a recursive query per row. The trailing slash matters: it
+           * stops '/Designs' from also matching '/Designs archive'.
+           */
+          OR EXISTS (
+            SELECT 1 FROM resource_grants g
+              JOIN folders gf ON gf.id = g.resource_id AND gf.company_id = f.company_id
+             WHERE g.resource_type = 'folder' AND g.effect = 'allow'
+               AND (g.expires_at IS NULL OR g.expires_at > NOW(3))
+               AND ((g.subject_type = 'user' AND g.subject_id = $3)
+                 OR (g.subject_type = 'group' AND JSON_CONTAINS($4, JSON_QUOTE(g.subject_id))))
+               AND EXISTS (
+                 SELECT 1 FROM folders ff
+                  WHERE ff.id = f.folder_id
+                    AND (ff.id = gf.id OR ff.path LIKE CONCAT(gf.path, '/%'))
+               )
+          )
+          OR $5
+        )`;
+
 export async function listFiles(
   actor: Actor,
   opts: { folderId?: string | null; limit: number; recycled?: boolean },
@@ -510,16 +614,7 @@ export async function listFiles(
                   ELSE f.state IN ('active','processing','quarantined','legal_hold')
              END)
         AND ($2 IS NULL OR f.folder_id = $2)
-        AND (
-          f.owner_id = $3
-          OR EXISTS (
-            SELECT 1 FROM resource_grants g
-             WHERE g.resource_type = 'file' AND g.resource_id = f.id AND g.effect = 'allow'
-               AND ((g.subject_type = 'user' AND g.subject_id = $3)
-                 OR (g.subject_type = 'group' AND JSON_CONTAINS($4, JSON_QUOTE(g.subject_id))))
-          )
-          OR $5
-        )
+        AND ${VISIBLE_FILE}
       ORDER BY f.updated_at DESC
       LIMIT $6`,
     [
@@ -532,6 +627,29 @@ export async function listFiles(
       opts.recycled ?? false,
     ],
   ).then((rows) => rows.map(publicFile));
+}
+
+/**
+ * How many files this person can actually reach.
+ *
+ * Uses the same rule as the listing rather than counting grant rows: a grant on a folder
+ * reaches many files, and a grant on a file the owner later recycled reaches none, so
+ * counting grants gives a number that matches nothing the person can see.
+ */
+export async function countVisibleFiles(actor: Actor): Promise<number> {
+  const row = await one<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM files f
+      WHERE f.company_id = $1 AND f.state IN ('active','processing','legal_hold')
+        AND ${VISIBLE_FILE}`,
+    [
+      actor.companyId,
+      null,
+      actor.userId,
+      JSON.stringify(actor.groupIds),
+      actor.accessLevel === 'admin' || actor.accessLevel === 'super_admin',
+    ],
+  );
+  return Number(row?.total ?? 0);
 }
 
 /** Downloads are always short-lived signed URLs; quarantined content is never served. */

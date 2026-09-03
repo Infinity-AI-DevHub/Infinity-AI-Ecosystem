@@ -3,6 +3,10 @@
  *
  * The invited person consumes a single-use invitation and sets their own password.
  * No password is ever generated for them or sent by email.
+ *
+ * The same screen serves colleagues and clients, because the act is identical; only the
+ * door they came through differs, and with it where they are sent afterwards. Sending a
+ * client to the staff sign-in would hand them a screen that refuses them.
  */
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -12,7 +16,8 @@ import { FieldMessage, FormError } from '../components/States';
 
 type Activation = { user: User };
 
-export default function Activate() {
+export default function Activate({ portal = false }: { portal?: boolean } = {}) {
+  const signInPath = portal ? '/portal/sign-in' : '/sign-in';
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const token = params.get('token') ?? '';
@@ -29,7 +34,7 @@ export default function Activate() {
         <section className="auth-card">
           <h1>This activation link is not valid</h1>
           <p>Ask your administrator to send you a new invitation.</p>
-          <Link className="ghost-button" to="/sign-in">Go to sign in</Link>
+          <Link className="ghost-button" to={signInPath}>Go to sign in</Link>
         </section>
       </main>
     );
@@ -65,14 +70,18 @@ export default function Activate() {
             <CheckCircle2 size={18} aria-hidden="true" />
             <div>
               <strong>Your account is ready</strong>
-              <p>You can sign in with your new password.</p>
+              <p>
+                {portal
+                  ? 'Sign in with your new password to see your invoices, documents and work.'
+                  : 'You can sign in with your new password.'}
+              </p>
             </div>
             <button
               type="button"
               className="primary-button"
-              onClick={() => navigate('/sign-in', { replace: true })}
+              onClick={() => navigate(signInPath, { replace: true })}
             >
-              Continue to sign in
+              {portal ? 'Continue to your portal' : 'Continue to sign in'}
             </button>
           </div>
         </section>
@@ -83,7 +92,7 @@ export default function Activate() {
   return (
     <main className="auth-page">
       <section className="auth-card">
-        <h1>Activate your account</h1>
+        <h1>{portal ? 'Set up your portal access' : 'Activate your account'}</h1>
         <p className="auth-lead">
           Choose a password only you know. It must be at least 12 characters and must not
           contain your email address.

@@ -1,0 +1,177 @@
+/*
+ * The client portal's styles.
+ *
+ * A separate stylesheet, imported only by the public entry point, because the desktop
+ * renderer has no portal routes and should not carry rules for a surface it cannot
+ * reach. Tokens still come from App.css, which both entries load.
+ */
+
+/*
+ * The portal is the only part of this product a client ever sees, so it is quieter than
+ * the workspace: one column, generous spacing, and no density. It reuses the workspace
+ * tokens rather than inventing a palette — it is the same company, seen from outside.
+ */
+.portal { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg-app); }
+
+.portal-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-4) var(--sp-6);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.portal-brand { display: flex; align-items: center; gap: 10px; }
+.portal-brand strong { display: block; font-size: var(--text-sm); }
+.portal-org { display: block; font-size: var(--text-xs); color: var(--fg-tertiary); }
+.portal-mark {
+  display: grid; place-items: center;
+  width: 30px; height: 30px;
+  border-radius: 9px;
+  background: var(--a-500, var(--accent));
+  color: #fff;
+  font-size: 17px; line-height: 1;
+}
+.portal-mark-lg { width: 42px; height: 42px; font-size: 24px; margin-bottom: var(--sp-4); }
+
+.portal-nav { display: flex; gap: 2px; margin-inline-start: auto; flex-wrap: wrap; }
+.portal-link {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 12px;
+  border-radius: var(--r-md);
+  font-size: var(--text-sm);
+  color: var(--fg-secondary);
+  text-decoration: none;
+}
+.portal-link:hover { background: var(--bg-sunken); color: var(--fg-primary); }
+.portal-link.is-active { background: var(--bg-sunken); color: var(--fg-primary); font-weight: var(--weight-medium); }
+
+.portal-main { flex: 1; width: min(1000px, 100%); margin: 0 auto; padding: var(--sp-8) var(--sp-6); }
+.portal-foot {
+  padding: var(--sp-6);
+  border-top: 1px solid var(--border-subtle);
+  text-align: center;
+  font-size: var(--text-xs);
+  color: var(--fg-tertiary);
+}
+
+.portal-head { margin-bottom: var(--sp-6); }
+.portal-head h1 { font-size: var(--text-2xl); margin: 0 0 4px; text-wrap: balance; }
+.portal-head p { margin: 0; color: var(--fg-tertiary); font-size: var(--text-sm); }
+
+/* The figure the client came for, given the room to be read at a glance. */
+.portal-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-6);
+}
+.portal-figure {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: var(--sp-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  text-decoration: none;
+  color: inherit;
+}
+.portal-figure-link:hover { border-color: var(--border-strong, var(--accent)); }
+.portal-figure-label {
+  font-size: var(--text-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-tertiary);
+}
+.portal-figure-value {
+  font-size: var(--text-2xl);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.portal-figure.is-overdue { border-color: var(--danger, #c0392b); }
+.portal-overdue {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--danger, #c0392b);
+}
+
+.portal-jump { display: grid; gap: var(--sp-3); }
+.portal-jump-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  text-decoration: none;
+  color: inherit;
+}
+.portal-jump-card:hover { border-color: var(--accent); }
+.portal-jump-card strong { display: block; font-size: var(--text-sm); }
+.portal-jump-card span span, .portal-jump-card > span { font-size: var(--text-xs); color: var(--fg-tertiary); }
+
+.portal-table-wrap { overflow-x: auto; }
+.portal-table { width: 100%; }
+.portal-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.portal-table tfoot th, .portal-table tfoot td { border-top: 1px solid var(--border-subtle); }
+/* The label belongs beside its figure, not adrift in the middle of the row. */
+.portal-table tfoot th { text-align: right; }
+.is-overdue-cell { color: var(--danger, #c0392b); display: flex; align-items: center; gap: 5px; }
+
+.portal-quote-list, .portal-file-list, .portal-task-list, .portal-payments {
+  list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-3);
+}
+.portal-quote, .portal-file {
+  display: flex; flex-direction: column; gap: 4px;
+  width: 100%;
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  text-align: left;
+  cursor: pointer;
+}
+.portal-file { flex-direction: row; align-items: center; gap: var(--sp-3); }
+/* Name over date, rather than the two running into each other on one line. */
+.portal-file > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.portal-file strong { font-weight: var(--weight-medium); }
+.portal-quote:hover, .portal-file:hover { border-color: var(--accent); }
+.portal-quote-head { display: flex; align-items: center; gap: var(--sp-3); }
+.portal-quote-sum { font-size: var(--text-sm); }
+
+.portal-task-list li {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+}
+.portal-task-head { display: flex; align-items: center; gap: var(--sp-3); }
+
+.portal-back { margin-bottom: var(--sp-4); }
+.portal-doc-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--sp-4); margin-bottom: var(--sp-5);
+}
+.portal-doc-head h1 { font-size: var(--text-xl); margin: 0 0 4px; }
+.portal-doc-summary { font-size: var(--text-sm); margin: 0 0 var(--sp-5); }
+.portal-doc-block { margin-top: var(--sp-6); }
+.portal-doc-block h2 { font-size: var(--text-sm); margin: 0 0 var(--sp-3); }
+.portal-doc-terms { font-size: var(--text-xs); color: var(--fg-secondary); white-space: pre-wrap; }
+.portal-payments li { display: flex; align-items: baseline; gap: var(--sp-3); }
+
+.portal-signin { text-align: left; }
+.portal-signin h1 { font-size: var(--text-xl); margin: 0 0 4px; }
+.portal-submit { width: 100%; justify-content: center; margin-top: var(--sp-2); }
+.portal-signin-foot { margin-top: var(--sp-5); }
+
+@media (max-width: 720px) {
+  .portal-bar { flex-wrap: wrap; gap: var(--sp-3); }
+  .portal-nav { margin-inline-start: 0; width: 100%; }
+  .portal-main { padding: var(--sp-5) var(--sp-4); }
+}

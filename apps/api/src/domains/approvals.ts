@@ -6,6 +6,7 @@
  * history. A requester can never be the final approver of their own request.
  */
 import { many, newId, one, pool, reload, transaction } from '../core/db.js';
+import { attachEvidence, evidenceCounts, listEvidence } from './submission-evidence.js';
 import { conflict, forbidden, notFound, unprocessable } from '../core/errors.js';
 import { assertSeparationOfDuties, authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
@@ -185,7 +186,15 @@ function ruleApplies(rule: RoutingRule, amount: number | null, departmentId: str
 
 export async function createRequest(
   actor: Actor,
-  input: { definitionKey: string; title: string; amount?: number | null; currency?: string; data?: Record<string, unknown> },
+  input: {
+    definitionKey: string;
+    title: string;
+    amount?: number | null;
+    currency?: string;
+    data?: Record<string, unknown>;
+    /** Files backing the request — a receipt, a quote, a contract. */
+    evidenceFileIds?: string[];
+  },
   correlationId: string,
 ): Promise<RequestRow> {
   await authorize({ actor, capability: 'request.create', resourceless: true });
@@ -281,6 +290,10 @@ export async function createRequest(
         firstRule.dueHours ?? 72,
       ],
     );
+    // In the same transaction as the request, so an approver is never shown a request
+    // whose evidence silently failed to attach.
+    await attachEvidence(tx, actor, 'approval', requestId, input.evidenceFileIds ?? []);
+
     const created = (await reload<RequestRow>(tx, 'approval_requests', requestId))!;
 
     for (const { rule, approvers } of resolved) {
@@ -337,7 +350,7 @@ export async function listRequests(
   if (filters.scope === 'all') {
     await authorize({ actor, capability: 'approval.report', resourceless: true });
   }
-  return many(
+  const rows = await many<{ id: string }>(
     `SELECT r.*, d.name AS definition_name, u.display_name AS requester_name,
             EXISTS (
               SELECT 1 FROM approval_steps s
@@ -361,6 +374,9 @@ export async function listRequests(
       LIMIT $5`,
     [actor.companyId, actor.userId, filters.status ?? null, filters.scope, filters.limit],
   );
+
+  const counts = await evidenceCounts(actor.companyId, 'approval', rows.map((r) => r.id));
+  return rows.map((row) => ({ ...row, evidence_count: counts.get(row.id) ?? 0 }));
 }
 
 export async function getRequest(actor: Actor, requestId: string) {
@@ -395,7 +411,8 @@ export async function getRequest(actor: Actor, requestId: string) {
       WHERE d.request_id = $1 ORDER BY d.created_at`,
     [requestId],
   );
-  return { ...request, steps, decisions };
+  const evidence = await listEvidence(actor.companyId, 'approval', requestId);
+  return { ...request, steps, decisions, evidence };
 }
 
 /**

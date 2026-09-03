@@ -5,6 +5,7 @@
  * cannot blank the page.
  */
 import { Link } from 'react-router-dom';
+import { DateTimeCard } from './Attendance';
 import { CalendarDays, CheckSquare, Megaphone, ShieldCheck, HardDrive } from 'lucide-react';
 import { api, type Widget } from '../lib/api';
 import { TaskPriority } from '../components/TaskPriority';
@@ -58,6 +59,7 @@ export default function Command() {
           <h2>{greeting}{firstName ? `, ${firstName}` : ''}</h2>
           <p>Here is what needs you today.</p>
         </div>
+        <DateTimeCard />
       </header>
 
       <section className="metric-row" aria-label="Summary">

@@ -365,13 +365,25 @@ export async function inviteGuest(
           email,
           displayName: input.displayName.trim(),
           invitationToken: token,
+          /*
+           * Marks this as a client invitation rather than a colleague's.
+           *
+           * The two need different letters: a client is being invited to the portal,
+           * which is on the web and needs nothing installed, and telling them to
+           * "activate your Infinity Workspace account" points them at an application
+           * they will never be allowed into.
+           */
+          portal: true,
+          organisationName: organization.name,
         },
       },
       tx,
     );
   });
 
-  return { userId, invitationUrl: `${config.publicUrl}/activate?token=${token}` };
+  // The portal's own activation link: same token, but it lands them in the portal
+  // rather than at the staff workspace's sign-in screen.
+  return { userId, invitationUrl: `${config.publicUrl}/portal/activate?token=${token}` };
 }
 
 export async function listGuests(actor: Actor, organizationId?: string): Promise<GuestRow[]> {

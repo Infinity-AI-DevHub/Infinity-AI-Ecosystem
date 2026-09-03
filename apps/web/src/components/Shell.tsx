@@ -10,6 +10,7 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell,
   CalendarDays,
+  Clock,
   CheckSquare,
   Files as FilesIcon,
   Inbox,
@@ -61,6 +62,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/announcements', label: 'Announcements', icon: Megaphone, badge: 'announcements' },
   { to: '/messages', label: 'Messages', icon: Megaphone, capability: 'message.broadcast' },
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, capability: 'request.create', badge: 'approvals' },
+  { to: '/attendance', label: 'Attendance', icon: Clock, capability: 'attendance.record' },
   { to: '/leave', label: 'Leave', icon: Palmtree, capability: 'leave.request', badge: 'leave' },
   { to: '/finance', label: 'Finance', icon: Wallet, capability: 'expense.submit', badge: 'invoices' },
   { to: '/growth', label: 'Growth', icon: Target, capability: 'goal.manage' },

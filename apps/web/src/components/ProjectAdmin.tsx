@@ -10,6 +10,8 @@
  * every reference still resolves, which is what deleting is nearly always meant to do.
  */
 import { useState } from 'react';
+import { ProjectMembers } from './ProjectMembers';
+import { useSession } from '../lib/session';
 import { api, ApiError } from '../lib/api';
 import { invalidate, useQuery } from '../lib/query';
 import { useNotify } from '../lib/notify';
@@ -116,6 +118,7 @@ export function ProjectAdmin() {
 function EditProject({
   project, onClose, onSaved,
 }: { project: Project; onClose: () => void; onSaved: () => void }) {
+  const { can } = useSession();
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description ?? '');
   const [status, setStatus] = useState(project.status);
@@ -207,6 +210,11 @@ function EditProject({
             <input type="date" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} />
           </label>
         </div>
+
+        {/* Membership saves on its own rather than with the form: adding somebody is a
+            separate decision from renaming the project, and losing one because you
+            cancelled the other would be worse than two save points. */}
+        <ProjectMembers projectId={project.id} canManage={can('project.manage')} />
 
         {error ? <p className="field-error">{error}</p> : null}
         <div className="dialog-actions">

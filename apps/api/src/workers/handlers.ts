@@ -149,30 +149,65 @@ const onApprovalSettled: Handler = async (event) => {
 };
 
 const onUserInvited: Handler = async (event) => {
-  const { userId, email, displayName, invitationToken } = event.payload as {
-    userId: string;
-    email: string;
-    displayName: string;
-    invitationToken?: string;
-  };
+  const { userId, email, displayName, invitationToken, portal, organisationName } =
+    event.payload as {
+      userId: string;
+      email: string;
+      displayName: string;
+      invitationToken?: string;
+      portal?: boolean;
+      organisationName?: string;
+    };
 
   if (invitationToken) {
-    const activationUrl = `${publicUrl}/activate?token=${invitationToken}`;
+    /*
+     * Two letters, because two different people are reading them.
+     *
+     * A colleague is being given an account in the workspace they will work in every
+     * day. A client is being given a portal: a web page showing their own invoices and
+     * documents, nothing to install, and no mention of a workspace they cannot enter.
+     * One letter for both meant clients were told to activate an "Infinity Workspace
+     * account" and sent to a sign-in screen that would refuse them.
+     */
+    const activationUrl = portal
+      ? `${publicUrl}/portal/activate?token=${invitationToken}`
+      : `${publicUrl}/activate?token=${invitationToken}`;
+
+    const body = portal
+      ? [
+          `Hello ${displayName},`,
+          '',
+          `Infinity AI has set up a client portal for ${organisationName ?? 'your organisation'}.`,
+          'It shows your invoices and payments, the documents and files shared with you,',
+          'meetings you have been invited to, and the work in progress.',
+          '',
+          'Set your password here to get in:',
+          activationUrl,
+          '',
+          `This link expires in ${config.security.invitationTtlHours} hours and can be used once.`,
+          'There is nothing to install — the portal opens in your browser.',
+          '',
+          'If you were not expecting this, please ignore this email.',
+        ]
+      : [
+          `Hello ${displayName},`,
+          '',
+          'An account has been created for you in Infinity Workspace.',
+          'Use the link below to set your password.',
+          '',
+          activationUrl,
+          '',
+          `This link expires in ${config.security.invitationTtlHours} hours and can be used once.`,
+          'If you were not expecting this, contact your administrator.',
+        ];
+
     await notifier.send({
-      from: { address: systemSender(), name: 'Infinity Workspace' },
+      from: { address: systemSender(), name: 'Infinity AI' },
       to: [email],
-      subject: 'Activate your Infinity Workspace account',
-      text: [
-        `Hello ${displayName},`,
-        '',
-        'An account has been created for you in Infinity Workspace.',
-        'Use the link below to set your password.',
-        '',
-        activationUrl,
-        '',
-        `This link expires in ${config.security.invitationTtlHours} hours and can be used once.`,
-        'If you were not expecting this, contact your administrator.',
-      ].join('\n'),
+      subject: portal
+        ? `Your client portal with Infinity AI`
+        : 'Activate your Infinity Workspace account',
+      text: body.join('\n'),
     });
   }
 
@@ -290,6 +325,72 @@ const onEventScheduled: Handler = async (event) => {
     aclUserIds: attendeeIds,
     link: `/meetings/${eventId}`,
   });
+};
+
+/**
+ * Somebody answered a meeting invitation.
+ *
+ * This event was emitted and never handled - the worker logged "no handler for event
+ * type" and dropped it - so an organiser was never told when an invitee accepted or
+ * declined. The answer was recorded correctly; nobody was informed of it.
+ *
+ * In-app for every response, because that is a quiet signal the organiser can scan.
+ * Email only for a decline: that is the one that may need acting on, and mailing a
+ * message for every acceptance on a standing meeting is how people learn to filter
+ * everything the app sends.
+ */
+/** The same rendering onEventScheduled uses, so a meeting reads identically everywhere. */
+const meetingWhen = (at: Date | string) =>
+  new Date(at).toISOString().replace('T', ' ').slice(0, 16);
+
+const onEventRsvp: Handler = async (event) => {
+  const { eventId, userId, rsvp } = event.payload as {
+    eventId: string; userId: string; rsvp: string;
+  };
+
+  const meeting = await one<{ title: string; organizer_id: string; starts_at: Date }>(
+    'SELECT title, organizer_id, starts_at FROM calendar_events WHERE id = $1',
+    [eventId],
+  );
+  if (!meeting) return;
+
+  // Answering your own invitation tells you nothing you did not just do.
+  if (meeting.organizer_id === userId) return;
+
+  const responder = await one<{ display_name: string }>(
+    'SELECT display_name FROM users WHERE id = $1',
+    [userId],
+  );
+  const who = responder?.display_name ?? 'Someone';
+  const answer = rsvp === 'accepted' ? 'accepted'
+    : rsvp === 'declined' ? 'declined'
+    : 'answered tentatively for';
+
+  await notifications.create({
+    companyId: event.company_id,
+    userId: meeting.organizer_id,
+    type: 'event_rsvp',
+    title: `${who} ${answer} ${meeting.title}`,
+    body: `${meetingWhen(meeting.starts_at)} UTC`,
+    link: `/meetings/${eventId}`,
+    resourceType: 'calendar_event',
+    resourceId: eventId,
+    // One notification per person per answer: changing your mind should say so again.
+    dedupeKey: `rsvp:${eventId}:${userId}:${rsvp}`,
+  });
+
+  if (rsvp === 'declined') {
+    await emailUsers([meeting.organizer_id], {
+      subject: `${who} declined ${meeting.title}`,
+      lines: [
+        `${who} has declined "${meeting.title}".`,
+        '',
+        `When: ${meetingWhen(meeting.starts_at)} UTC`,
+        '',
+        appLink(`/meetings/${eventId}`),
+      ],
+    });
+  }
 };
 
 const onEventChanged: Handler = async (event) => {
@@ -1002,6 +1103,120 @@ const onSignatureRequested: Handler = async (event) => {
   });
 };
 
+/**
+ * A clock-out that needs a human to look at it.
+ *
+ * Goes to reviewers, not to everyone: a flag is a queue item, and the queue belongs to
+ * whoever can clear it. In-app only - a flag is not urgent, and a daily trickle of email
+ * about missing attachments is how people stop reading the app's mail.
+ */
+/**
+ * A client has sent us a document.
+ *
+ * Notified rather than left to be discovered: the portal exists so these do not sit in
+ * somebody's inbox, and an upload nobody is told about is exactly the same problem in a
+ * different place. Everyone who can act on client billing is told.
+ */
+const onPortalUpload: Handler = async (event) => {
+  const { uploadId, organisationName, fileName, kind, note } = event.payload as {
+    uploadId: string;
+    organisationName: string;
+    fileName: string;
+    kind: string;
+    note: string | null;
+  };
+
+  const staff = await many<{ id: string }>(
+    `SELECT id FROM users
+      WHERE company_id = $1 AND status IN ('invited', 'active')
+        AND access_level IN ('admin', 'super_admin', 'manager')`,
+    [event.company_id],
+  );
+  if (staff.length === 0) return;
+
+  const what = kind === 'invoice' ? 'an invoice'
+    : kind === 'payment_proof' ? 'proof of payment'
+    : 'a document';
+
+  await notifications.createMany(staff.map((s) => s.id), (userId) => ({
+    companyId: event.company_id,
+    userId,
+    type: 'portal_upload',
+    title: `${organisationName} sent ${what}`,
+    body: note ? `${fileName} — ${note}` : fileName,
+    link: '/clients',
+    resourceType: 'portal_upload',
+    resourceId: uploadId,
+    dedupeKey: `portal:upload:${uploadId}:${userId}`,
+  }));
+};
+
+const onAttendanceFlagged: Handler = async (event) => {
+  const { sessionId, userId, reason } = event.payload as {
+    sessionId: string; userId: string; reason: string | null;
+  };
+
+  const person = await one<{ display_name: string }>(
+    'SELECT display_name FROM users WHERE id = $1', [userId],
+  );
+  const reviewers = await many<{ id: string }>(
+    `SELECT id FROM users
+      WHERE company_id = $1 AND status IN ('invited', 'active')
+        AND access_level IN ('admin', 'super_admin')
+        AND id <> $2`,
+    [event.company_id, userId],
+  );
+  if (reviewers.length === 0) return;
+
+  await notifications.createMany(reviewers.map((r) => r.id), (reviewerId) => ({
+    companyId: event.company_id,
+    userId: reviewerId,
+    type: 'attendance_flagged',
+    title: `${person?.display_name ?? 'Someone'}'s work session needs review`,
+    body: reason ?? 'Clocked out without a note or evidence',
+    link: '/attendance',
+    resourceType: 'attendance_session',
+    resourceId: sessionId,
+    dedupeKey: `attendance:flag:${sessionId}:${reviewerId}`,
+  }));
+};
+
+/**
+ * A reviewer's decision, told to the person it is about.
+ *
+ * Emailed as well as shown in the app: a disqualified day has consequences and the
+ * person may not open the app again that evening.
+ */
+const onAttendanceReviewed: Handler = async (event) => {
+  const { sessionId, userId, state, note } = event.payload as {
+    sessionId: string; userId: string; state: string; note: string | null;
+  };
+  const approved = state === 'approved';
+
+  await notifications.create({
+    companyId: event.company_id,
+    userId,
+    type: 'attendance_reviewed',
+    title: approved ? 'Your work session was approved' : 'Your work session was disqualified',
+    body: note ?? undefined,
+    link: '/attendance',
+    resourceType: 'attendance_session',
+    resourceId: sessionId,
+    dedupeKey: `attendance:review:${sessionId}:${state}`,
+  });
+
+  await emailUsers([userId], {
+    subject: approved ? 'Work session approved' : 'Work session disqualified',
+    lines: [
+      approved
+        ? 'Your recorded work session has been approved.'
+        : 'Your recorded work session has been disqualified.',
+      note ? `\n"${note}"\n` : '',
+      appLink('/attendance'),
+    ].filter(Boolean),
+  });
+};
+
 const onAnnouncementPublished: Handler = async (event) => {
   const { announcementId, title, audience } = event.payload as {
     announcementId: string;
@@ -1113,6 +1328,7 @@ export const handlers: Record<string, Handler> = {
   'event.scheduled': onEventScheduled,
   'event.updated': onEventChanged,
   'event.cancelled': onEventChanged,
+  'event.rsvp': onEventRsvp,
   'chat.message.created': onChatMessage,
   'task.created': onTaskEvent,
   'task.updated': onTaskEvent,
@@ -1129,6 +1345,9 @@ export const handlers: Record<string, Handler> = {
     await onApprovalProgressed(event);
     await onApprovalSettled(event);
   },
+  'portal.upload': onPortalUpload,
+  'attendance.flagged': onAttendanceFlagged,
+  'attendance.reviewed': onAttendanceReviewed,
   'announcement.published': onAnnouncementPublished,
   // Same delivery, different wording - see the `edited` branch inside.
   'announcement.updated': onAnnouncementPublished,

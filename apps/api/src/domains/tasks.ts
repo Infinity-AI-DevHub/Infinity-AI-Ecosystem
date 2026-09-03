@@ -53,6 +53,101 @@ export type TaskRow = {
   updated_at: Date;
 };
 
+/**
+ * Who is on a project, and changing that.
+ *
+ * `project_members` was written once at creation and never touched again - no domain
+ * function, no route, no interface - so a project's membership was fixed for life and
+ * nobody added later could see its tasks. Membership is what task access is built on,
+ * so this is how someone joining a piece of work gets to it.
+ */
+export async function listProjectMembers(actor: Actor, projectId: string) {
+  await requireProject(actor, projectId, 'task.read');
+  return many<{ user_id: string; display_name: string; email_display: string; role: string | null }>(
+    `SELECT m.user_id, m.role, u.display_name, u.email_display
+       FROM project_members m
+       JOIN users u ON u.id = m.user_id
+      WHERE m.project_id = $1
+      ORDER BY m.role = 'owner' DESC, u.display_name`,
+    [projectId],
+  );
+}
+
+export async function addProjectMembers(
+  actor: Actor,
+  projectId: string,
+  userIds: string[],
+): Promise<{ added: number }> {
+  await requireProject(actor, projectId, 'project.manage');
+  if (userIds.length === 0) return { added: 0 };
+
+  /*
+   * 'invited' as well as 'active': somebody given an account but not yet signed in is a
+   * perfectly ordinary person to put on a project, and they will need it waiting for
+   * them when they do.
+   *
+   * Guests are excluded. A client contact reaches individual tasks and folders through a
+   * share; making them a project member would hand them the whole board.
+   */
+  const eligible = await many<{ id: string }>(
+    `SELECT id FROM users
+      WHERE company_id = $1 AND status IN ('invited', 'active') AND access_level <> 'guest'
+        AND id IN (${userIds.map((_, i) => `$${i + 2}`).join(',')})`,
+    [actor.companyId, ...userIds],
+  );
+  if (eligible.length === 0) throw unprocessable('None of those people can join a project');
+
+  await transaction(async (tx) => {
+    for (const person of eligible) {
+      await tx.query(
+        `INSERT IGNORE INTO project_members (project_id, user_id) VALUES ($1, $2)`,
+        [projectId, person.id],
+      );
+    }
+    await auditFromActor(actor, 'project.members_added', {
+      resourceType: 'project',
+      resourceId: projectId,
+      metadata: { userIds: eligible.map((p) => p.id) },
+    }, tx);
+  });
+
+  return { added: eligible.length };
+}
+
+export async function removeProjectMember(
+  actor: Actor,
+  projectId: string,
+  userId: string,
+): Promise<void> {
+  await requireProject(actor, projectId, 'project.manage');
+
+  const member = await one<{ role: string | null }>(
+    'SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2',
+    [projectId, userId],
+  );
+  if (!member) throw notFound('They are not on this project');
+
+  /*
+   * The last owner stays. A project with no owner is one nobody can administer, and the
+   * only route back is a database edit.
+   */
+  if (member.role === 'owner') {
+    const owners = await one<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM project_members WHERE project_id = $1 AND role = 'owner'",
+      [projectId],
+    );
+    if (Number(owners?.n ?? 0) <= 1) {
+      throw conflict('This is the last owner of the project. Make someone else an owner first.');
+    }
+  }
+
+  await pool.query('DELETE FROM project_members WHERE project_id = $1 AND user_id = $2',
+    [projectId, userId]);
+  await auditFromActor(actor, 'project.member_removed', {
+    resourceType: 'project', resourceId: projectId, metadata: { userId },
+  });
+}
+
 export async function projectMembership(projectId: string, userId: string) {
   return one<{ role: string }>(
     'SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2',

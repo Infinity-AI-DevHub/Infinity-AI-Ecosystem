@@ -12,7 +12,16 @@ import * as searchIndex from './search.js';
 export type Audience =
   | { scope: 'company' }
   | { scope: 'department'; departmentIds: string[] }
-  | { scope: 'group'; groupIds: string[] };
+  | { scope: 'group'; groupIds: string[] }
+  /**
+   * A notice addressed to client organisations, read through the portal.
+   *
+   * Deliberately not handled by `listForUser`, which every employee reads: that query
+   * matches 'company' for anyone in the row, and a guest holds a row in the same
+   * company. Portal notices are read by a separate query that can only ever match this
+   * scope, so an internal notice cannot reach a client by being one condition too broad.
+   */
+  | { scope: 'organisation'; organisationIds: string[] };
 
 export type AnnouncementRow = {
   id: string;
