@@ -2673,6 +2673,49 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* Two columns: the work on the left, its facts on the right. */
 .task-detail-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: var(--sp-6); }
 @media (max-width: 860px) { .task-detail-body { grid-template-columns: 1fr; } }
+/* ---- task detail dialog -------------------------------------------------
+   Two columns: what the task says, and the facts about it. Sections are spaced
+   deliberately rather than left to collapse into one another. */
+.task-detail-main { display: grid; gap: var(--sp-5); align-content: start; min-width: 0; }
+.task-detail-empty { margin: 0; }
+.task-block { display: grid; gap: var(--sp-3); }
+.task-block h4 {
+  display: flex; align-items: center; gap: var(--sp-2);
+  margin: 0; font-size: var(--text-sm); color: var(--fg-secondary);
+}
+.count-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 6px;
+  border-radius: 999px; background: var(--bg-sunken);
+  font-size: var(--text-2xs); color: var(--fg-secondary);
+}
+
+/* A comment is a person saying something, so it leads with who. */
+.comment-list li {
+  display: flex; gap: var(--sp-3); align-items: flex-start;
+  padding: 0; border-left: 0;
+}
+.comment-body { min-width: 0; }
+.comment-meta { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; }
+.comment-text { margin: 2px 0 0; font-size: var(--text-sm); white-space: pre-wrap; }
+.avatar-sm { width: 26px; height: 26px; font-size: var(--text-2xs); flex: 0 0 auto; }
+
+.comment-form { display: grid; gap: var(--sp-2); }
+.comment-form textarea { width: 100%; }
+.comment-actions { display: flex; justify-content: flex-end; }
+
+/* Priority reads at a glance, without a legend.
+   Namespaced: `.priority-medium` and friends already exist as filled dots elsewhere, and
+   reusing those names put a solid colour block behind the word. */
+.priority-value { display: flex; align-items: center; gap: var(--sp-2); }
+.priority-value::before {
+  content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--fg-muted);
+}
+.task-prio-urgent::before { background: var(--dan-600); }
+.task-prio-high::before { background: var(--warn-600); }
+.task-prio-medium::before { background: var(--info-600); }
+.task-prio-low::before { background: var(--n-400); }
+
 .task-facts {
   display: grid; gap: var(--sp-3); align-content: start;
   padding: var(--sp-4); background: var(--bg-sunken); border-radius: var(--r-md);

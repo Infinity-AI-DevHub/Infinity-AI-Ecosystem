@@ -350,7 +350,7 @@ export async function listTasks(
   actor: Actor,
   filters: { projectId?: string; assigneeId?: string; status?: string; limit: number },
 ) {
-  if (filters.projectId) await requireProject(actor, filters.projectId, 'task.update');
+  if (filters.projectId) await requireProject(actor, filters.projectId, 'task.read');
   return many<TaskRow & { assignee_name: string | null; project_key: string }>(
     `SELECT t.*, u.display_name AS assignee_name, p.key AS project_key,
             -- Every assignee, not just the primary one. JSON_ARRAYAGG over a LEFT JOIN
@@ -361,9 +361,23 @@ export async function listTasks(
               WHERE ta.task_id = t.id) AS assignees
        FROM tasks t
        JOIN projects p ON p.id = t.project_id
-       JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
+       -- LEFT, not INNER: a task shared directly with someone - a client given view
+       -- access - reaches them through a grant, not through project membership. An
+       -- inner join meant the share existed and the task never appeared.
+       LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
        LEFT JOIN users u ON u.id = t.assignee_id
       WHERE t.company_id = $1
+        AND (
+          pm.user_id IS NOT NULL
+          OR EXISTS (
+            SELECT 1 FROM resource_grants g
+             WHERE g.company_id = t.company_id
+               AND g.resource_type = 'task' AND g.resource_id = t.id
+               AND g.effect = 'allow'
+               AND (g.expires_at IS NULL OR g.expires_at > NOW(3))
+               AND g.subject_type = 'user' AND g.subject_id = $2
+          )
+        )
         AND ($3 IS NULL OR t.project_id = $3)
         AND ($4 IS NULL OR t.assignee_id = $4)
         AND ($5 IS NULL OR t.status = $5)
@@ -532,6 +546,32 @@ export async function updateTask(
   return updated;
 }
 
+/**
+ * Who may read a task.
+ *
+ * Two routes in, and the second one was missing. Normally you reach a task through its
+ * project. But a task can also be shared directly - that is what "share with a client"
+ * writes: a `task.read` grant on the task itself. Checking only the project meant a
+ * client handed a task could never open it, and the share silently did nothing.
+ *
+ * The project check also asked for `task.update`, so reading required permission to
+ * change - which locked out read-only roles as well as guests.
+ */
+async function requireTaskRead(actor: Actor, task: TaskRow): Promise<void> {
+  try {
+    await requireProject(actor, task.project_id, 'task.read');
+    return;
+  } catch {
+    // Not reachable through the project; a direct share is the remaining possibility.
+  }
+  await authorize({
+    actor,
+    capability: 'task.read',
+    resourceType: 'task',
+    resourceId: task.id,
+  });
+}
+
 export async function getTask(actor: Actor, taskId: string) {
   const task = await one<TaskRow>(
     `SELECT t.*, u.display_name AS assignee_name, p.\`key\` AS project_key,
@@ -545,7 +585,7 @@ export async function getTask(actor: Actor, taskId: string) {
     [taskId, actor.companyId],
   );
   if (!task) throw notFound('Task not found');
-  await requireProject(actor, task.project_id, 'task.update');
+  await requireTaskRead(actor, task);
   const [comments, activity, dependencies, watchers] = await Promise.all([
     many(
       `SELECT c.id, c.body, c.created_at, u.display_name AS author_name, u.id AS author_id
