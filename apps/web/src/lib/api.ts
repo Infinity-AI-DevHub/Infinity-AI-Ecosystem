@@ -82,6 +82,29 @@ function readCookie(name: string): string | null {
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 
+/**
+ * The CSRF token, held in memory as well as read from the cookie.
+ *
+ * The double-submit scheme has the server set a readable cookie and the client echo it
+ * back in a header. That only works while the page and the API share a cookie scope —
+ * and the client portal does not: it is served from one host and talks to the API on
+ * another, so `document.cookie` never contains the token and every write went out
+ * without the header. The server supplies the value directly (on sign-in, and on `/me`
+ * afterwards) and it is kept here.
+ *
+ * The cookie is still preferred when it is there, so the workspace's own behaviour is
+ * unchanged; this is a fallback for the case where reading it is impossible.
+ */
+let csrfToken: string | null = null;
+
+export function rememberCsrfToken(token: string | null | undefined): void {
+  if (token) csrfToken = token;
+}
+
+export function forgetCsrfToken(): void {
+  csrfToken = null;
+}
+
 export type RequestOptions = {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
@@ -120,7 +143,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     const token = await accessTokenForRequest(BASE);
     if (token) headers.authorization = `Bearer ${token}`;
   } else if (!['GET', 'HEAD'].includes(method)) {
-    const csrf = readCookie('iw_csrf');
+    const csrf = readCookie('iw_csrf') ?? csrfToken;
     if (csrf) headers['x-csrf-token'] = csrf;
   }
 
@@ -219,7 +242,7 @@ export async function uploadAuth(): Promise<{
       credentials: 'omit',
     };
   }
-  const csrf = readCookie('iw_csrf');
+  const csrf = readCookie('iw_csrf') ?? csrfToken;
   return {
     headers: csrf ? { 'x-csrf-token': csrf } : {},
     credentials: 'include',

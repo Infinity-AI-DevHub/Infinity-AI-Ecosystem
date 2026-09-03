@@ -8,7 +8,7 @@
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, ApiError, NetworkError } from '../../lib/api';
+import { api, ApiError, NetworkError, rememberCsrfToken } from '../../lib/api';
 import { useSession } from '../../lib/session';
 
 export function PortalSignIn() {
@@ -29,10 +29,13 @@ export function PortalSignIn() {
        * for the OS keystore; a browser has nowhere to put it and would sign in to a
        * session it cannot then use. `/auth/login` sets the cookie instead.
        */
-      await api.post<{ status: 'authenticated'; csrfToken: string }>('/auth/login', {
-        email: email.trim(),
-        password,
-      });
+      const grant = await api.post<{ status: 'authenticated'; csrfToken: string }>(
+        '/auth/login',
+        { email: email.trim(), password },
+      );
+      // Kept in memory because the portal cannot read the cookie carrying it: it is
+      // served from a different host than the API, so the cookie is out of its scope.
+      rememberCsrfToken(grant.csrfToken);
       setPassword('');
       await refresh();
       navigate('/portal', { replace: true });

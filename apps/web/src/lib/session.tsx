@@ -14,7 +14,10 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api, ApiError, onSessionLost, type Capabilities, type Session } from './api';
+import {
+  api, ApiError, forgetCsrfToken, onSessionLost, rememberCsrfToken,
+  type Capabilities, type Session,
+} from './api';
 import { isDesktop } from './desktop';
 import { clearGrant, restoreGrant } from './tokens';
 
@@ -46,9 +49,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (isDesktop) await restoreGrant();
 
       const [me, caps] = await Promise.all([
-        api.get<Session>('/me'),
+        api.get<Session & { csrfToken?: string | null }>('/me'),
         api.get<Capabilities>('/me/capabilities'),
       ]);
+      /*
+       * Recovers the CSRF token after a reload, when whatever the sign-in kept in memory
+       * is gone. A client whose page cannot read the cookie would otherwise be able to
+       * write only until it refreshed.
+       */
+      rememberCsrfToken(me.csrfToken);
       setSession(me);
       setCapabilities(caps);
       setStatus(me.user ? 'authenticated' : 'anonymous');
@@ -76,6 +85,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       onSessionLost(() => {
+        forgetCsrfToken();
         setSession(null);
         setCapabilities(null);
         setStatus('anonymous');
@@ -90,6 +100,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // The keystore is cleared whatever the server said. A logout that failed to reach
       // the API still means the person intended to leave this machine.
       if (isDesktop) clearGrant();
+      forgetCsrfToken();
       setSession(null);
       setCapabilities(null);
       setStatus('anonymous');

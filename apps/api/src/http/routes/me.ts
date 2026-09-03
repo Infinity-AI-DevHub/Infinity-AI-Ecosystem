@@ -5,7 +5,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parse, paginationSchema } from '../../core/validation.js';
-import { requireActor } from '../context.js';
+import { csrfTokenFor, requireActor } from '../context.js';
 import * as identity from '../../domains/identity.js';
 import * as notifications from '../../domains/notifications.js';
 import * as dashboard from '../../domains/dashboard.js';
@@ -30,7 +30,24 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
     }>('SELECT id, name, legal_name, verified_domains FROM companies WHERE id = $1', [
       actor.companyId,
     ]);
-    return { user: user ? identity.publicUser(user) : null, company };
+    /*
+     * The CSRF token, for a client that cannot read the cookie carrying it.
+     *
+     * The double-submit pair assumes the page and the API share a cookie scope. They do
+     * not when the two are on different hosts — the client portal is served from one
+     * host and the API from another, so `document.cookie` on the portal never contains
+     * the token, every write was sent without the header, and the API correctly refused
+     * it. Returning it here removes the dependency on cookie scope entirely.
+     *
+     * Safe to return: reading it requires a credentialed same-site request that CORS
+     * already restricts to known origins, which is exactly the protection the readable
+     * cookie relied on. This is the standard token-endpoint pattern.
+     */
+    return {
+      user: user ? identity.publicUser(user) : null,
+      company,
+      csrfToken: await csrfTokenFor(request),
+    };
   });
 
   app.get('/me/capabilities', async (request) => {
