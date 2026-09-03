@@ -29,9 +29,17 @@ export default function People() {
   const [invitationNotice, setInvitationNotice] = useState('');
   const [offboarding, setOffboarding] = useState<User | null>(null);
 
-  const listKey = `/users?limit=100${search ? `&q=${encodeURIComponent(search)}` : ''}${
-    statusFilter ? `&status=${statusFilter}` : ''
-  }`;
+  /*
+   * The one place suspended and offboarded people are still shown.
+   *
+   * Everywhere else they are hidden — a person who has left should not be offered when
+   * assigning a task, sharing a file or inviting people to a meeting. Their record is
+   * kept, so this page has to be able to find it: to see who left, and to bring somebody
+   * back. The server honours this only for administrators.
+   */
+  const listKey = `/users?limit=100&includeInactive=true${
+    search ? `&q=${encodeURIComponent(search)}` : ''
+  }${statusFilter ? `&status=${statusFilter}` : ''}`;
   const people = useQuery<Paged<User>>(listKey, (signal) => api.get(listKey, signal));
 
   const departments = useQuery<{ items: Department[] }>('/departments', (signal) =>

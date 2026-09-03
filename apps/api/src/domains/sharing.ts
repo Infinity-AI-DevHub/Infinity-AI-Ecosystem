@@ -37,7 +37,9 @@ const CAPABILITIES: Record<ShareableType, Record<AccessLevel, string[]>> = {
 
 /** The capability someone needs to give a resource away. */
 const SHARE_CAPABILITY: Record<ShareableType, string> = {
-  task: 'task.update',
+  // Not `task.update`: editing a task and choosing who may see it are different powers,
+  // and an employee is trusted with the first only.
+  task: 'task.share',
   doc: 'doc.update',
   folder: 'file.share_external',
 };

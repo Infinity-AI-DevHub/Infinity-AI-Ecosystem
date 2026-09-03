@@ -386,14 +386,36 @@ function NotificationPanel({
     invalidate('/me/notifications');
   };
 
+  /*
+   * Clearing is a separate act from reading, and the panel only had the second.
+   * "Mark all read" removed the bold and left everything in place, so the list filled up
+   * with things already dealt with and only ever shrank when retention caught up.
+   */
+  const clearAll = async () => {
+    await api.delete('/me/notifications').catch(() => undefined);
+    invalidate('/me/notifications');
+  };
+
+  const clearOne = async (id: string) => {
+    await api.delete(`/me/notifications/${id}`).catch(() => undefined);
+    invalidate('/me/notifications');
+  };
+
   return (
     <section className="notification-panel" aria-label="Notifications">
       <header>
         <h2>Notifications</h2>
         <div>
-          <button type="button" className="ghost-button" onClick={markAllRead}>
-            Mark all read
-          </button>
+          {notifications.length > 0 ? (
+            <>
+              <button type="button" className="ghost-button" onClick={markAllRead}>
+                Mark all read
+              </button>
+              <button type="button" className="ghost-button" onClick={clearAll}>
+                Clear all
+              </button>
+            </>
+          ) : null}
           <button type="button" className="icon-button" onClick={onClose} aria-label="Close notifications">
             <X size={16} />
           </button>
@@ -417,6 +439,16 @@ function NotificationPanel({
                 {notification.body ? <span>{notification.body}</span> : null}
                 <time dateTime={notification.created_at}>{relativeTime(notification.created_at)}</time>
               </Link>
+              {/* A sibling of the link, not inside it: a button nested in an anchor is
+                  invalid, and clicking it would navigate as well as clear. */}
+              <button
+                type="button"
+                className="icon-button notification-clear"
+                aria-label={`Clear: ${notification.title}`}
+                onClick={() => void clearOne(notification.id)}
+              >
+                <X size={14} aria-hidden="true" />
+              </button>
             </li>
           ))}
         </ul>

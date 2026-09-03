@@ -978,8 +978,29 @@ export async function changeOwnPassword(
 /** Directory listing with cursor pagination. */
 export async function listUsers(
   actor: Actor,
-  filters: { status?: string; departmentId?: string; query?: string; limit: number; cursor?: string },
+  filters: {
+    status?: string;
+    departmentId?: string;
+    query?: string;
+    limit: number;
+    cursor?: string;
+    /**
+     * Show people who have left or been suspended.
+     *
+     * Off for everybody by default, including administrators: someone who was
+     * offboarded last month should not be an option when assigning a task, sharing a
+     * file or inviting people to a meeting, and this listing feeds all of those. The
+     * People page turns it on so their record is still there to be found and restored.
+     *
+     * Honoured only for administrators, so the rule holds regardless of what a client
+     * asks for.
+     */
+    includeInactive?: boolean;
+  },
 ) {
+  const maySeeInactive =
+    Boolean(filters.includeInactive)
+    && (actor.accessLevel === 'admin' || actor.accessLevel === 'super_admin');
   const { decodeCursor, encodeCursor } = await import('../core/validation.js');
   const cursor = decodeCursor(filters.cursor);
   const rows = await many<UserRow>(
@@ -990,6 +1011,10 @@ export async function listUsers(
         -- assignee lists built from those - a client contact appearing as a colleague is
         -- both a leak of the relationship and an invitation to assign them work.
         AND access_level <> 'guest'
+        -- Suspended and offboarded people stay in the database and leave the interface.
+        -- Their work, their comments and their history all still resolve; they simply
+        -- stop being offered as somebody you can give new work to.
+        AND ($8 OR status NOT IN ('suspended', 'offboarded'))
         AND ($2 IS NULL OR status = $2)
         AND ($3 IS NULL OR department_id = $3)
         -- The utf8mb4_0900_ai_ci collation is already case-insensitive, so LIKE gives
@@ -1006,6 +1031,7 @@ export async function listUsers(
       cursor?.at ?? null,
       cursor?.id ?? null,
       filters.limit + 1,
+      maySeeInactive,
     ],
   );
   const hasMore = rows.length > filters.limit;
