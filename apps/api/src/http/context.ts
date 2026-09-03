@@ -104,7 +104,13 @@ export function requireActor(request: FastifyRequest): Actor {
 }
 
 function sameOriginAllowed(request: FastifyRequest): boolean {
-  const allowed = new Set([config.publicUrl, config.apiUrl]);
+  /*
+   * Keep this identical to the CORS allowlist. The public portal runs on its own origin
+   * (and a second Vite origin in development); CORS admitted that page, but CSRF rejected
+   * every cookie-authenticated POST from it. Reads therefore worked while client uploads
+   * consistently failed with "Request origin is not allowed".
+   */
+  const allowed = new Set([config.publicUrl, config.apiUrl, ...config.extraOrigins]);
   const originHeader = request.headers.origin;
   const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
   if (origin) return allowed.has(origin);

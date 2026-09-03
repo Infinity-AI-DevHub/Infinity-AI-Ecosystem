@@ -321,7 +321,9 @@ export default function Clients() {
 
 function GuestRow({ guest, canManage }: { guest: Guest; canManage: boolean }) {
   const [open, setOpen] = useState(false);
+  const [invitationUrl, setInvitationUrl] = useState<string | null>(null);
   const expiry = expiryTone(guest.access_expires_at);
+  const resendKey = useMemo(() => idempotencyKey(), [guest.id]);
 
   const grantsKey = open ? `/external/guests/${guest.id}/grants` : null;
   const grants = useQuery<{ items: Grant[] }>(grantsKey, (signal) => api.get(grantsKey!, signal));
@@ -329,6 +331,18 @@ function GuestRow({ guest, canManage }: { guest: Guest; canManage: boolean }) {
   const revoke = useMutation(
     async () => api.post(`/external/guests/${guest.id}/revoke`, { reason: 'Access no longer needed' }),
     { invalidates: ['/external/guests'] },
+  );
+
+  const resend = useMutation(
+    async () =>
+      api.post<{ invitation: { invitationUrl: string; expiresInHours: number } }>(
+        `/external/guests/${guest.id}/invitation`,
+        {},
+        { idempotencyKey: resendKey },
+      ),
+    {
+      onSuccess: (result) => setInvitationUrl(result.invitation.invitationUrl),
+    },
   );
 
   return (
@@ -377,6 +391,38 @@ function GuestRow({ guest, canManage }: { guest: Guest; canManage: boolean }) {
               )
             }
           </AsyncSection>
+
+          {canManage && guest.status === 'invited' ? (
+            <div className="guest-invitation-actions">
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={resend.pending}
+                onClick={() => void resend.mutate()}
+              >
+                {resend.pending ? 'Sending…' : 'Resend portal invitation'}
+              </button>
+              <p className="field-hint">
+                Sends a new 72-hour activation email and invalidates every previous link.
+              </p>
+              {invitationUrl ? (
+                <div className="invitation-result" role="status">
+                  <p className="field-hint">
+                    A fresh invitation email was queued. If it does not arrive, copy this link:
+                  </p>
+                  <code className="invitation-link">{invitationUrl}</code>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => navigator.clipboard?.writeText(invitationUrl)}
+                  >
+                    Copy new link
+                  </button>
+                </div>
+              ) : null}
+              <FormError error={resend.error} />
+            </div>
+          ) : null}
 
           {canManage && guest.status === 'active' ? (
             <>

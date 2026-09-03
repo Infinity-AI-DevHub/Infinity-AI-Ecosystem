@@ -1816,6 +1816,24 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 }
 .guest-detail .danger-button { margin-top: var(--sp-4); }
 
+.guest-invitation-actions {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-2);
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border-subtle);
+}
+.guest-invitation-actions .field-hint { margin: 0; }
+.invitation-result {
+  width: 100%;
+  padding: var(--sp-3);
+  border: 1px solid var(--ok-200);
+  border-radius: var(--r-md);
+  background: var(--ok-50);
+}
+.invitation-result .ghost-button { margin-top: var(--sp-2); }
+
 .grant-list { display: grid; gap: var(--sp-2); }
 .grant-list li {
   display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; min-width: 0;

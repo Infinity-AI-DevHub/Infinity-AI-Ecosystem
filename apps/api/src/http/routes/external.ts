@@ -114,6 +114,19 @@ export async function externalRoutes(app: FastifyInstance): Promise<void> {
     return { items: await external.listGuestGrants(actor, id) };
   });
 
+  app.post('/external/guests/:id/invitation', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
+    return withIdempotency(request, reply, 'POST /external/guests/:id/invitation', async () => {
+      const invitation = await external.reissueGuestInvitation(
+        actor,
+        id,
+        request.requestContext,
+      );
+      return { statusCode: 200, body: { invitation } };
+    });
+  });
+
   app.post('/external/guests/:id/grants', async (request, reply) => {
     const actor = requireActor(request);
     const { id } = parse(z.object({ id: z.string().uuid() }), request.params);

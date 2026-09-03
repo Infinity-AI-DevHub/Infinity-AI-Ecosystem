@@ -25,6 +25,19 @@ const TYPE_LABEL: Record<ShareableType, string> = {
   task: 'task', doc: 'document', folder: 'folder',
 };
 
+function grantedCapabilities(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 export function ShareWith({
   resourceType,
   resourceId,
@@ -112,6 +125,13 @@ export function ShareWith({
                     <span className="task-meta"> · guest</span>
                   ) : null}
                   <span className="field-hint"> {share.email_display}</span>{' '}
+                  <span className={`status-tag ${
+                    grantedCapabilities(share.capabilities).includes('file.create')
+                      ? 'status-active' : 'status-pending'
+                  }`}>
+                    {grantedCapabilities(share.capabilities).includes('file.create')
+                      ? 'View, upload and edit' : 'View only'}
+                  </span>{' '}
                   <button type="button" className="ghost-button"
                           onClick={() => void revoke(share.user_id)}>
                     Remove

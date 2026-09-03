@@ -119,7 +119,7 @@ export async function buildServer(): Promise<FastifyInstance> {
     // guest surface, so a company-wide listing that scopes by company alone - which is
     // correct for an employee - cannot leak to a client contact who holds a row in the
     // same company. See guest-surface.ts for what is open and why.
-    if (actor?.accessLevel === 'guest' && !guestMayReach(request.url)) {
+    if (actor?.accessLevel === 'guest' && !guestMayReach(request.method, request.url)) {
       throw forbidden('This is not available to guest accounts');
     }
 

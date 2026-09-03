@@ -11,7 +11,7 @@
  * accounts.
  */
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { FileText, FolderOpen, LayoutDashboard, LogOut, Receipt, CheckSquare } from 'lucide-react';
+import { CreditCard, FileText, FolderOpen, LayoutDashboard, LogOut, Receipt, CheckSquare, Upload } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useSession } from '../../lib/session';
 
@@ -19,7 +19,9 @@ const LINKS = [
   { to: '/portal', label: 'Overview', icon: LayoutDashboard, end: true },
   { to: '/portal/invoices', label: 'Invoices', icon: Receipt },
   { to: '/portal/quotations', label: 'Quotations', icon: FileText },
+  { to: '/portal/payments', label: 'Payments', icon: CreditCard },
   { to: '/portal/documents', label: 'Documents', icon: FolderOpen },
+  { to: '/portal/send', label: 'Send documents', icon: Upload },
   { to: '/portal/tasks', label: 'Work', icon: CheckSquare },
 ];
 

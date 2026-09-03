@@ -49,7 +49,11 @@ export type FileRow = {
  * Only ever widens access. An explicit deny is still decided ahead of membership by the
  * authorization pipeline, so this cannot override one.
  */
-async function reachedByFolderGrant(actor: Actor, folderId: string | null): Promise<boolean> {
+async function reachedByFolderGrant(
+  actor: Actor,
+  folderId: string | null,
+  capability: string,
+): Promise<boolean> {
   if (!folderId) return false;
   const row = await one<{ ok: number }>(
     `SELECT 1 AS ok
@@ -61,11 +65,28 @@ async function reachedByFolderGrant(actor: Actor, folderId: string | null): Prom
         AND (g.expires_at IS NULL OR g.expires_at > NOW(3))
         AND ((g.subject_type = 'user' AND g.subject_id = $3)
           OR (g.subject_type = 'group' AND JSON_CONTAINS($4, JSON_QUOTE(g.subject_id))))
+        AND JSON_CONTAINS(g.capabilities, JSON_QUOTE($5))
         AND (ff.id = gf.id OR ff.path LIKE CONCAT(gf.path, '/%'))
       LIMIT 1`,
-    [actor.companyId, folderId, actor.userId, JSON.stringify(actor.groupIds)],
+    [actor.companyId, folderId, actor.userId, JSON.stringify(actor.groupIds), capability],
   );
   return Boolean(row);
+}
+
+async function requireFolderAccess(actor: Actor, folderId: string, capability: string) {
+  const folder = await one<{ id: string; path: string }>(
+    'SELECT id, path FROM folders WHERE id = $1 AND company_id = $2',
+    [folderId, actor.companyId],
+  );
+  if (!folder) throw notFound('Folder not found');
+  await authorize({
+    actor,
+    capability,
+    resourceType: 'folder',
+    resourceId: folderId,
+    membership: await reachedByFolderGrant(actor, folderId, capability),
+  });
+  return folder;
 }
 
 async function requireFileAccess(actor: Actor, fileId: string, capability: string) {
@@ -74,13 +95,23 @@ async function requireFileAccess(actor: Actor, fileId: string, capability: strin
     actor.companyId,
   ]);
   if (!file) throw notFound('File not found');
+  const ownPortalSubmission = actor.accessLevel === 'guest' && capability === 'file.read'
+    ? await one<{ ok: number }>(
+        `SELECT 1 AS ok FROM portal_uploads
+          WHERE file_id = $1 AND company_id = $2 AND uploaded_by = $3
+          LIMIT 1`,
+        [fileId, actor.companyId, actor.userId],
+      )
+    : null;
   await authorize({
     actor,
     capability,
     resourceType: 'file',
     resourceId: fileId,
     membership:
-      file.owner_id === actor.userId || (await reachedByFolderGrant(actor, file.folder_id)),
+      (actor.accessLevel !== 'guest' && file.owner_id === actor.userId) ||
+      Boolean(ownPortalSubmission) ||
+      (await reachedByFolderGrant(actor, file.folder_id, capability)),
   });
   return file;
 }
@@ -102,7 +133,19 @@ export async function listFolders(actor: Actor) {
   // sort_order first, then path: an explicit arrangement wins, and anything never
   // dragged keeps its old alphabetical-by-path position rather than jumping around.
   return many(
-    `SELECT f.id, f.parent_id, f.name, f.path, f.owner_id, f.sort_order
+    `SELECT f.id, f.parent_id, f.name, f.path, f.owner_id, f.sort_order,
+            CASE WHEN NOT $2 THEN 1 ELSE EXISTS (
+              SELECT 1 FROM resource_grants cg
+                JOIN folders cgf ON cgf.id = cg.resource_id AND cgf.company_id = f.company_id
+               WHERE cg.resource_type = 'folder' AND cg.effect = 'allow'
+                 AND cg.company_id = f.company_id
+                 AND (cg.expires_at IS NULL OR cg.expires_at > NOW(3))
+                 AND ((cg.subject_type = 'user' AND cg.subject_id = $3)
+                   OR (cg.subject_type = 'group' AND JSON_CONTAINS($4, JSON_QUOTE(cg.subject_id))))
+                 AND JSON_CONTAINS(cg.capabilities, JSON_QUOTE('file.create'))
+                 AND JSON_CONTAINS(cg.capabilities, JSON_QUOTE('file.update'))
+                 AND (f.id = cgf.id OR f.path LIKE CONCAT(cgf.path, '/%'))
+            ) END AS can_contribute
        FROM folders f
       WHERE f.company_id = $1
         AND (
@@ -280,9 +323,28 @@ async function assertQuota(companyId: string, additionalBytes: number): Promise<
 
 export async function beginUpload(
   actor: Actor,
-  input: { filename: string; mimeType: string; sizeBytes: number; folderId?: string | null; fileId?: string },
+  input: {
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+    folderId?: string | null;
+    fileId?: string;
+    purpose?: 'portal_submission';
+  },
 ): Promise<UploadSession> {
-  await authorize({ actor, capability: input.fileId ? 'file.update' : 'file.create', resourceless: true });
+  if (!input.fileId) {
+    if (actor.accessLevel === 'guest') {
+      if (input.folderId) {
+        await requireFolderAccess(actor, input.folderId, 'file.create');
+      } else if (input.purpose === 'portal_submission') {
+        await authorize({ actor, capability: 'portal.upload', resourceless: true });
+      } else {
+        throw forbidden('Choose a shared folder that allows uploads');
+      }
+    } else {
+      await authorize({ actor, capability: 'file.create', resourceless: true });
+    }
+  }
   if (input.sizeBytes <= 0 || input.sizeBytes > config.limits.uploadMaxBytes) {
     throw payloadTooLarge(`Files must be between 1 byte and ${config.limits.uploadMaxBytes} bytes`);
   }

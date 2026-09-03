@@ -61,6 +61,23 @@
 .portal-head { margin-bottom: var(--sp-6); }
 .portal-head h1 { font-size: var(--text-2xl); margin: 0 0 4px; text-wrap: balance; }
 .portal-head p { margin: 0; color: var(--fg-tertiary); font-size: var(--text-sm); }
+.portal-drive-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-5);
+}
+.portal-drive-controls { display: flex; align-items: flex-end; gap: var(--sp-3); }
+.portal-drive-controls .field { min-width: 220px; margin: 0; }
+.portal-access-note {
+  margin: calc(-1 * var(--sp-3)) 0 var(--sp-5);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+  color: var(--fg-secondary);
+  font-size: var(--text-sm);
+}
 
 /* The figure the client came for, given the room to be read at a glance. */
 .portal-figures {
@@ -137,6 +154,8 @@
   cursor: pointer;
 }
 .portal-file { flex-direction: row; align-items: center; gap: var(--sp-3); }
+.portal-file-row { display: flex; align-items: center; gap: var(--sp-3); }
+.portal-file-row .portal-file { flex: 1; }
 /* Name over date, rather than the two running into each other on one line. */
 .portal-file > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .portal-file strong { font-weight: var(--weight-medium); }
@@ -159,6 +178,13 @@
   gap: var(--sp-4); margin-bottom: var(--sp-5);
 }
 .portal-doc-head h1 { font-size: var(--text-xl); margin: 0 0 4px; }
+.portal-document-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
 .portal-doc-summary { font-size: var(--text-sm); margin: 0 0 var(--sp-5); }
 .portal-doc-block { margin-top: var(--sp-6); }
 .portal-doc-block h2 { font-size: var(--text-sm); margin: 0 0 var(--sp-3); }
@@ -174,4 +200,115 @@
   .portal-bar { flex-wrap: wrap; gap: var(--sp-3); }
   .portal-nav { margin-inline-start: 0; width: 100%; }
   .portal-main { padding: var(--sp-5) var(--sp-4); }
+  .portal-drive-head, .portal-file-row { align-items: stretch; flex-direction: column; }
+  .portal-drive-controls { align-items: stretch; flex-direction: column; }
+  .portal-drive-controls .field { min-width: 0; }
+  .portal-document-actions { justify-content: flex-start; }
 }
+
+/* ---------------------------------------------------- payments and documents */
+
+/* The next payment is the single fact a client opens this page for. */
+.portal-due {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  margin-bottom: var(--sp-5);
+}
+.portal-due.is-overdue { border-color: var(--danger, #c0392b); }
+.portal-due.is-overdue > svg { color: var(--danger, #c0392b); }
+.portal-due > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.portal-due-amount { font-size: var(--text-xl); font-variant-numeric: tabular-nums; }
+.portal-due-none { margin-bottom: var(--sp-5); }
+
+.portal-folder { margin-bottom: var(--sp-6); }
+.portal-folder h2 {
+  display: flex; align-items: center; gap: 8px;
+  font-size: var(--text-sm);
+  color: var(--fg-secondary);
+  margin: 0 0 var(--sp-3);
+}
+.portal-file-static { cursor: default; }
+.portal-file-static:hover { border-color: var(--border-subtle); }
+
+/* Meetings read as a schedule: time first, then what and where. */
+.portal-meeting-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-3); }
+.portal-meeting-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+}
+.portal-meeting-list.is-past li { opacity: 0.72; }
+.portal-meeting-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.portal-meeting-where { display: inline-flex; align-items: center; gap: 5px; }
+
+.portal-notice-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-3); }
+.portal-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-inline-start: 3px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+}
+.portal-notice > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+/* Namespaced, so these cannot collide with the workspace's own priority classes. */
+.portal-notice.priority-important { border-inline-start-color: var(--warning, #b5730f); }
+.portal-notice.priority-critical { border-inline-start-color: var(--danger, #c0392b); }
+.portal-notice-body { margin: 4px 0 0; font-size: var(--text-sm); white-space: pre-wrap; }
+
+.portal-send {
+  display: flex; flex-direction: column; gap: var(--sp-4);
+  padding: var(--sp-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  margin-bottom: var(--sp-6);
+}
+.portal-send fieldset { border: 0; margin: 0; padding: 0; }
+.portal-kinds { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.portal-sent { color: var(--success, #2f9e6f); font-size: var(--text-sm); margin: 0; }
+
+.portal-upload-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
+.portal-upload-list li {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+}
+.portal-upload-note { flex-basis: 100%; }
+
+/* The board header carries a project selector, so it needs a row rather than a stack. */
+.portal-head-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+.portal-head-row .header-controls { display: flex; align-items: center; gap: var(--sp-2); }
+
+/*
+ * The client's board is the workspace board — the classes come from App.css so the two
+ * cannot drift.
+ *
+ * The portal is otherwise a narrow reading column, which is right for invoices and
+ * notices and wrong for a five-column board: at 1000px the last column sat half off the
+ * edge, which reads as broken rather than as scrollable. The one page that holds a board
+ * gets the room to show all five, and still scrolls on a narrow screen.
+ */
+.portal-main:has(.task-board) { width: min(1360px, 100%); }
+.portal-main .task-board { overflow-x: auto; padding-bottom: var(--sp-2); }
