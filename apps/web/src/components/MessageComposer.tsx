@@ -43,14 +43,25 @@ export function MessageComposer() {
   const history = useQuery<{ items: Sent[] }>('/messages', (signal) => api.get('/messages', signal));
 
   useEffect(() => {
-    void api.get<{ items: typeof people }>('/users?limit=200')
+    void api.get<{ items: typeof people }>('/users?limit=100')
       .then((result) => setPeople(result.items))
       .catch(() => undefined);
   }, []);
 
+  /*
+   * Say what was actually chosen rather than counting checkboxes. "Send to 2
+   * selection(s)" tells nobody who is about to receive this, and a group or a client
+   * organisation stands for a number of people the count does not show.
+   */
   const reach = everyone
     ? 'everyone in the company'
-    : `${userIds.length + groupIds.length + orgIds.length} selection(s)`;
+    : [
+        userIds.length ? `${userIds.length} ${userIds.length === 1 ? 'person' : 'people'}` : null,
+        groupIds.length ? `${groupIds.length} ${groupIds.length === 1 ? 'group' : 'groups'}` : null,
+        orgIds.length
+          ? `${orgIds.length} ${orgIds.length === 1 ? 'organisation' : 'organisations'}`
+          : null,
+      ].filter(Boolean).join(' and ') || 'nobody yet';
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();

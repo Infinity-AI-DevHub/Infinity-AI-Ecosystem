@@ -53,9 +53,12 @@ async function emailUsers(
   if (ids.length === 0) return;
 
   const rows = await many<{ email_display: string }>(
+    // 'invited' as well as 'active': somebody who has not activated yet is exactly who
+    // needs to be told that something is waiting for them. Excluding them meant the
+    // first thing shared with a new guest reached nobody.
     `SELECT email_display FROM users
       WHERE id IN (${ids.map((_, i) => `$${i + 1}`).join(',')})
-        AND status = 'active' AND email_display IS NOT NULL`,
+        AND status IN ('invited', 'active') AND email_display IS NOT NULL`,
     ids,
   );
   const to = rows.map((row) => row.email_display).filter(Boolean);
@@ -232,8 +235,10 @@ const onEventScheduled: Handler = async (event) => {
    * useless without the link in reach.
    */
   const attendees = await many<{ email_display: string; display_name: string }>(
+    // 'invited' too: an attendee who has an account but has not signed in yet still
+    // needs the invitation - the email is how they find out at all.
     `SELECT email_display, display_name FROM users
-      WHERE id = ANY_PLACEHOLDER AND status = 'active'`.replace(
+      WHERE id = ANY_PLACEHOLDER AND status IN ('invited', 'active')`.replace(
         'ANY_PLACEHOLDER',
         `(${attendeeIds.map((_, i) => `$${i + 1}`).join(',') || "''"})`,
       ),
@@ -844,29 +849,52 @@ const onInvoiceReminder: Handler = async (event) => {
 
 /** Someone was given access to a folder, file or document: tell them it exists. */
 const onShareGranted: Handler = async (event) => {
-  const { resourceType, resourceName, recipients, url, grantedBy, message } = event.payload as {
-    resourceType: string; resourceName: string; recipients: string[];
-    url: string; grantedBy: string; message?: string | null;
-  };
-  if (!recipients || recipients.length === 0) return;
-
-  /**
-   * One message per recipient rather than one with everyone in To. A shared folder can
-   * be granted to the whole company, and disclosing that list to each of them is a
-   * privacy leak that is invisible until someone points it out.
+  /*
+   * This read `recipients`, `resourceName`, `grantedBy` and `message`, none of which the
+   * domain has ever emitted - it sends `userIds`, `label`, `sharedBy` and `note`. Every
+   * field came back undefined, the empty-recipients guard fired, and not one share
+   * notification was ever delivered.
    */
-  for (const to of recipients) {
-    await notifier.send({
-      from: { address: systemSender(), name: 'Infinity Workspace' },
-      to: [to],
-      subject: `${grantedBy} shared a ${resourceType} with you: ${resourceName}`,
-      text: [
-        `${grantedBy} has given you access to the ${resourceType} "${resourceName}".`,
-        message ? `\n"${message}"\n` : '',
-        url,
-      ].filter(Boolean).join('\n'),
-    });
-  }
+  const { resourceType, resourceId, label, access, userIds, sharedBy, note } =
+    event.payload as {
+      resourceType: 'task' | 'document' | 'folder';
+      resourceId: string;
+      label: string;
+      access: 'view' | 'contribute';
+      userIds: string[];
+      sharedBy: string;
+      note?: string | null;
+    };
+  if (!userIds || userIds.length === 0) return;
+
+  const route = resourceType === 'task' ? `/tasks/${resourceId}`
+    : resourceType === 'document' ? `/docs/${resourceId}`
+    : `/files?folder=${resourceId}`;
+
+  const noun = resourceType === 'folder' ? 'folder'
+    : resourceType === 'document' ? 'document' : 'task';
+
+  await emailUsers(userIds, {
+    subject: `${sharedBy} shared a ${noun} with you: ${label}`,
+    lines: [
+      `${sharedBy} has given you access to the ${noun} "${label}".`,
+      access === 'contribute'
+        ? 'You can view it, upload to it and edit what is there.'
+        : 'You can view it.',
+      note ? `\n"${note}"\n` : '',
+      appLink(route),
+    ].filter(Boolean),
+  });
+
+  await notifications.createMany(userIds, (userId) => ({
+    companyId: event.company_id,
+    userId,
+    type: 'share_granted',
+    title: `${sharedBy} shared a ${noun} with you`,
+    body: label,
+    link: route,
+    dedupeKey: `share:${resourceType}:${resourceId}:${userId}`,
+  }));
 };
 
 /** The client-side addresses an invoice should reach. */
@@ -984,7 +1012,9 @@ const onAnnouncementPublished: Handler = async (event) => {
   let recipients: { id: string }[] = [];
   if (audience.scope === 'company') {
     recipients = await many<{ id: string }>(
-      `SELECT id FROM users WHERE company_id = $1 AND status = 'active'`,
+      // An announcement to the whole company means the whole company, including people
+      // who have been given an account but have not signed in yet.
+      `SELECT id FROM users WHERE company_id = $1 AND status IN ('invited', 'active')`,
       [event.company_id],
     );
   } else if (audience.scope === 'department') {

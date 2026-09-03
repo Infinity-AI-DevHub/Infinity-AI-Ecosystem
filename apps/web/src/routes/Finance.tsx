@@ -6,6 +6,7 @@
  * gated on its own capability, so most people see one and finance sees four.
  */
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Laptop, Paperclip, Plus, Receipt, Trash2, Wallet } from 'lucide-react';
 import { api, idempotencyKey } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
@@ -85,6 +86,13 @@ export default function Finance() {
           <h2>Finance</h2>
           <p>Invoices, payments, expense claims, budgets, suppliers and equipment.</p>
         </div>
+        {/* The branding, payment instructions and footers that every invoice, quotation
+            and receipt is built from. They live in Settings, but nobody looks for
+            invoice branding in a personal settings page, so it is reachable from here
+            as well. */}
+        {can('billing.configure') ? (
+          <Link className="ghost-button" to="/settings">Document settings</Link>
+        ) : null}
       </header>
 
       <div className="tab-row" role="tablist" aria-label="Finance sections">

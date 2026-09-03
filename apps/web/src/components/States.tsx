@@ -5,7 +5,7 @@
  * Centralising them means no module ships a blank screen or a raw error string, and
  * every state is announced to assistive technology.
  */
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { AlertTriangle, Inbox, LockKeyhole, RefreshCw, WifiOff } from 'lucide-react';
 import { ApiError, NetworkError } from '../lib/api';
 
@@ -163,6 +163,20 @@ export function AsyncSection<T>({
  * that merely restate the summary are dropped here, once, for all of them.
  */
 export function FormError({ error }: { error: ApiError | NetworkError | null }) {
+  const box = useRef<HTMLDivElement>(null);
+
+  /*
+   * Bring the message into view when it appears.
+   *
+   * These sit at the top of their form, while the button that triggers them is often far
+   * below in a dialog that scrolls - so a rejected submit rendered an explanation the
+   * person never saw, and the form read as simply not responding. Announced to assistive
+   * technology by role="alert" either way; this is for everyone else.
+   */
+  useEffect(() => {
+    if (error) box.current?.scrollIntoView({ block: 'nearest' });
+  }, [error]);
+
   if (!error) return null;
 
   const fields =
@@ -171,7 +185,7 @@ export function FormError({ error }: { error: ApiError | NetworkError | null }) 
       : [];
 
   return (
-    <div className="auth-error" role="alert">
+    <div className="auth-error" role="alert" ref={box}>
       <p>{error.message}</p>
       {fields.length > 0 ? (
         <ul>

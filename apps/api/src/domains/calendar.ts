@@ -205,12 +205,17 @@ async function validateAttendees(companyId: string, ids: string[]) {
   const unique = [...new Set(ids)];
   if (unique.length === 0) return [];
   const rows = await many<{ id: string }>(
+    // 'invited' as well as 'active': someone who has been given an account but has not
+    // signed in yet is a perfectly ordinary person to invite to a meeting - they get the
+    // invitation by email like everybody else. Requiring activation meant the attendee
+    // list offered people the server then refused.
     `SELECT id FROM users
-      WHERE company_id = $1 AND JSON_CONTAINS($2, JSON_QUOTE(id)) AND status = 'active'`,
+      WHERE company_id = $1 AND JSON_CONTAINS($2, JSON_QUOTE(id))
+        AND status IN ('invited', 'active')`,
     [companyId, JSON.stringify(unique)],
   );
   if (rows.length !== unique.length) {
-    throw unprocessable('One or more attendees are not active accounts in this company', [
+    throw unprocessable('One or more attendees are not accounts in this company', [
       { field: 'attendeeIds', message: 'Remove unknown or inactive people' },
     ]);
   }

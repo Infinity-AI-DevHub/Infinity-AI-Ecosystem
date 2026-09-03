@@ -6,10 +6,11 @@
  * rules — two different people internally, the client's signature recorded rather than
  * placed, the hash written at the moment of signing — cannot drift apart between them.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { uploadWorkspaceFile } from '../lib/uploads';
 import { SignaturePlacer, type Placement } from './SignaturePlacer';
+import { SignatureSettings } from './SignatureSettings';
 
 export type DocumentType = 'quotation' | 'invoice' | 'receipt';
 
@@ -115,20 +116,20 @@ export function SignDocumentDialog({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const saved = await api.get<{ file_id: string | null }>('/me/signature');
-        setHasSignature(Boolean(saved.file_id));
-        if (saved.file_id) {
-          const link = await api.get<{ url: string }>(`/files/${saved.file_id}/download`);
-          setImageUrl(link.url);
-        }
-      } catch {
-        setHasSignature(false);
+  const loadSignature = useCallback(async () => {
+    try {
+      const saved = await api.get<{ file_id: string | null }>('/me/signature');
+      setHasSignature(Boolean(saved.file_id));
+      if (saved.file_id) {
+        const link = await api.get<{ url: string }>(`/files/${saved.file_id}/download`);
+        setImageUrl(link.url);
       }
-    })();
+    } catch {
+      setHasSignature(false);
+    }
   }, []);
+
+  useEffect(() => { void loadSignature(); }, [loadSignature]);
 
   async function commit() {
     setError(null);
@@ -150,9 +151,17 @@ export function SignDocumentDialog({
         <h3>Sign {documentLabel}</h3>
 
         {hasSignature === false ? (
-          <p className="field-error">
-            You have no saved signature. Add one in Settings → Your signature first.
-          </p>
+          <>
+            <p className="field-hint">
+              Before you can sign, the app needs the signature it should place on the
+              document. Upload it here once — it is saved to your account and reused
+              every time after this.
+            </p>
+            <SignatureSettings onSaved={() => { void loadSignature(); }} />
+            <div className="dialog-actions">
+              <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
+            </div>
+          </>
         ) : imageUrl ? (
           <>
             <SignaturePlacer imageUrl={imageUrl} value={placement} onChange={setPlacement}
@@ -346,7 +355,7 @@ export function RequestCountersignatureDialog({
   const [people, setPeople] = useState<{ id: string; display_name: string }[]>([]);
 
   useEffect(() => {
-    void api.get<{ items: { id: string; display_name: string }[] }>('/users?limit=200')
+    void api.get<{ items: { id: string; display_name: string }[] }>('/users?limit=100')
       .then((result) => setPeople(result.items))
       .catch(() => undefined);
   }, []);

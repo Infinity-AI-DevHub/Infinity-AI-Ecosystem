@@ -6,7 +6,7 @@
  * short-lived signed URLs requested at click time - never long-lived links in markup.
  */
 import { useMemo, useRef, useState } from 'react';
-import { Download, FolderPlus, History, Link2, RotateCcw, ShieldAlert, Trash2, Upload } from 'lucide-react';
+import { Download, FolderPlus, History, Link2, RotateCcw, Share2, ShieldAlert, Trash2, Upload } from 'lucide-react';
 import { api, ApiError, idempotencyKey, NetworkError } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { saveDownload } from '../lib/desktop';
@@ -158,13 +158,24 @@ export default function Files() {
               </button>
             </li>
             {(folders.data?.items ?? []).map((folder) => (
-              <li key={folder.id}>
+              <li key={folder.id} className="folder-row">
                 <button
                   type="button"
                   className={`folder-button ${folderId === folder.id ? 'folder-active' : ''}`}
                   onClick={() => setFolderId(folder.id)}
                 >
                   {folder.name}
+                </button>
+                {/* Sharing a folder with a client or a guest was built and then left
+                    with nothing to open it, so the whole feature was invisible. */}
+                <button
+                  type="button"
+                  className="icon-button"
+                  title={`Share ${folder.name}`}
+                  aria-label={`Share ${folder.name}`}
+                  onClick={() => setSharingFolder({ id: folder.id, name: folder.name })}
+                >
+                  <Share2 size={15} aria-hidden="true" />
                 </button>
               </li>
             ))}

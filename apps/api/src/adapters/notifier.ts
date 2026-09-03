@@ -151,7 +151,17 @@ class LogNotifier implements NotifierDriver {
   async send(message: OutboundMessage): Promise<SendResult> {
     const { messageId } = buildMime(message);
     logger.info(
-      { to: message.to, subject: message.subject, messageId },
+      {
+        to: message.to,
+        subject: message.subject,
+        messageId,
+        // Named here because "the email sent" and "the email sent with the invoice on
+        // it" are different claims, and only one of them is what was asked for.
+        attachments: (message.attachments ?? []).map((file) => ({
+          filename: file.filename,
+          bytes: file.content.length,
+        })),
+      },
       'notifier "log": message accepted (not delivered)',
     );
     return { providerMessageId: messageId, accepted: message.to, rejected: [] };

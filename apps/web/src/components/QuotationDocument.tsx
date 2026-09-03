@@ -36,6 +36,15 @@ export type QuotationForDocument = {
             unit_price: string | number; tax_rate: string | number; amount: string | number }[];
 };
 
+// Grouped digits without the currency code, for the columns where the totals below
+// already state it. A line reading 450000.00 beside a total reading LKR 450,000.00
+// looks like two different numbers.
+const amount = (value: string | number | undefined) =>
+  Number(value ?? 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
 const money = (value: string | number | undefined, currency: string) =>
   `${currency} ${Number(value ?? 0).toLocaleString(undefined, {
     minimumFractionDigits: 2, maximumFractionDigits: 2,
@@ -111,9 +120,9 @@ export function QuotationDocument({
             <tr key={line.id ?? index}>
               <td>{line.description}</td>
               <td className="doc-num">{Number(line.quantity)}</td>
-              <td className="doc-num">{Number(line.unit_price).toFixed(2)}</td>
+              <td className="doc-num">{amount(line.unit_price)}</td>
               <td className="doc-num">{Number(line.tax_rate) > 0 ? `${Number(line.tax_rate)}%` : '—'}</td>
-              <td className="doc-num">{Number(line.amount).toFixed(2)}</td>
+              <td className="doc-num">{amount(line.amount)}</td>
             </tr>
           ))}
         </tbody>

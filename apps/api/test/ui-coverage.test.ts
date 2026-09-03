@@ -49,6 +49,35 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * A page size the API will refuse is a silently empty screen.
+ *
+ * The API caps `limit` at MAX_PAGE_SIZE and answers 422 above it. Three pickers asked
+ * for 200: the person to send a message to, the colleague to ask for a countersignature,
+ * and the people on a task. Each one 422'd, each one rendered "nobody matches that", and
+ * all three features looked built but unusable - which is exactly how they were
+ * reported. Nothing in the type system connects the two numbers, so it is checked here.
+ */
+describe('client paging', () => {
+  it('never asks for more than the API will return', () => {
+    const cap = Number(
+      /maxPageSize: int\('MAX_PAGE_SIZE', (\d+)\)/.exec(
+        readFileSync('src/core/config.ts', 'utf8'),
+      )?.[1] ?? 100,
+    );
+
+    const offenders: string[] = [];
+    for (const file of walk('../web/src')) {
+      const src = readFileSync(file, 'utf8');
+      for (const m of src.matchAll(/limit=(\d+)/g)) {
+        if (Number(m[1]) > cap) offenders.push(`${file}: limit=${m[1]} (max ${cap})`);
+      }
+    }
+
+    assert.deepEqual(offenders, [], `these requests are refused by the API:\n${offenders.join('\n')}`);
+  });
+});
+
 describe('interface coverage', () => {
   it('every write route is reachable, or listed as a known gap', () => {
     const routes: { verb: string; path: string }[] = [];
