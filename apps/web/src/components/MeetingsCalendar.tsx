@@ -21,10 +21,21 @@ export type CalendarEvent = {
   myRsvp: string | null;
 };
 
-/** The hours drawn. Outside these, events are still placed - clamped to the edge. */
-const DAY_START = 7;
-const DAY_END = 21;
+/*
+ * The whole day, midnight to midnight.
+ *
+ * It used to draw 07:00–21:00 and clamp anything outside to the edge, which is fine until
+ * somebody has a 06:30 stand-up or a call with a timezone that puts it at 22:00 — those
+ * were drawn pinned to the top or bottom rail, at the wrong time and the wrong length.
+ * A calendar that cannot show an hour of the day is lying about it, so all 24 are drawn
+ * and the view opens on the part of the day people actually use.
+ */
+const DAY_START = 0;
+const DAY_END = 24;
 const HOUR_HEIGHT = 52;
+
+/** Where the scroll lands when nothing earlier demands attention. */
+const DEFAULT_FIRST_HOUR = 8;
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -41,7 +52,13 @@ function sameDay(a: Date, b: Date): boolean {
     && a.getDate() === b.getDate();
 }
 
-/** Minutes from the top of the drawn day, clamped so a 6am event still appears. */
+/**
+ * Minutes from the top of the drawn day.
+ *
+ * The clamp is now a guard rather than a workaround — every hour is drawn, so nothing
+ * should fall outside, and if a bad date ever did it lands on the rail instead of
+ * escaping the grid.
+ */
 function offsetMinutes(date: Date): number {
   return Math.max(0, Math.min((DAY_END - DAY_START) * 60, (date.getHours() - DAY_START) * 60 + date.getMinutes()));
 }
@@ -107,11 +124,22 @@ export function MeetingsCalendar({
     [days, events],
   );
 
-  // Open near the working day rather than at midnight.
+  /*
+   * Where to open.
+   *
+   * Midnight is technically the top of the day and never what anyone wants to look at.
+   * The view opens on the earliest meeting of the week — so a 06:30 start is visible
+   * without hunting for it — and on an ordinary morning when there is nothing earlier.
+   */
   useEffect(() => {
     const el = scroller.current;
-    if (el) el.scrollTop = Math.max(0, (9 - DAY_START) * HOUR_HEIGHT - 20);
-  }, []);
+    if (!el) return;
+    const earliest = events.reduce((hour, event) => {
+      const start = new Date(event.startsAt);
+      return Number.isNaN(start.getTime()) ? hour : Math.min(hour, start.getHours());
+    }, DEFAULT_FIRST_HOUR);
+    el.scrollTop = Math.max(0, (earliest - DAY_START) * HOUR_HEIGHT - 20);
+  }, [events]);
 
   const hours = Array.from({ length: DAY_END - DAY_START }, (_, i) => DAY_START + i);
   const showNow = days.some((day) => sameDay(day, today));
