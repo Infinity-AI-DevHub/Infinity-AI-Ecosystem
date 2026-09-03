@@ -5,7 +5,8 @@
  * a document is information: it shows the reader what is still outstanding rather than
  * leaving them to guess.
  */
-import type { BillingProfile } from './InvoiceDocument';
+import { addressLines, type BillingProfile } from './InvoiceDocument';
+import { useLogoUrl } from '../lib/logo';
 
 export type QuotationSignature = {
   role: string;
@@ -69,6 +70,7 @@ export function QuotationDocument({
   requiredRoles?: string[];
 }) {
   const accent = profile.accent_colour || '#1A6288';
+  const logoUrl = useLogoUrl(profile.logo_file_id);
   const address = [quotation.address_line1, quotation.address_line2,
     [quotation.city, quotation.postal_code].filter(Boolean).join(' '),
     quotation.country].filter((part) => part && String(part).trim()) as string[];
@@ -77,14 +79,20 @@ export function QuotationDocument({
     <article className="doc-sheet" style={{ ['--doc-accent' as string]: accent }}>
       <header className="doc-head">
         <div>
+          {/* Above the title, matching the PDF exactly - a preview that differs from the
+              thing it previews is worse than no preview. */}
+          {logoUrl ? <img className="doc-logo" src={logoUrl} alt="" /> : null}
           <h1 className="doc-title">Quotation</h1>
           <p className="doc-number">{quotation.number}</p>
         </div>
         <div className="doc-from">
+          {/* The same block invoices and receipts carry. A quotation that omits half
+              the sender's details is the one document a prospect reads first. */}
           <strong>{profile.legal_name ?? 'Your company'}</strong>
-          {[profile.address_line1, profile.city, profile.country]
-            .filter(Boolean).map((line) => <span key={String(line)}>{line}</span>)}
+          {addressLines(profile).map((line) => <span key={line}>{line}</span>)}
+          {profile.tax_registration ? <span>Tax reg. {profile.tax_registration}</span> : null}
           {profile.contact_email ? <span>{profile.contact_email}</span> : null}
+          {profile.contact_phone ? <span>{profile.contact_phone}</span> : null}
         </div>
       </header>
 

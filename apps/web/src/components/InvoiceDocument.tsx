@@ -1,4 +1,5 @@
 import { SignatureBlocks, type SignatureState } from './DocumentSigning';
+import { useLogoUrl } from '../lib/logo';
 
 /**
  * The invoice and receipt as the client sees them.
@@ -23,6 +24,7 @@ export type BillingProfile = {
   payment_instructions: string | null;
   invoice_footer: string | null;
   receipt_footer: string | null;
+  logo_file_id?: string | null;
   accent_colour: string | null;
 };
 
@@ -86,7 +88,7 @@ const money = (value: string | number | undefined, currency: string) =>
     maximumFractionDigits: 2,
   })}`;
 
-const addressLines = (source: {
+export const addressLines = (source: {
   address_line1: string | null; address_line2: string | null;
   city: string | null; postal_code: string | null; country: string | null;
 }) => [source.address_line1, source.address_line2,
@@ -112,12 +114,14 @@ export function InvoiceDocument({
 }) {
   const accent = profile.accent_colour || '#1A6288';
   const isReceipt = variant === 'receipt';
+  const logoUrl = useLogoUrl(profile.logo_file_id);
   const balance = Number(invoice.total) - Number(invoice.amount_paid);
 
   return (
     <article className="doc-sheet" style={{ ['--doc-accent' as string]: accent }}>
       <header className="doc-head">
         <div>
+          {logoUrl ? <img className="doc-logo" src={logoUrl} alt="" /> : null}
           <h1 className="doc-title">{isReceipt ? 'Receipt' : 'Invoice'}</h1>
           <p className="doc-number">
             {isReceipt ? payment?.receipt_number ?? '—' : invoice.number}

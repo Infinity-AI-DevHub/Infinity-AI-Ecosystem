@@ -579,6 +579,7 @@ export async function financeRoutes(app: FastifyInstance): Promise<void> {
         invoicePrefix: z.string().max(12).optional(),
         receiptPrefix: z.string().max(12).optional(),
         accentColour: z.string().max(16).nullable().optional(),
+        logoFileId: z.string().uuid().nullable().optional(),
       }).strict(),
       request.body,
     );

@@ -17,6 +17,7 @@ import { useSession } from '../lib/session';
 import { RichText } from '../components/RichText';
 import { Attachments } from '../components/Attachments';
 import { ShareWith } from '../components/ShareWith';
+import { PageAttachments } from '../components/PageAttachments';
 
 type Space = {
   id: string;
@@ -253,6 +254,8 @@ function PageView({ page }: { page: Page }) {
           is stored is already safe to render. Sanitizing again here would only hide it
           if that ever stopped being true. */}
       <div className="doc-body" dangerouslySetInnerHTML={{ __html: page.body }} />
+
+      <PageAttachments pageId={page.id} canWrite={can('doc.write')} />
     {sharingPage ? (
         <ShareWith
           resourceType="doc"

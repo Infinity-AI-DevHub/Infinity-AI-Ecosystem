@@ -488,6 +488,27 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
     return files.createFolder(actor, input.name, input.parentId ?? null);
   });
 
+  app.patch('/files/folders/:id', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    const input = parse(z.object({ name: z.string().min(1).max(255) }), request.body);
+    return files.renameFolder(actor, id, input.name);
+  });
+
+  app.delete('/files/folders/:id', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    await files.deleteFolder(actor, id);
+    return reply.code(204).send();
+  });
+
+  app.put('/files/folders/order', async (request, reply) => {
+    const actor = requireActor(request);
+    const input = parse(z.object({ folderIds: z.array(z.string().uuid()).max(500) }), request.body);
+    await files.reorderFolders(actor, input.folderIds);
+    return reply.code(204).send();
+  });
+
   app.post('/files/uploads', async (request, reply) => {
     const actor = requireActor(request);
     const input = parse(

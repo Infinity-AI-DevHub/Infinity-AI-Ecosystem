@@ -12,7 +12,7 @@ import { api, ApiError } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { TaskPriority } from '../components/TaskPriority';
-import { relativeTime, titleCase } from '../lib/format';
+import { formatDate, initials, relativeTime, titleCase } from '../lib/format';
 import { PeoplePicker } from '../components/PeoplePicker';
 import { ShareWith } from '../components/ShareWith';
 
@@ -52,6 +52,18 @@ type TaskDetail = Task & {
 };
 
 const COLUMNS = ['todo', 'in_progress', 'review', 'blocked', 'done'] as const;
+
+/*
+ * The status tag's colour. Every status previously used the same "invited" yellow, so a
+ * finished task and a blocked one looked identical in the one place people check.
+ */
+const STATUS_TAG: Record<string, string> = {
+  todo: 'status-pending',
+  in_progress: 'status-invited',
+  review: 'status-invited',
+  blocked: 'status-error',
+  done: 'status-active',
+};
 
 export default function Tasks() {
   const { taskId } = useParams();
@@ -293,15 +305,15 @@ function TaskDialog({
             </header>
 
             <div className="task-detail-body">
-              <div>
+              <div className="task-detail-main">
                 {detail.data.description ? (
                   <p className="message-text">{detail.data.description}</p>
                 ) : (
-                  <p className="field-hint">No description.</p>
+                  <p className="field-hint task-detail-empty">No description yet.</p>
                 )}
 
                 {detail.data.dependencies.length > 0 ? (
-                  <section>
+                  <section className="task-block">
                     <h4>Blocked by</h4>
                     <ul className="dependency-list">
                       {detail.data.dependencies.map((dependency) => (
@@ -313,42 +325,84 @@ function TaskDialog({
                   </section>
                 ) : null}
 
-            <section>
-              <h4>Comments</h4>
-              {detail.data.comments.length === 0 ? (
-                <p className="panel-empty">No comments yet.</p>
-              ) : (
-                <ul className="comment-list">
-                  {detail.data.comments.map((entry) => (
-                    <li key={entry.id}>
-                      <strong>{entry.author_name ?? 'Unknown'}</strong>
-                      <time dateTime={entry.created_at}>{relativeTime(entry.created_at)}</time>
-                      <p>{entry.body}</p>
-                    </li>
-                  ))}
-                </ul>
-              )}
+                <section className="task-block">
+                  <h4>
+                    Comments
+                    {detail.data.comments.length > 0 ? (
+                      <span className="count-badge">{detail.data.comments.length}</span>
+                    ) : null}
+                  </h4>
 
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (comment.trim()) void addComment.mutate();
-                }}
-              >
-                <label className="visually-hidden" htmlFor="task-comment">Add a comment</label>
-                <textarea
-                  id="task-comment"
-                  rows={3}
-                  value={comment}
-                  onChange={(event) => setComment(event.target.value)}
-                  placeholder="Add a comment…"
-                />
-                <button type="submit" className="primary-button" disabled={addComment.pending}>
-                  {addComment.pending ? 'Posting…' : 'Comment'}
-                </button>
-              </form>
-            </section>
+                  {detail.data.comments.length > 0 ? (
+                    <ul className="comment-list">
+                      {detail.data.comments.map((entry) => (
+                        <li key={entry.id}>
+                          <span className="avatar avatar-sm" aria-hidden="true">
+                            {initials(entry.author_name ?? '?')}
+                          </span>
+                          <div className="comment-body">
+                            <p className="comment-meta">
+                              <strong>{entry.author_name ?? 'Unknown'}</strong>
+                              <time dateTime={entry.created_at}>{relativeTime(entry.created_at)}</time>
+                            </p>
+                            <p className="comment-text">{entry.body}</p>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
 
+                  {/* The composer, not a heading over emptiness: with no comments the
+                      only useful thing on screen is the box for writing the first one. */}
+                  <form
+                    className="comment-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (comment.trim()) void addComment.mutate();
+                    }}
+                  >
+                    <label className="visually-hidden" htmlFor="task-comment">Add a comment</label>
+                    <textarea
+                      id="task-comment"
+                      rows={3}
+                      value={comment}
+                      onChange={(event) => setComment(event.target.value)}
+                      placeholder={
+                        detail.data.comments.length === 0
+                          ? 'No comments yet — start the thread.'
+                          : 'Add a comment…'
+                      }
+                    />
+                    <div className="comment-actions">
+                      <button
+                        type="submit"
+                        className="primary-button"
+                        disabled={addComment.pending || !comment.trim()}
+                      >
+                        {addComment.pending ? 'Posting…' : 'Comment'}
+                      </button>
+                    </div>
+                  </form>
+                </section>
+
+                {/* Only when something has actually happened. A "History" heading over an
+                    empty list reads as a broken panel. */}
+                {detail.data.activity.length > 0 ? (
+                  <section className="task-block">
+                    <h4>History</h4>
+                    <ul className="activity-list">
+                      {detail.data.activity.map((entry, index) => (
+                        <li key={`${entry.created_at}-${index}`}>
+                          <span>
+                            {entry.actor_name ?? 'Someone'} changed {titleCase(entry.field)} from{' '}
+                            <em>{entry.before_value || 'empty'}</em> to <em>{entry.after_value || 'empty'}</em>
+                          </span>
+                          <time dateTime={entry.created_at}>{relativeTime(entry.created_at)}</time>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
               </div>
 
               {/* The facts rail: the answers people open a task to check, in one place
@@ -356,11 +410,17 @@ function TaskDialog({
               <dl className="task-facts">
                 <div className="task-fact">
                   <dt>Status</dt>
-                  <dd><span className="status-tag status-invited">{titleCase(detail.data.status)}</span></dd>
+                  <dd>
+                    <span className={`status-tag ${STATUS_TAG[detail.data.status] ?? 'status-pending'}`}>
+                      {titleCase(detail.data.status)}
+                    </span>
+                  </dd>
                 </div>
                 <div className="task-fact">
                   <dt>Priority</dt>
-                  <dd>{titleCase(detail.data.priority)}</dd>
+                  <dd className={`priority-value task-prio-${detail.data.priority}`}>
+                    {titleCase(detail.data.priority)}
+                  </dd>
                 </div>
                 <div className="task-fact">
                   <dt>Assigned to</dt>
@@ -377,26 +437,11 @@ function TaskDialog({
                 {detail.data.dueAt ? (
                   <div className="task-fact">
                     <dt>Due</dt>
-                    <dd>{new Date(detail.data.dueAt).toLocaleDateString()}</dd>
+                    <dd>{formatDate(detail.data.dueAt)}</dd>
                   </div>
                 ) : null}
               </dl>
             </div>
-
-            <section>
-              <h4>History</h4>
-              <ul className="activity-list">
-                {detail.data.activity.map((entry, index) => (
-                  <li key={`${entry.created_at}-${index}`}>
-                    <span>
-                      {entry.actor_name ?? 'Someone'} changed {titleCase(entry.field)} from{' '}
-                      <em>{entry.before_value || 'empty'}</em> to <em>{entry.after_value || 'empty'}</em>
-                    </span>
-                    <time dateTime={entry.created_at}>{relativeTime(entry.created_at)}</time>
-                  </li>
-                ))}
-              </ul>
-            </section>
 
             {sharing ? (
               <ShareWith

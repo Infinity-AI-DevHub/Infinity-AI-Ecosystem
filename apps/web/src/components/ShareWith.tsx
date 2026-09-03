@@ -132,21 +132,27 @@ export function ShareWith({
 
         <fieldset className="field">
           <legend>What they can do</legend>
-          <div className="checkbox-row">
-            <label>
-              <input type="radio" name="access" checked={access === 'view'}
-                     onChange={() => setAccess('view')} />
-              View only
-            </label>
-          </div>
+
+          {/* Cards rather than bare radios: the difference between these two options is
+              the whole decision being made, and it deserves a sentence each. */}
+          <label className={`choice ${access === 'view' ? 'choice-on' : ''}`}>
+            <input type="radio" name="access" checked={access === 'view'}
+                   onChange={() => setAccess('view')} />
+            <span className="choice-text">
+              <strong>View only</strong>
+              <span>They can open it and read it. Nothing they do changes anything.</span>
+            </span>
+          </label>
+
           {resourceType === 'folder' ? (
-            <div className="checkbox-row">
-              <label>
-                <input type="radio" name="access" checked={access === 'contribute'}
-                       onChange={() => setAccess('contribute')} />
-                View, upload and edit
-              </label>
-            </div>
+            <label className={`choice ${access === 'contribute' ? 'choice-on' : ''}`}>
+              <input type="radio" name="access" checked={access === 'contribute'}
+                     onChange={() => setAccess('contribute')} />
+              <span className="choice-text">
+                <strong>View, upload and edit</strong>
+                <span>They can add files to this folder and change what is already here.</span>
+              </span>
+            </label>
           ) : (
             <p className="field-hint">
               A {TYPE_LABEL[resourceType]} can only be shared to view. Letting an external

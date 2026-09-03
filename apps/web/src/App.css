@@ -537,9 +537,72 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   color: var(--fg-primary);
   cursor: pointer;
 }
-.checkbox-row input[type='checkbox'] {
-  width: 16px; height: 16px; min-height: 0; margin: 0;
-  accent-color: var(--a-600); cursor: pointer; flex-shrink: 0;
+/*
+ * Radios were missing from this rule, so they picked up the text-input sizing instead -
+ * 83x34 boxes with the label wrapping underneath, which read as two large empty circles
+ * rather than a choice. The label is made a flex row for the same reason.
+ */
+/* The logo on a rendered document, sized to match the PDF's cap. */
+.doc-logo { display: block; max-height: 46px; max-width: 190px; object-fit: contain; margin-bottom: var(--sp-3); }
+
+/* The company logo control: a preview on a chequerboard so transparency is obvious. */
+.logo-setting { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
+.logo-preview {
+  display: flex; align-items: center; justify-content: center;
+  width: 190px; min-height: 74px; padding: var(--sp-2);
+  border: 1px solid var(--border-default); border-radius: var(--r-md);
+  background-color: var(--bg-surface);
+  background-image:
+    linear-gradient(45deg, var(--bg-sunken) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--bg-sunken) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--bg-sunken) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--bg-sunken) 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  text-align: center;
+}
+.logo-preview img { max-width: 100%; max-height: 60px; object-fit: contain; }
+.logo-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+.logo-upload { cursor: pointer; }
+
+/*
+ * A choice between two things that differ in consequence, not just in label. Each option
+ * carries its own sentence, and the selected one is obvious without reading the control.
+ */
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  margin-top: var(--sp-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.choice:hover { border-color: var(--border-strong); }
+.choice input[type='radio'] {
+  width: 16px; height: 16px; min-height: 0; margin: 2px 0 0; padding: 0;
+  flex: 0 0 auto; accent-color: var(--a-600); cursor: pointer;
+}
+.choice-on { border-color: var(--border-accent); background: var(--bg-accent-subtle, var(--bg-sunken)); }
+.choice-text { display: grid; gap: 2px; }
+.choice-text strong { font-size: var(--text-md); font-weight: var(--weight-medium); }
+.choice-text span { font-size: var(--text-sm); color: var(--fg-secondary); }
+
+.checkbox-row label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+  min-height: 0;
+}
+.checkbox-row input[type='checkbox'],
+.checkbox-row input[type='radio'] {
+  width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0;
+  flex: 0 0 auto;
+  accent-color: var(--a-600); cursor: pointer;
 }
 
 .attendee-picker {
@@ -1164,7 +1227,61 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 
 /* A folder row is the folder itself plus the controls that act on it, so the name takes
    the space and the share control keeps its size at the end. */
-.folder-row { display: flex; align-items: center; gap: var(--sp-1); }
+.folder-row { display: flex; align-items: center; gap: var(--sp-1); border-radius: var(--r-md); }
+.folder-row:hover { background: var(--bg-sunken); }
+.folder-dragging { opacity: 0.45; }
+.folder-grip { display: flex; color: var(--fg-muted); cursor: grab; padding: 0 2px; flex: 0 0 auto; }
+.folder-grip:active { cursor: grabbing; }
+
+/* Attachments on a document page. */
+.attachments-panel { margin-top: var(--sp-5); }
+.attachment-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.attachment-row {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-2); border-radius: var(--r-md);
+}
+.attachment-row:hover { background: var(--bg-sunken); }
+.attachment-name { flex: 1 1 auto; min-width: 0; font-weight: var(--weight-medium); }
+.attachment-row .table-actions { flex: 0 0 auto; }
+
+/* File preview: a large sheet, since the point is to see the thing properly. */
+.dialog-preview { max-width: min(1000px, 92vw); width: 100%; }
+.preview-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--sp-4); margin-bottom: var(--sp-3);
+}
+.preview-title { display: grid; gap: 2px; min-width: 0; }
+.preview-title strong { font-size: var(--text-lg); word-break: break-word; }
+.preview-body {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 320px; max-height: 68vh; overflow: auto;
+  border: 1px solid var(--border-default); border-radius: var(--r-md);
+  background: var(--bg-sunken); padding: var(--sp-3);
+}
+.preview-image { max-width: 100%; max-height: 62vh; object-fit: contain; }
+.preview-fallback {
+  display: grid; justify-items: center; gap: var(--sp-3);
+  padding: var(--sp-6); text-align: center; color: var(--fg-secondary);
+}
+.preview-fallback p { margin: 0; }
+.preview-media { width: 100%; max-height: 62vh; }
+.preview-text {
+  align-self: stretch; width: 100%; margin: 0; padding: var(--sp-3);
+  background: var(--bg-surface); border-radius: var(--r-sm);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-sm); line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+/* A name that behaves as a control without looking like a button. */
+.link-button {
+  background: none; border: 0; padding: 0; font: inherit; color: inherit;
+  text-align: left; cursor: pointer; border-radius: var(--r-sm);
+}
+.link-button:hover { color: var(--a-600); text-decoration: underline; }
+
+/* A dialog that asks one short question does not need a full-width sheet. */
+.dialog-compact { max-width: 420px; }
 .folder-row .folder-button { flex: 1 1 auto; min-width: 0; text-align: left; }
 .folder-row .icon-button { flex: 0 0 auto; }
 .folder-button {
@@ -2556,6 +2673,49 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* Two columns: the work on the left, its facts on the right. */
 .task-detail-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: var(--sp-6); }
 @media (max-width: 860px) { .task-detail-body { grid-template-columns: 1fr; } }
+/* ---- task detail dialog -------------------------------------------------
+   Two columns: what the task says, and the facts about it. Sections are spaced
+   deliberately rather than left to collapse into one another. */
+.task-detail-main { display: grid; gap: var(--sp-5); align-content: start; min-width: 0; }
+.task-detail-empty { margin: 0; }
+.task-block { display: grid; gap: var(--sp-3); }
+.task-block h4 {
+  display: flex; align-items: center; gap: var(--sp-2);
+  margin: 0; font-size: var(--text-sm); color: var(--fg-secondary);
+}
+.count-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 6px;
+  border-radius: 999px; background: var(--bg-sunken);
+  font-size: var(--text-2xs); color: var(--fg-secondary);
+}
+
+/* A comment is a person saying something, so it leads with who. */
+.comment-list li {
+  display: flex; gap: var(--sp-3); align-items: flex-start;
+  padding: 0; border-left: 0;
+}
+.comment-body { min-width: 0; }
+.comment-meta { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; }
+.comment-text { margin: 2px 0 0; font-size: var(--text-sm); white-space: pre-wrap; }
+.avatar-sm { width: 26px; height: 26px; font-size: var(--text-2xs); flex: 0 0 auto; }
+
+.comment-form { display: grid; gap: var(--sp-2); }
+.comment-form textarea { width: 100%; }
+.comment-actions { display: flex; justify-content: flex-end; }
+
+/* Priority reads at a glance, without a legend.
+   Namespaced: `.priority-medium` and friends already exist as filled dots elsewhere, and
+   reusing those names put a solid colour block behind the word. */
+.priority-value { display: flex; align-items: center; gap: var(--sp-2); }
+.priority-value::before {
+  content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--fg-muted);
+}
+.task-prio-urgent::before { background: var(--dan-600); }
+.task-prio-high::before { background: var(--warn-600); }
+.task-prio-medium::before { background: var(--info-600); }
+.task-prio-low::before { background: var(--n-400); }
+
 .task-facts {
   display: grid; gap: var(--sp-3); align-content: start;
   padding: var(--sp-4); background: var(--bg-sunken); border-radius: var(--r-md);
