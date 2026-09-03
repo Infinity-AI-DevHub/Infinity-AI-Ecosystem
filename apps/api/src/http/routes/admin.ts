@@ -9,6 +9,7 @@ import * as admin from '../../domains/admin.js';
 import { config } from '../../core/config.js';
 import { storage, verifyLocalObjectSignature } from '../../adapters/storage.js';
 import { badRequest, forbidden, notFound } from '../../core/errors.js';
+import { one } from '../../core/db.js';
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.get('/admin/company', async (request) => admin.companySettings(requireActor(request)));
@@ -157,13 +158,33 @@ export async function objectRoutes(app: FastifyInstance): Promise<void> {
     }
     if (!(await storage.exists(query.key))) throw notFound('Object not found');
 
+    /*
+     * Photographs, logos and signatures are shown in the application, so a handful of
+     * image types are served with their real content type and `inline`. Everything else
+     * keeps `application/octet-stream; attachment`, which is what stops a stored HTML
+     * payload executing on this origin.
+     *
+     * The allow-list is deliberately short and deliberately excludes SVG: an SVG can
+     * carry script, and serving one inline here would hand it this origin.
+     *
+     * The type is read from the stored version rather than taken from the query, so it
+     * cannot be chosen by whoever holds the link.
+     */
+    const INLINE_IMAGE = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+    const stored = await one<{ mime_type: string | null }>(
+      'SELECT mime_type FROM file_versions WHERE object_key = $1 LIMIT 1',
+      [query.key],
+    );
+    const mime = stored?.mime_type ?? null;
+    const inlineable = mime !== null && INLINE_IMAGE.has(mime);
+    const safeName = (query.filename ?? 'download').replace(/["\\]/g, '');
+
     reply
-      .header('content-type', 'application/octet-stream')
+      .header('content-type', inlineable ? mime : 'application/octet-stream')
       .header('x-content-type-options', 'nosniff')
-      // Downloads are never rendered inline, which neutralises stored-HTML payloads.
       .header(
         'content-disposition',
-        `attachment; filename="${(query.filename ?? 'download').replace(/["\\]/g, '')}"`,
+        `${inlineable ? 'inline' : 'attachment'}; filename="${safeName}"`,
       )
       .header('cache-control', 'private, no-store');
     return reply.send(await storage.get(query.key));

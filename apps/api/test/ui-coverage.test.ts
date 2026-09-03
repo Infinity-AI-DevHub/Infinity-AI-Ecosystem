@@ -87,6 +87,30 @@ describe('announcement audience', () => {
   });
 });
 
+/**
+ * Uploaded files must not render inline on the API's origin.
+ *
+ * The object route serves everything as `application/octet-stream; attachment` for a
+ * reason: an uploaded HTML file rendered inline would execute on this origin. A short
+ * allow-list of image types is served inline so logos and signatures display in the app,
+ * and it must stay short - SVG in particular can carry script.
+ */
+describe('inline object serving', () => {
+  it('only ever serves a fixed set of image types inline', () => {
+    const src = readFileSync('src/http/routes/admin.ts', 'utf8');
+    const listed = /const INLINE_IMAGE = new Set\(\[([^\]]*)\]\)/.exec(src);
+    assert.ok(listed, 'INLINE_IMAGE allow-list not found - update this test');
+
+    const types = [...listed[1]!.matchAll(/'([^']+)'/g)].map((m) => m[1]!);
+    assert.deepEqual(
+      types.sort(),
+      ['image/gif', 'image/jpeg', 'image/png', 'image/webp'],
+      'the inline allow-list changed; anything scriptable here executes on the API origin',
+    );
+    assert.ok(!src.includes("'image/svg+xml'"), 'SVG must never be served inline');
+  });
+});
+
 describe('client paging', () => {
   it('never asks for more than the API will return', () => {
     const cap = Number(
