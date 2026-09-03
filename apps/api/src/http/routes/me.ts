@@ -90,6 +90,25 @@ export async function meRoutes(app: FastifyInstance): Promise<void> {
     return { updated: await notifications.markAllRead(actor.userId) };
   });
 
+  /**
+   * Clearing, which is a different act from reading.
+   *
+   * Reading says "I have seen this"; clearing says "I am done with it". The panel only
+   * had the first, so it filled up with things people had already dealt with and stayed
+   * that way until retention caught up weeks later.
+   */
+  app.delete('/me/notifications/:id', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
+    await notifications.dismiss(actor.userId, id);
+    return reply.code(204).send();
+  });
+
+  app.delete('/me/notifications', async (request) => {
+    const actor = requireActor(request);
+    return { cleared: await notifications.dismissAll(actor.userId) };
+  });
+
   app.patch('/me', async (request) => {
     const actor = requireActor(request);
     const input = parse(

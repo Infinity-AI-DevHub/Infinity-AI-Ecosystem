@@ -14,6 +14,7 @@ import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../componen
 import { TaskPriority } from '../components/TaskPriority';
 import { formatDate, initials, relativeTime, titleCase } from '../lib/format';
 import { PeoplePicker } from '../components/PeoplePicker';
+import { useSession } from '../lib/session';
 import { ShareWith } from '../components/ShareWith';
 
 type Project = {
@@ -480,6 +481,8 @@ function CreateTaskDialog({
   const [priority, setPriority] = useState('medium');
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [dueAt, setDueAt] = useState('');
+  const { can } = useSession();
+  const canAssign = can('task.assign');
 
   const people = useQuery<{ items: { id: string; displayName: string }[] }>(
     '/users?limit=100',
@@ -562,14 +565,20 @@ function CreateTaskDialog({
 
           {/* The same picker the edit dialog uses. A single select here meant a task with
               three people on it had to be created, saved, then reopened and edited - and
-              the due date could not be set at all until afterwards. */}
-          <PeoplePicker
-            label="Assign to"
-            people={people.data?.items ?? []}
-            selected={assigneeIds}
-            onChange={setAssigneeIds}
-            emptyHint="Nobody yet — it will show on the board as unassigned."
-          />
+              the due date could not be set at all until afterwards.
+
+              Hidden without `task.assign`: deciding who does a piece of work is a
+              separate permission from writing it down, and the server refuses the
+              assignment either way. */}
+          {canAssign ? (
+            <PeoplePicker
+              label="Assign to"
+              people={people.data?.items ?? []}
+              selected={assigneeIds}
+              onChange={setAssigneeIds}
+              emptyHint="Nobody yet — it will show on the board as unassigned."
+            />
+          ) : null}
           <div className="dialog-actions">
             <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
             <button type="submit" className="primary-button" disabled={create.pending}>
@@ -597,6 +606,8 @@ function CreateProjectDialog({
   const [key, setKey] = useState('');
   const [description, setDescription] = useState('');
   const [memberIds, setMemberIds] = useState<string[]>([]);
+  const { can } = useSession();
+  const canChooseMembers = can('project.manage');
 
   const people = useQuery<{ items: { id: string; displayName: string }[] }>(
     '/users?limit=100&status=active',
@@ -682,6 +693,13 @@ function CreateProjectDialog({
             />
           </div>
 
+          {/*
+            * Membership is who can see the project, and choosing that is a separate
+            * permission from starting one. Anyone without it is not shown the picker:
+            * the server ignores members they name, so offering the control would be
+            * offering something that silently does nothing.
+            */}
+          {canChooseMembers ? (
           <fieldset className="field">
             <legend>Members</legend>
             <p className="field-hint">
@@ -709,6 +727,11 @@ function CreateProjectDialog({
               ))}
             </div>
           </fieldset>
+          ) : (
+            <p className="field-hint">
+              You will be the only member. Ask an administrator to add anyone else.
+            </p>
+          )}
 
           <div className="dialog-actions">
             <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>

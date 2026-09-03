@@ -26,7 +26,7 @@ import ResetPassword from './routes/ResetPassword';
 import './App.css';
 
 // Modules load on demand so the initial sign-in payload stays small.
-const Command = lazy(() => import('./routes/Command'));
+const Home = lazy(() => import('./routes/Home'));
 const Meetings = lazy(() => import('./routes/Meetings'));
 const Chat = lazy(() => import('./routes/Chat'));
 const Tasks = lazy(() => import('./routes/Tasks'));
@@ -71,7 +71,7 @@ function AppRoutes() {
               <Suspense fallback={<Loading label="Loading module" rows={5} />}>
                 <Routes>
                   <Route path="/" element={<Navigate to="/command" replace />} />
-                  <Route path="/command" element={<Command />} />
+                  <Route path="/command" element={<Home />} />
                   <Route path="/meetings" element={<Meetings />} />
                   <Route path="/meetings/:eventId" element={<Meetings />} />
                   <Route path="/chat" element={<Chat />} />

@@ -5,7 +5,7 @@
  * Everything else is the record it produces.
  */
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Clock, Play, Square } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Play, Square } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { invalidate, useQuery } from '../lib/query';
 import { AsyncSection, Empty } from '../components/States';
@@ -14,6 +14,7 @@ import { useNotify } from '../lib/notify';
 import { formatDateTime } from '../lib/format';
 import { useAttendance, formatElapsed, formatMinutes, type AttendanceDay } from '../lib/attendance';
 import { FilePreview, type PreviewTarget } from '../components/FilePreview';
+import { LiveClock } from '../components/LiveClock';
 import { EvidenceUpload, EvidenceList, type AttachedFile } from '../components/EvidenceUpload';
 
 type Session = {
@@ -558,28 +559,12 @@ function ReviewDialog({
 
 /** The live clock for the dashboard. */
 export function DateTimeCard() {
-  const [now, setNow] = useState(() => new Date());
   const { open, elapsedSeconds } = useAttendance();
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
   return (
-    <article className="panel datetime-card">
-      <Clock size={16} aria-hidden="true" />
-      <strong className="datetime-time">
-        {now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-      </strong>
-      <span className="datetime-date">
-        {now.toLocaleDateString(undefined, {
-          weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-        })}
-      </span>
+    <LiveClock>
       <span className="field-hint">
         {open ? `Clocked in · ${formatElapsed(elapsedSeconds)}` : 'Not clocked in'}
       </span>
-    </article>
+    </LiveClock>
   );
 }

@@ -123,6 +123,7 @@ export async function list(userId: string, opts: { limit: number; cursor?: strin
     `SELECT id, type, title, body, link, resource_type, resource_id, read_at, created_at
        FROM notifications
       WHERE user_id = $1
+        AND dismissed_at IS NULL
         AND ($2 IS NOT TRUE OR read_at IS NULL)
         AND ($3 IS NULL OR (created_at, id) < ($3, $4))
       ORDER BY created_at DESC, id DESC
@@ -140,7 +141,8 @@ export async function list(userId: string, opts: { limit: number; cursor?: strin
 
 export async function unreadCount(userId: string): Promise<number> {
   const row = await one<{ count: number }>(
-    'SELECT count(*) AS count FROM notifications WHERE user_id = $1 AND read_at IS NULL',
+    `SELECT count(*) AS count FROM notifications
+      WHERE user_id = $1 AND read_at IS NULL AND dismissed_at IS NULL`,
     [userId],
   );
   return row?.count ?? 0;
@@ -163,4 +165,34 @@ export async function markAllRead(userId: string): Promise<number> {
     [userId],
   );
   return res.rowCount ?? 0;
+}
+
+/**
+ * Clear one notification.
+ *
+ * Dismissed, not deleted: the dedupe key is what stops a redelivered event producing a
+ * second copy, and removing the row would let a retry resurrect something the person had
+ * deliberately cleared. Retention deletes it later like any other.
+ *
+ * Marked read at the same time, so a dismissed item cannot go on contributing to the
+ * unread badge — clearing something you never opened is still dealing with it.
+ */
+export async function dismiss(userId: string, id: string): Promise<void> {
+  await pool.query(
+    `UPDATE notifications
+        SET dismissed_at = NOW(3), read_at = COALESCE(read_at, NOW(3))
+      WHERE id = $1 AND user_id = $2 AND dismissed_at IS NULL`,
+    [id, userId],
+  );
+}
+
+/** Clear everything currently in the panel. Returns how many were cleared. */
+export async function dismissAll(userId: string): Promise<number> {
+  const res = await pool.query(
+    `UPDATE notifications
+        SET dismissed_at = NOW(3), read_at = COALESCE(read_at, NOW(3))
+      WHERE user_id = $1 AND dismissed_at IS NULL`,
+    [userId],
+  );
+  return res.rowCount;
 }

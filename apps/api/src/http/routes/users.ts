@@ -21,6 +21,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
         status: z.enum(['invited', 'active', 'suspended', 'offboarded']).optional(),
         departmentId: z.string().uuid().optional(),
         q: z.string().max(120).optional(),
+        /** The People page asks for these; nothing else should. */
+        includeInactive: z.coerce.boolean().optional(),
       }),
       request.query,
     );
@@ -30,6 +32,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       query: query.q,
       limit: query.limit,
       cursor: query.cursor,
+      includeInactive: query.includeInactive,
     });
     return { items: result.items.map(identity.publicUser), nextCursor: result.nextCursor };
   });

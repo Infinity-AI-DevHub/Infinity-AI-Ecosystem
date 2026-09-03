@@ -15,7 +15,7 @@ import {
   transaction,
 } from '../core/db.js';
 import { badRequest, conflict, notFound, preconditionFailed, unprocessable } from '../core/errors.js';
-import { authorize, type Actor } from '../core/authz.js';
+import { authorize, decide, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
 import { emit } from '../core/outbox.js';
 import { publish } from '../core/realtime.js';
@@ -201,7 +201,23 @@ export async function createProject(
       project.id,
       actor.userId,
     ]);
-    for (const userId of (input.memberIds ?? []).filter((id) => id !== actor.userId)) {
+    /*
+     * Who else is on it is an audience decision, and it is the same decision whether it
+     * is made at creation or afterwards — so it needs the same capability. Without this,
+     * an employee who could not add a member to a project could still name one while
+     * creating it, which is the same thing a minute earlier.
+     */
+    const mayChooseMembers = (
+      await decide({
+        actor,
+        capability: 'project.manage',
+        resourceType: 'project',
+        resourceId: project.id,
+        membership: true,
+      })
+    ).allowed;
+    const invited = mayChooseMembers ? (input.memberIds ?? []) : [];
+    for (const userId of invited.filter((id) => id !== actor.userId)) {
       await tx.query(
         `INSERT IGNORE INTO project_members (project_id, user_id) SELECT $1, id FROM users
           WHERE id = $2 AND company_id = $3 AND status = 'active'`,
@@ -463,7 +479,11 @@ export async function listTasks(
        LEFT JOIN users u ON u.id = t.assignee_id
       WHERE t.company_id = $1
         AND (
-          pm.user_id IS NOT NULL
+          -- Administrators see every task in the company. The authorization layer
+          -- already grants them an override on an individual task; without the same
+          -- branch here, a project started by an employee never appeared in their list.
+          $7
+          OR pm.user_id IS NOT NULL
           OR EXISTS (
             SELECT 1 FROM resource_grants g
              WHERE g.company_id = t.company_id
@@ -485,6 +505,7 @@ export async function listTasks(
       filters.assigneeId ?? null,
       filters.status ?? null,
       filters.limit,
+      actor.accessLevel === 'admin' || actor.accessLevel === 'super_admin',
     ],
   ).then((rows) => rows.map(publicTask));
 }
@@ -512,8 +533,27 @@ export async function updateTask(
     actor.companyId,
   ]);
   if (!existing) throw notFound('Task not found');
+  /*
+   * Which capability this needs depends on what is being changed.
+   *
+   * Moving a card across the board is a different act from rewriting what the card says,
+   * and an employee does the first without being trusted with the second. Assignment was
+   * already separated this way; progress is the same idea one step further.
+   *
+   * Decided by what the caller actually sent, not by what they claim to be doing: a
+   * request that changes the title needs `task.update` even if it also changes status.
+   */
   const changingAssignees = input.assigneeId !== undefined || input.assigneeIds !== undefined;
-  await requireProject(actor, existing.project_id, changingAssignees ? 'task.assign' : 'task.update');
+  const PROGRESS_FIELDS = new Set(['status', 'position']);
+  const changingDefinition = Object.keys(input).some(
+    (field) => !PROGRESS_FIELDS.has(field) && input[field as keyof typeof input] !== undefined,
+  );
+  const capability = changingAssignees
+    ? 'task.assign'
+    : changingDefinition
+      ? 'task.update'
+      : 'task.progress';
+  await requireProject(actor, existing.project_id, capability);
   if (expectedVersion !== null && existing.version !== expectedVersion) throw preconditionFailed();
   if (input.assigneeId) await assertCompanyMember(actor.companyId, input.assigneeId);
 
@@ -713,7 +753,13 @@ export async function comment(actor: Actor, taskId: string, body: string) {
     actor.companyId,
   ]);
   if (!task) throw notFound('Task not found');
-  await requireProject(actor, task.project_id, 'task.update');
+  /*
+   * Commenting is participation, not editing. It sits with `task.progress` rather than
+   * `task.update`, because saying what you did is the other half of moving the card —
+   * requiring the editing capability would have left employees able to change a task's
+   * status and unable to explain it.
+   */
+  await requireProject(actor, task.project_id, 'task.progress');
   const commentId = newId();
   await pool.query(
     `INSERT INTO task_comments (id, company_id, task_id, author_id, body) VALUES ($1,$2,$3,$4,$5)`,
