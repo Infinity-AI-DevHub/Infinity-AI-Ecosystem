@@ -15,6 +15,7 @@ import { formatBytes, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 import { uploadWorkspaceFile } from '../lib/uploads';
 import { ShareWith } from '../components/ShareWith';
+import { FilePreview, type PreviewTarget } from '../components/FilePreview';
 import { useConfirm, useTextPrompt } from '../components/Prompt';
 import { useNotify } from '../lib/notify';
 
@@ -51,6 +52,7 @@ export default function Files() {
   // waiting for the server to answer.
   const [dragId, setDragId] = useState<string | null>(null);
   const [order, setOrder] = useState<string[] | null>(null);
+  const [previewing, setPreviewing] = useState<PreviewTarget | null>(null);
 
   const folders = useQuery<{ items: Folder[] }>('/files/folders', (signal) =>
     api.get('/files/folders', signal),
@@ -327,7 +329,20 @@ export default function Files() {
                       {data.items.map((file) => (
                         <tr key={file.id}>
                           <th scope="row">
-                            {file.name}
+                            {/* The name is the obvious thing to click to see a file, so
+                                it opens the preview rather than doing nothing. */}
+                            <button
+                              type="button"
+                              className="link-button"
+                              onClick={() => setPreviewing({
+                                fileId: file.id,
+                                name: file.name,
+                                mimeType: file.mimeType ?? null,
+                                sizeBytes: file.sizeBytes,
+                              })}
+                            >
+                              {file.name}
+                            </button>
                             {file.classification === 'restricted' ? (
                               <span className="thread-flag thread-flag-warn">Restricted</span>
                             ) : null}
@@ -444,6 +459,10 @@ export default function Files() {
           resourceName={sharingFolder.name}
           onClose={() => setSharingFolder(null)}
         />
+      ) : null}
+
+      {previewing ? (
+        <FilePreview target={previewing} onClose={() => setPreviewing(null)} />
       ) : null}
 
       {promptElement}

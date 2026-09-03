@@ -1233,6 +1233,53 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 .folder-grip { display: flex; color: var(--fg-muted); cursor: grab; padding: 0 2px; flex: 0 0 auto; }
 .folder-grip:active { cursor: grabbing; }
 
+/* Attachments on a document page. */
+.attachments-panel { margin-top: var(--sp-5); }
+.attachment-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.attachment-row {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-2); border-radius: var(--r-md);
+}
+.attachment-row:hover { background: var(--bg-sunken); }
+.attachment-name { flex: 1 1 auto; min-width: 0; font-weight: var(--weight-medium); }
+.attachment-row .table-actions { flex: 0 0 auto; }
+
+/* File preview: a large sheet, since the point is to see the thing properly. */
+.dialog-preview { max-width: min(1000px, 92vw); width: 100%; }
+.preview-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--sp-4); margin-bottom: var(--sp-3);
+}
+.preview-title { display: grid; gap: 2px; min-width: 0; }
+.preview-title strong { font-size: var(--text-lg); word-break: break-word; }
+.preview-body {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 320px; max-height: 68vh; overflow: auto;
+  border: 1px solid var(--border-default); border-radius: var(--r-md);
+  background: var(--bg-sunken); padding: var(--sp-3);
+}
+.preview-image { max-width: 100%; max-height: 62vh; object-fit: contain; }
+.preview-fallback {
+  display: grid; justify-items: center; gap: var(--sp-3);
+  padding: var(--sp-6); text-align: center; color: var(--fg-secondary);
+}
+.preview-fallback p { margin: 0; }
+.preview-media { width: 100%; max-height: 62vh; }
+.preview-text {
+  align-self: stretch; width: 100%; margin: 0; padding: var(--sp-3);
+  background: var(--bg-surface); border-radius: var(--r-sm);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-sm); line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+/* A name that behaves as a control without looking like a button. */
+.link-button {
+  background: none; border: 0; padding: 0; font: inherit; color: inherit;
+  text-align: left; cursor: pointer; border-radius: var(--r-sm);
+}
+.link-button:hover { color: var(--a-600); text-decoration: underline; }
+
 /* A dialog that asks one short question does not need a full-width sheet. */
 .dialog-compact { max-width: 420px; }
 .folder-row .folder-button { flex: 1 1 auto; min-width: 0; text-align: left; }
