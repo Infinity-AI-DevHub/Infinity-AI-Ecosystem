@@ -15,7 +15,7 @@ const PORTAL_MESSAGE =
   'This is the staff workspace. Clients should use the portal at app.iinfinityai.com/portal.';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { KeyRound } from 'lucide-react';
-import { api, ApiError, NetworkError } from '../lib/api';
+import { api, ApiError, NetworkError, rememberCsrfToken } from '../lib/api';
 import { useSession } from '../lib/session';
 import { isDesktop } from '../lib/desktop';
 import { setGrant, type Grant } from '../lib/tokens';
@@ -72,10 +72,11 @@ export default function SignIn() {
         });
         await setGrant(grant);
       } else {
-        await api.post<{ status: 'authenticated'; csrfToken: string }>('/auth/login', {
-          email,
-          password,
-        });
+        const grant = await api.post<{ status: 'authenticated'; csrfToken: string }>(
+          '/auth/login',
+          { email, password },
+        );
+        rememberCsrfToken(grant.csrfToken);
       }
       // The password is discarded as soon as it is no longer needed.
       setPassword('');

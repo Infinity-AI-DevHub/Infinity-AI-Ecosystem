@@ -163,6 +163,24 @@ export async function assertCsrf(request: FastifyRequest): Promise<void> {
   }
 }
 
+/**
+ * The CSRF token belonging to this request's session, if it has one.
+ *
+ * Exists because the double-submit pair assumes the page and the API share a cookie
+ * scope, and they do not when the client is served from a different host than the API.
+ * A client that cannot read the cookie asks for the value instead; everything else about
+ * the scheme is unchanged, including that the header must match on every write.
+ */
+export async function csrfTokenFor(request: FastifyRequest): Promise<string | null> {
+  const sessionCookie = request.cookies[config.security.sessionCookie];
+  if (!sessionCookie) return null;
+  const session = await one<{ csrf_secret: string }>(
+    'SELECT csrf_secret FROM sessions WHERE token_hash = $1 AND revoked_at IS NULL',
+    [hashToken(sessionCookie)],
+  );
+  return session?.csrf_secret ?? null;
+}
+
 export function setSessionCookie(reply: FastifyReply, token: string, csrfToken: string): void {
   reply.setCookie(config.security.sessionCookie, token, {
     httpOnly: true,
