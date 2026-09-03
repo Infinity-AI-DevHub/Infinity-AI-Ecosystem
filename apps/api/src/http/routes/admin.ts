@@ -186,6 +186,17 @@ export async function objectRoutes(app: FastifyInstance): Promise<void> {
         'content-disposition',
         `${inlineable ? 'inline' : 'attachment'}; filename="${safeName}"`,
       )
+      /*
+       * Helmet sets `cross-origin-resource-policy: same-site` on every response, which
+       * is right for the API's JSON but wrong here: the desktop app's origin is `app://-`
+       * and the API is an https host, so the browser refused to embed these and every
+       * logo and signature rendered as a broken image. It did not show up while objects
+       * came from R2, which served them from its own origin with no such header.
+       *
+       * Safe to relax for this route specifically: access is proven by the signature in
+       * the URL, not by the requester's origin, and the link is short-lived.
+       */
+      .header('cross-origin-resource-policy', 'cross-origin')
       .header('cache-control', 'private, no-store');
     return reply.send(await storage.get(query.key));
   });
