@@ -546,7 +546,15 @@ function QuotationDetail({
                 onClose={() => setSigning(false)}
                 onSigned={() => { setSigning(false); detail.reload(); onChanged(); }}
               >
-                <QuotationDocument quotation={quotation} profile={profile.data} />
+                <QuotationDocument
+                  quotation={quotation}
+                  profile={profile.data}
+                  signatures={(state?.signatures ?? []).map((sig: any) => ({
+                    role: sig.role, signer_name: sig.signer_name,
+                    signed_at: sig.signed_at, valid: sig.valid, imageUrl: sig.imageUrl,
+                  }))}
+                  requiredRoles={state?.required}
+                />
               </SignDocumentDialog>
             ) : null}
 

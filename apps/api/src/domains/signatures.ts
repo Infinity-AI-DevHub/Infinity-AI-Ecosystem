@@ -17,7 +17,7 @@
 import { createHash } from 'node:crypto';
 import { many, newId, one, pool, type Queryable } from '../core/db.js';
 import { badRequest, conflict, forbidden, notFound } from '../core/errors.js';
-import { authorize, type Actor } from '../core/authz.js';
+import { authorize, capabilitiesForRole, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
 import { emit } from '../core/outbox.js';
 import { downloadUrl } from './files.js';
@@ -364,12 +364,26 @@ export async function requestCountersignature(
 
   const document = await loadDocument(actor, input.documentType, input.documentId);
 
-  const signer = await one<{ id: string; display_name: string; email_display: string }>(
-    `SELECT id, display_name, email_display FROM users
+  const signer = await one<{
+    id: string; display_name: string; email_display: string; access_level: string;
+  }>(
+    `SELECT id, display_name, email_display, access_level FROM users
       WHERE id = $1 AND company_id = $2 AND status = 'active'`,
     [input.signerUserId, actor.companyId],
   );
   if (!signer) throw notFound('That person could not be found');
+
+  /*
+   * They have to be able to sign it.
+   *
+   * Signing is limited to administrators, and nothing here checked that - so a request
+   * could be sent to somebody who would be refused the moment they opened it, after
+   * being notified and emailed about a document they cannot action.
+   */
+  const signerCapabilities = await capabilitiesForRole(signer.access_level);
+  if (!signerCapabilities.has('document.sign')) {
+    throw badRequest(`${signer.display_name} is not permitted to sign documents`);
+  }
 
   const existing = await many<{ role: string; signer_user_id: string | null }>(
     `SELECT role, signer_user_id FROM document_signatures
