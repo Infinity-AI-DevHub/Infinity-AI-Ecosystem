@@ -529,6 +529,21 @@ function InvoiceDetail({ invoiceId, onClose }: { invoiceId: string; onClose: () 
                   </button>
                 ) : null}
 
+                {/* Asking a colleague for the second internal signature. The dialog was
+                    mounted below but nothing ever opened it, so the request could not be
+                    made from an invoice at all. Offered only once you have signed
+                    yourself: asking before you sign inverts the point of a
+                    countersignature. */}
+                {can('document.sign')
+                  && (signatures?.signatures?.length ?? 0) === 1
+                  && !signatures?.signatures?.some((sig) => sig.role === 'internal_2')
+                  && invoice.status !== 'void' ? (
+                  <button type="button" className="ghost-button"
+                          onClick={() => setRequesting(true)}>
+                    Request countersignature
+                  </button>
+                ) : null}
+
                 {invoice.status === 'draft' && can('invoice.manage') && !clientNeedsBillingEmail ? (
                   <button type="button" className="primary-button" disabled={busy}
                           onClick={() => act(() => api.post(`/invoices/${invoiceId}/submit`, {},
@@ -1070,6 +1085,11 @@ function SignInvoice({
   const profile = useQuery<BillingProfile>('/billing/settings', (signal) =>
     api.get('/billing/settings', signal),
   );
+  // Signatures already on the document, so the slots that are taken read as taken while
+  // you choose where to put yours.
+  const state = useQuery<SignatureState>(`/signatures/invoice/${invoice.id}`, (signal) =>
+    api.get(`/signatures/invoice/${invoice.id}`, signal),
+  );
   if (!profile.data) return null;
   return (
     <SignDocumentDialog
@@ -1080,7 +1100,12 @@ function SignInvoice({
       onClose={onClose}
       onSigned={onSigned}
     >
-      <InvoiceDocument invoice={invoice} profile={profile.data} />
+      <InvoiceDocument
+        invoice={invoice}
+        profile={profile.data}
+        signatures={state.data?.signatures}
+        requiredRoles={state.data?.required}
+      />
     </SignDocumentDialog>
   );
 }
@@ -1175,6 +1200,8 @@ function ReceiptPanel({
               profile={profile.data!}
               variant="receipt"
               payment={payment}
+              signatures={state.data?.signatures}
+              requiredRoles={state.data?.required}
             />
           </SignDocumentDialog>
         ) : null}

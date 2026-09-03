@@ -27,6 +27,7 @@ export function SignaturePlacer({
   onChange: (next: Placement) => void;
   label: string;
 }) {
+  const scroller = useRef<HTMLDivElement>(null);
   const surface = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -34,8 +35,23 @@ export function SignaturePlacer({
 
   const moveTo = useCallback(
     (clientX: number, clientY: number) => {
-      const box = surface.current?.getBoundingClientRect();
-      if (!box) return;
+      const el = surface.current;
+      if (!el) return;
+      /*
+       * Measured against the document element, which is the same box the signature is
+       * positioned inside. That matters: `top: 40%` on an absolutely positioned child
+       * resolves against its containing block's height, so the fraction stored here and
+       * the fraction CSS draws have to be taken from the same element.
+       *
+       * They were not. The fraction was computed against the scroll height of the
+       * scrolling frame while CSS applied it to that frame's much shorter visible box,
+       * which put a hard ceiling on how far down the page the signature could go -
+       * stopping it short of the signature lines it exists to land on.
+       *
+       * This element does not scroll, so getBoundingClientRect already accounts for the
+       * scroll position and no offset needs adding.
+       */
+      const box = el.getBoundingClientRect();
       onChange({
         ...value,
         // The pointer holds the centre of the signature, which is where people expect
@@ -47,9 +63,35 @@ export function SignaturePlacer({
     [onChange, value],
   );
 
+  // Open with the signature in view. It defaults to the signature line near the foot of
+  // the document, which on a full page is well below the fold.
+  useEffect(() => {
+    const frame = scroller.current;
+    const content = surface.current;
+    if (!frame || !content) return;
+    const target = value.posY * content.offsetHeight - frame.clientHeight / 2;
+    frame.scrollTop = Math.max(0, target);
+    // Deliberately on mount only: re-running on every move would fight the drag.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (!dragging) return;
-    const onMove = (event: PointerEvent) => moveTo(event.clientX, event.clientY);
+    /*
+     * Drag near the top or bottom edge and the frame follows. The document is taller
+     * than its frame, so without this a drag simply stops at the edge and the signature
+     * lines further down stay out of reach while the pointer is held.
+     */
+    const onMove = (event: PointerEvent) => {
+      const frame = scroller.current;
+      if (frame) {
+        const box = frame.getBoundingClientRect();
+        const EDGE = 40;
+        if (event.clientY > box.bottom - EDGE) frame.scrollTop += 12;
+        else if (event.clientY < box.top + EDGE) frame.scrollTop -= 12;
+      }
+      moveTo(event.clientX, event.clientY);
+    };
     const onUp = () => setDragging(false);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -74,7 +116,19 @@ export function SignaturePlacer({
 
   return (
     <div className="placer">
-      <div className="placer-surface" ref={surface}>
+      {/* The frame scrolls; the surface inside it is the document at its natural height
+          and is what the signature is positioned against. Clicking the document places
+          the signature there, because dragging to a line further down the page means
+          dragging across a scrolling container. */}
+      <div className="placer-scroll" ref={scroller}>
+      <div
+        className="placer-surface"
+        ref={surface}
+        onPointerDown={(event) => {
+          if (event.target !== surface.current) return;
+          moveTo(event.clientX, event.clientY);
+        }}
+      >
         {children}
 
         <img
@@ -97,6 +151,7 @@ export function SignaturePlacer({
           onKeyDown={onKeyDown}
           draggable={false}
         />
+      </div>
       </div>
 
       <div className="placer-controls">

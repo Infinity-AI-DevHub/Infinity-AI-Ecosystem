@@ -680,6 +680,93 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   align-items: start;
 }
 
+/* The calendar is the thing being read, so it takes the wide column - the reverse of
+   the agenda layout, where the list is an index and the detail is the content. */
+.calendar-layout { grid-template-columns: minmax(0, 2.4fr) minmax(260px, 1fr); }
+@media (max-width: 1100px) { .calendar-layout { grid-template-columns: 1fr; } }
+
+/* ---- week calendar ------------------------------------------------------
+   Time drawn to scale, so a gap looks like a gap and a clash looks like a clash. */
+.calendar { display: grid; gap: var(--sp-3); min-width: 0; }
+.calendar-bar { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.calendar-nav { display: flex; gap: var(--sp-1); }
+.calendar-range { font-size: var(--text-md); }
+
+.calendar-head, .calendar-grid {
+  display: grid;
+  grid-template-columns: 56px repeat(7, minmax(0, 1fr));
+}
+.calendar-head { border-bottom: 1px solid var(--border-default); }
+.calendar-day-head {
+  display: grid; justify-items: center; gap: 2px; padding: var(--sp-2) 0;
+}
+.calendar-dow {
+  font-size: var(--text-2xs); text-transform: uppercase;
+  letter-spacing: var(--tracking-caps); color: var(--fg-tertiary);
+}
+.calendar-dom { font-size: var(--text-lg); font-weight: var(--weight-medium); }
+.calendar-day-head.is-today .calendar-dom {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: var(--a-600); color: #fff;
+}
+
+.calendar-scroll { max-height: 62vh; overflow-y: auto; overscroll-behavior: contain; }
+.calendar-gutter { display: grid; }
+.calendar-hour-label {
+  height: var(--hour-height); padding-right: var(--sp-2);
+  text-align: right; font-size: var(--text-2xs); color: var(--fg-tertiary);
+  transform: translateY(-6px);
+}
+.calendar-col { position: relative; border-left: 1px solid var(--border-subtle); }
+.calendar-col.is-today { background: var(--bg-sunken); }
+.calendar-slot { height: var(--hour-height); border-bottom: 1px solid var(--border-subtle); }
+
+/* Where we are now, which is the first thing anyone looks for. */
+.calendar-now { position: absolute; left: 0; right: 0; height: 2px; background: var(--dan-600); }
+.calendar-now::before {
+  content: ''; position: absolute; left: -4px; top: -3px;
+  width: 8px; height: 8px; border-radius: 50%; background: var(--dan-600);
+}
+
+.calendar-event {
+  position: absolute; overflow: hidden;
+  display: grid; gap: 1px; align-content: start;
+  padding: 3px var(--sp-2); text-align: left;
+  border: 0; border-left: 3px solid var(--a-600);
+  border-radius: var(--r-sm);
+  background: var(--a-50, #eaf2f8); color: var(--fg-primary);
+  font-size: var(--text-xs); cursor: pointer;
+}
+.calendar-event:hover { filter: brightness(0.97); }
+.calendar-event.is-selected { outline: 2px solid var(--a-600); outline-offset: -2px; }
+.calendar-event.is-declined { opacity: 0.55; text-decoration: line-through; }
+.calendar-event-time { font-size: var(--text-2xs); color: var(--fg-secondary); }
+.calendar-event-title {
+  font-weight: var(--weight-medium);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.calendar-event-icon { position: absolute; right: 4px; bottom: 4px; color: var(--fg-tertiary); }
+/* Below ~110px a column cannot show a time and a title on one line; the title wins. */
+@media (max-width: 1400px) {
+  .calendar-event-time { display: none; }
+  .calendar-event-title { font-size: var(--text-2xs); white-space: normal; }
+}
+
+/*
+ * A list panel is a window onto a list, not a container that grows without limit. A
+ * fortnight of daily meetings made this card taller than the screen, pushing everything
+ * beside it out of view and leaving the page scrolling instead of the list.
+ *
+ * Capped in viewport units so it adapts to the window rather than assuming a size, and
+ * `--scroll-cap` lets an individual panel choose a different ceiling.
+ */
+.panel-scroll {
+  max-height: var(--scroll-cap, 68vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .tab-row {
   display: flex; gap: var(--sp-1); min-width: 0;
   border-bottom: 1px solid var(--border-default);
@@ -2860,7 +2947,18 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .signature-preview img { max-height: 70px; max-width: 100%; }
 
 /* --------------------------------------------------------- signature placement */
-.placer-surface { position: relative; overflow: hidden; border-radius: var(--r-md); }
+/* The frame that scrolls. Kept separate from the surface below it, because the
+   signature is absolutely positioned and percentage offsets resolve against its
+   containing block - which therefore has to be the document, not the viewport onto it. */
+.placer-scroll {
+  max-height: 52vh;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+}
+.placer-surface { position: relative; cursor: crosshair; }
 .placer-signature {
   position: absolute;
   cursor: grab;
@@ -2873,7 +2971,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .placer-signature:focus-visible { outline: 2px solid var(--brand-500); }
 .placer-dragging { cursor: grabbing; opacity: .85; }
-.placer-controls { margin-top: var(--sp-3); }
+.placer-controls {
+  margin-top: var(--sp-3);
+  display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap;
+}
+.placer-controls .field { margin: 0; }
 .placer-controls input[type='range'] { width: 200px; }
 
 /* Signature blocks on a document. Slots are drawn whether filled or not — an empty

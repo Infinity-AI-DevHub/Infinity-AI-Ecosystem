@@ -88,6 +88,18 @@ const money = (value: string | number | undefined, currency: string) =>
     maximumFractionDigits: 2,
   })}`;
 
+/*
+ * The signature slots a document carries, matching REQUIRED_ROLES on the server.
+ *
+ * Defaulted rather than required, because a caller that forgets simply renders a
+ * document with no signature lines on it - which is what the signing dialog did, leaving
+ * nowhere to put the signature.
+ */
+const DEFAULT_ROLES: Record<'invoice' | 'receipt', string[]> = {
+  invoice: ['internal_1', 'internal_2', 'client_1'],
+  receipt: ['internal_1', 'internal_2', 'client_1', 'client_2'],
+};
+
 export const addressLines = (source: {
   address_line1: string | null; address_line2: string | null;
   city: string | null; postal_code: string | null; country: string | null;
@@ -115,6 +127,7 @@ export function InvoiceDocument({
   const accent = profile.accent_colour || '#1A6288';
   const isReceipt = variant === 'receipt';
   const logoUrl = useLogoUrl(profile.logo_file_id);
+  const slots = requiredRoles ?? DEFAULT_ROLES[isReceipt ? 'receipt' : 'invoice'];
   const balance = Number(invoice.total) - Number(invoice.amount_paid);
 
   return (
@@ -241,8 +254,8 @@ export function InvoiceDocument({
         <section className="doc-block"><p>{invoice.notes}</p></section>
       ) : null}
 
-      {requiredRoles && requiredRoles.length > 0 ? (
-        <SignatureBlocks required={requiredRoles} signatures={signatures ?? []} />
+      {slots.length > 0 ? (
+        <SignatureBlocks required={slots} signatures={signatures ?? []} />
       ) : null}
 
       {(isReceipt ? profile.receipt_footer : profile.invoice_footer) ? (

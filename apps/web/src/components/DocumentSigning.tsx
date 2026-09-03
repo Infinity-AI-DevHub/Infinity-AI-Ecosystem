@@ -335,6 +335,14 @@ export function SignatureBlocks({
  * difference between a colleague signing carefully and signing because they were asked
  * to. It goes into both the in-app notification and the email.
  */
+type Colleague = { id: string; displayName: string; email: string; accessLevel: string };
+
+/**
+ * Roles that carry `document.sign`, kept in step with migration 0024. The server checks
+ * this properly; this only keeps the list from offering a choice that would be refused.
+ */
+const SIGNING_ROLES = new Set(['admin', 'super_admin']);
+
 export function RequestCountersignatureDialog({
   documentType,
   documentId,
@@ -352,11 +360,21 @@ export function RequestCountersignatureDialog({
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [people, setPeople] = useState<{ id: string; display_name: string }[]>([]);
+  const [people, setPeople] = useState<Colleague[]>([]);
 
+  /*
+   * Who can actually countersign.
+   *
+   * Two things were wrong here. The list read `display_name`, but /users answers in
+   * camelCase, so every option rendered blank - a dropdown of empty rows. And it offered
+   * everybody, while signing is limited to administrators, so most choices would be
+   * refused after the request had already been sent.
+   */
   useEffect(() => {
-    void api.get<{ items: { id: string; display_name: string }[] }>('/users?limit=100')
-      .then((result) => setPeople(result.items))
+    void api.get<{ items: Colleague[] }>('/users?limit=100')
+      .then((result) => setPeople(
+        result.items.filter((person) => SIGNING_ROLES.has(person.accessLevel)),
+      ))
       .catch(() => undefined);
   }, []);
 
@@ -390,9 +408,13 @@ export function RequestCountersignatureDialog({
         <label className="field">
           <span>Who should sign it</span>
           <select value={signerUserId} onChange={(e) => setSignerUserId(e.target.value)} required>
-            <option value="">Choose a colleague…</option>
+            <option value="">
+              {people.length === 0 ? 'No other administrator to ask' : 'Choose an administrator…'}
+            </option>
             {people.map((person) => (
-              <option key={person.id} value={person.id}>{person.display_name}</option>
+              <option key={person.id} value={person.id}>
+                {person.displayName}{person.email ? ` — ${person.email}` : ''}
+              </option>
             ))}
           </select>
         </label>

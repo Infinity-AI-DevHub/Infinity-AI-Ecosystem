@@ -14,6 +14,7 @@ import { durationBetween, formatDate, formatTime, titleCase } from '../lib/forma
 import { useSession } from '../lib/session';
 import { openExternal } from '../lib/desktop';
 import { useNotify } from '../lib/notify';
+import { MeetingsCalendar, startOfWeek } from '../components/MeetingsCalendar';
 
 type Event = {
   id: string;
@@ -65,15 +66,26 @@ export default function Meetings() {
   const [creating, setCreating] = useState(false);
   const [ticket, setTicket] = useState<JoinTicket | null>(null);
   const [optimisticRsvp, setOptimisticRsvp] = useState<Event['myRsvp']>(null);
+  const [view, setView] = useState<'calendar' | 'list'>('calendar');
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
 
-  // A fortnight window keeps the agenda useful without unbounded pagination.
+  /*
+   * The window follows the view. The agenda keeps its fortnight; the calendar asks for
+   * exactly the week on screen, so paging back a week fetches that week rather than
+   * showing an empty grid because the range still started today.
+   */
   const range = useMemo(() => {
+    if (view === 'calendar') {
+      const to = new Date(weekStart);
+      to.setDate(to.getDate() + 7);
+      return { from: weekStart.toISOString(), to: to.toISOString() };
+    }
     const from = new Date();
     from.setHours(0, 0, 0, 0);
     const to = new Date(from);
     to.setDate(to.getDate() + 14);
     return { from: from.toISOString(), to: to.toISOString() };
-  }, []);
+  }, [view, weekStart]);
 
   const listKey = `/calendar/events?from=${range.from}&to=${range.to}`;
   const events = useQuery<{ items: Event[] }>(listKey, (signal) => api.get(listKey, signal));
@@ -118,67 +130,9 @@ export default function Meetings() {
     if (result && !result.degraded && result.url) await openExternal(result.url);
   };
 
-  return (
-    <div className="module-page">
-      <header className="module-header">
-        <div>
-          <h2>Meetings</h2>
-          <p>Next two weeks, shown in {session?.user?.timezone ?? 'your local time'}.</p>
-        </div>
-        <button type="button" className="primary-button" onClick={() => setCreating(true)}>
-          <CalendarPlus size={15} aria-hidden="true" /> Schedule
-        </button>
-      </header>
-
-      <div className="split-layout">
-        <section className="panel" aria-label="Agenda">
-          <AsyncSection query={events}>
-            {(data) =>
-              data.items.length === 0 ? (
-                <Empty
-                  title="Nothing scheduled"
-                  description="Your next two weeks are clear."
-                  action={
-                    <button type="button" className="ghost-button" onClick={() => setCreating(true)}>
-                      Schedule a meeting
-                    </button>
-                  }
-                />
-              ) : (
-                <div className="agenda">
-                  {groupByDay(data.items).map(([day, dayEvents]) => (
-                    <div key={day} className="agenda-day">
-                      <h3>{formatDate(dayEvents[0]!.startsAt)}</h3>
-                      <ul>
-                        {dayEvents.map((event) => (
-                          <li key={event.id}>
-                            <button
-                              type="button"
-                              className={`agenda-item ${event.id === eventId ? 'agenda-active' : ''}`}
-                              onClick={() => navigate(`/meetings/${event.id}`)}
-                            >
-                              <time dateTime={event.startsAt}>{formatTime(event.startsAt)}</time>
-                              <div>
-                                <strong>{event.title}</strong>
-                                <span>
-                                  {durationBetween(event.startsAt, event.endsAt)}
-                                  {event.hasVideoRoom ? ' · Video' : ''}
-                                  {event.myRsvp === 'needs_action' ? ' · Response needed' : ''}
-                                </span>
-                              </div>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              )
-            }
-          </AsyncSection>
-        </section>
-
-        <section className="panel" aria-label="Meeting detail">
+  // Shared by both views: the same panel sits beside the calendar and the agenda.
+  const detailPanel = (
+        <section className="panel panel-scroll" aria-label="Meeting detail">
           {!eventId ? (
             <Empty title="Select a meeting" description="Choose a meeting to see its details." />
           ) : detail.loading ? (
@@ -305,7 +259,108 @@ export default function Meetings() {
             </article>
           ) : null}
         </section>
+  );
+
+  return (
+    <div className="module-page">
+      <header className="module-header">
+        <div>
+          <h2>Meetings</h2>
+          <p>
+            {view === 'calendar' ? 'The week' : 'Next two weeks'}, shown in{' '}
+            {session?.user?.timezone ?? 'your local time'}.
+          </p>
+        </div>
+        <div className="header-controls">
+          <div className="tab-row" role="tablist" aria-label="Meeting view">
+            {(['calendar', 'list'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                role="tab"
+                aria-selected={view === mode}
+                className={`tab ${view === mode ? 'tab-active' : ''}`}
+                onClick={() => setView(mode)}
+              >
+                {mode === 'calendar' ? 'Calendar' : 'Agenda'}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="primary-button" onClick={() => setCreating(true)}>
+            <CalendarPlus size={15} aria-hidden="true" /> Schedule
+          </button>
+        </div>
+      </header>
+
+      {view === 'calendar' ? (
+        <div className="split-layout calendar-layout">
+          <section className="panel" aria-label="Calendar">
+            <AsyncSection query={events}>
+              {(data) => (
+                <MeetingsCalendar
+                  events={data.items}
+                  weekStart={weekStart}
+                  onWeekChange={setWeekStart}
+                  selectedId={eventId ?? null}
+                  onSelect={(id: string) => navigate(`/meetings/${id}`)}
+                />
+              )}
+            </AsyncSection>
+          </section>
+          {detailPanel}
+        </div>
+      ) : (
+      <div className="split-layout">
+        <section className="panel panel-scroll" aria-label="Agenda">
+          <AsyncSection query={events}>
+            {(data) =>
+              data.items.length === 0 ? (
+                <Empty
+                  title="Nothing scheduled"
+                  description="Your next two weeks are clear."
+                  action={
+                    <button type="button" className="ghost-button" onClick={() => setCreating(true)}>
+                      Schedule a meeting
+                    </button>
+                  }
+                />
+              ) : (
+                <div className="agenda">
+                  {groupByDay(data.items).map(([day, dayEvents]) => (
+                    <div key={day} className="agenda-day">
+                      <h3>{formatDate(dayEvents[0]!.startsAt)}</h3>
+                      <ul>
+                        {dayEvents.map((event) => (
+                          <li key={event.id}>
+                            <button
+                              type="button"
+                              className={`agenda-item ${event.id === eventId ? 'agenda-active' : ''}`}
+                              onClick={() => navigate(`/meetings/${event.id}`)}
+                            >
+                              <time dateTime={event.startsAt}>{formatTime(event.startsAt)}</time>
+                              <div>
+                                <strong>{event.title}</strong>
+                                <span>
+                                  {durationBetween(event.startsAt, event.endsAt)}
+                                  {event.hasVideoRoom ? ' · Video' : ''}
+                                  {event.myRsvp === 'needs_action' ? ' · Response needed' : ''}
+                                </span>
+                              </div>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              )
+            }
+          </AsyncSection>
+        </section>
+
+        {detailPanel}
       </div>
+      )}
 
       {creating ? (
         <ScheduleDialog
