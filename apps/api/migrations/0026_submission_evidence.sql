@@ -8,6 +8,8 @@
 -- The bytes are not stored again. A row joins a submission to a file that already went
 -- through the normal upload path, which is what does the scanning, the quota accounting
 -- and the retention. This mirrors doc_attachments and attendance_evidence.
+-- The table deliberately inherits the database collation so its UUID foreign keys match
+-- the existing tenant, file and user tables on both MySQL and MariaDB.
 CREATE TABLE submission_evidence (
   id           CHAR(36)    NOT NULL PRIMARY KEY,
   company_id   CHAR(36)    NOT NULL,
@@ -28,6 +30,6 @@ CREATE TABLE submission_evidence (
 
   -- The same file twice on one submission says nothing new.
   CONSTRAINT uq_submission_evidence UNIQUE (subject_type, subject_id, file_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 CREATE INDEX idx_submission_evidence_subject ON submission_evidence (subject_type, subject_id);

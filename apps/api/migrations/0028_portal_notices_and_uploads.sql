@@ -16,6 +16,8 @@ CREATE INDEX idx_announcements_company_publish
 -- those go to be lost. The bytes live in the ordinary file store, so scanning, quotas
 -- and retention all apply; this table records what the upload was for and what we did
 -- with it.
+-- The table inherits the database collation so every UUID foreign key has the same
+-- character definition as the tables created by the baseline migrations.
 CREATE TABLE portal_uploads (
   id           CHAR(36)     NOT NULL PRIMARY KEY,
   company_id   CHAR(36)     NOT NULL,
@@ -41,7 +43,7 @@ CREATE TABLE portal_uploads (
   CONSTRAINT fk_portal_upload_file    FOREIGN KEY (file_id)    REFERENCES files (id) ON DELETE CASCADE,
   CONSTRAINT fk_portal_upload_user    FOREIGN KEY (uploaded_by) REFERENCES users (id) ON DELETE CASCADE,
   CONSTRAINT uq_portal_upload_file    UNIQUE (file_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 CREATE INDEX idx_portal_uploads_org ON portal_uploads (company_id, org_id, created_at);
 CREATE INDEX idx_portal_uploads_status ON portal_uploads (company_id, status);
