@@ -67,7 +67,12 @@ export function formatBytes(bytes: number): string {
   return `${value >= 10 || exponent === 0 ? Math.round(value) : value.toFixed(1)} ${units[exponent]}`;
 }
 
-export function formatCurrency(amount: number, currency = 'USD'): string {
+/**
+ * The workspace bills in LKR unless a record says otherwise - the invoicing domain uses
+ * the same default. It used to fall back to USD, so any figure whose currency was not
+ * threaded through rendered as dollars beside invoices reading LKR.
+ */
+export function formatCurrency(amount: number, currency = 'LKR'): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amount);
 }
 

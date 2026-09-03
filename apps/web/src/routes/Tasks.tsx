@@ -433,7 +433,8 @@ function CreateTaskDialog({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('medium');
-  const [assigneeId, setAssigneeId] = useState('');
+  const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
+  const [dueAt, setDueAt] = useState('');
 
   const people = useQuery<{ items: { id: string; displayName: string }[] }>(
     '/users?limit=100',
@@ -446,7 +447,10 @@ function CreateTaskDialog({
         title,
         description,
         priority,
-        assigneeId: assigneeId || null,
+        assigneeIds,
+        // Sent as an instant because the column is a timestamp; the picker only offers
+        // a day, so end of that day is the honest reading of "due on the 4th".
+        dueAt: dueAt ? new Date(`${dueAt}T23:59:59`).toISOString() : null,
       }),
     { invalidates: ['/tasks'], onSuccess: onCreated },
   );
@@ -501,19 +505,26 @@ function CreateTaskDialog({
               </select>
             </div>
             <div className="field">
-              <label htmlFor="task-assignee">Assign to</label>
-              <select
-                id="task-assignee"
-                value={assigneeId}
-                onChange={(event) => setAssigneeId(event.target.value)}
-              >
-                <option value="">Unassigned</option>
-                {(people.data?.items ?? []).map((person) => (
-                  <option key={person.id} value={person.id}>{person.displayName}</option>
-                ))}
-              </select>
+              <label htmlFor="task-due">Due date</label>
+              <input
+                id="task-due"
+                type="date"
+                value={dueAt}
+                onChange={(event) => setDueAt(event.target.value)}
+              />
             </div>
           </div>
+
+          {/* The same picker the edit dialog uses. A single select here meant a task with
+              three people on it had to be created, saved, then reopened and edited - and
+              the due date could not be set at all until afterwards. */}
+          <PeoplePicker
+            label="Assign to"
+            people={people.data?.items ?? []}
+            selected={assigneeIds}
+            onChange={setAssigneeIds}
+            emptyHint="Nobody yet — it will show on the board as unassigned."
+          />
           <div className="dialog-actions">
             <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
             <button type="submit" className="primary-button" disabled={create.pending}>

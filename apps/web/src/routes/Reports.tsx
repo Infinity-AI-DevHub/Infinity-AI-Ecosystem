@@ -95,7 +95,7 @@ export default function Reports() {
                   <div className="attention-grid">
                     {unpaid.length > 0 ? (
                       <div className="attention-item">
-                        <strong>{formatCurrency(unpaidTotal)}</strong>
+                        <strong>{formatCurrency(unpaidTotal, unpaid[0]?.currency)}</strong>
                         <span>
                           approved but unpaid across {unpaid.length} claim
                           {unpaid.length === 1 ? '' : 's'}
