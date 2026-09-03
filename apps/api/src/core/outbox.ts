@@ -42,6 +42,9 @@ export type DomainEventType =
   | 'approval.completed'
   | 'announcement.published'
   | 'announcement.updated'
+  | 'portal.upload'
+  | 'attendance.flagged'
+  | 'attendance.reviewed'
   | 'notification.created';
 
 export type OutboxEvent = {

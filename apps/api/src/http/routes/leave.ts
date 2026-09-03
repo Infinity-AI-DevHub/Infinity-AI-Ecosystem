@@ -87,6 +87,13 @@ export async function leaveRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(204).send();
   });
 
+  /** The files backing one request, for the person who made it or whoever judges it. */
+  app.get('/leave/requests/:id/evidence', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
+    return leave.leaveEvidence(actor, id);
+  });
+
   app.get('/leave/requests', async (request) => {
     const actor = requireActor(request);
     const query = parse(
@@ -111,6 +118,7 @@ export async function leaveRoutes(app: FastifyInstance): Promise<void> {
         halfDayStart: z.boolean().optional(),
         halfDayEnd: z.boolean().optional(),
         reason: z.string().max(1000).nullable().optional(),
+        evidenceFileIds: z.array(z.string().uuid()).max(10).optional(),
       }),
       request.body,
     );

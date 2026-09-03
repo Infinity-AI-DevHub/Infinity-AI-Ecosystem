@@ -13,6 +13,7 @@
  * own approval queue once it is granted.
  */
 import { many, newId, one, pool, reload, transaction } from '../core/db.js';
+import { attachEvidence, evidenceCounts, listEvidence } from './submission-evidence.js';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../core/errors.js';
 import { authorize, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
@@ -338,6 +339,8 @@ export async function requestLeave(
     halfDayStart?: boolean;
     halfDayEnd?: boolean;
     reason?: string | null;
+    /** Files justifying the request — a medical certificate, a booking, a summons. */
+    evidenceFileIds?: string[];
   },
   correlationId: string,
 ): Promise<LeaveRequestRow> {
@@ -411,6 +414,10 @@ export async function requestLeave(
         type.requires_approval ? 'pending' : 'approved',
       ],
     );
+
+    // Attached inside the same transaction as the request: a request that exists without
+    // the evidence its approver was promised is worse than no request at all.
+    await attachEvidence(tx, actor, 'leave', id, input.evidenceFileIds ?? []);
 
     if (type.deducts_balance) {
       // Approved-on-creation types skip the queue, so their days go straight to taken.
@@ -516,7 +523,7 @@ export async function listLeave(
   const mine = !filters.userId || filters.userId === actor.userId;
   if (!mine) await authorize({ actor, capability: 'leave.read_all', resourceless: true });
 
-  return many(
+  const rows = await many<{ id: string }>(
     `SELECT r.*, t.name AS type_name, t.colour, u.display_name AS user_name
        FROM leave_requests r
        JOIN leave_types t ON t.id = r.leave_type_id
@@ -536,6 +543,24 @@ export async function listLeave(
       filters.status ?? null,
     ],
   );
+
+  // The count, not the files: a list wants to show that evidence exists, and the request
+  // itself is where somebody opens it.
+  const counts = await evidenceCounts(actor.companyId, 'leave', rows.map((r) => r.id));
+  return rows.map((row) => ({ ...row, evidence_count: counts.get(row.id) ?? 0 }));
+}
+
+/** One request's evidence, for whoever is entitled to read the request. */
+export async function leaveEvidence(actor: Actor, id: string) {
+  const request = await one<{ id: string; user_id: string }>(
+    'SELECT id, user_id FROM leave_requests WHERE id = $1 AND company_id = $2',
+    [id, actor.companyId],
+  );
+  if (!request) throw notFound('Leave request not found');
+  if (request.user_id !== actor.userId) {
+    await authorize({ actor, capability: 'leave.read_all', resourceless: true });
+  }
+  return { items: await listEvidence(actor.companyId, 'leave', id) };
 }
 
 /** Who is away over a window - the question a manager asks before planning anything. */

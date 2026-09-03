@@ -281,6 +281,11 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
   // ---- sharing with clients and guests -----------------------------------
   // Deliberately before the parameterised route: "candidates" would otherwise be read
   // as a resource type.
+  const shareTarget = z.object({
+    type: z.enum(['task', 'doc', 'folder']),
+    id: z.string().uuid(),
+  });
+
   app.get('/shares/candidates', async (request) => {
     const actor = requireActor(request);
     return { items: await sharing.shareCandidates(actor) };
@@ -288,13 +293,16 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/shares/:type/:id', async (request) => {
     const actor = requireActor(request);
-    const { type, id } = request.params as { type: sharing.ShareableType; id: string };
+    const { type, id } = parse(shareTarget, request.params);
     return { items: await sharing.listShares(actor, type, id) };
   });
 
   app.post('/shares/:type/:id', async (request) => {
     const actor = requireActor(request);
-    const { type, id } = request.params as { type: sharing.ShareableType; id: string };
+    // Validated rather than cast: an unrecognised type produced an undefined capability,
+    // which failed the authorization check and reported "you do not have access" for what
+    // is really a mistyped URL.
+    const { type, id } = parse(shareTarget, request.params);
     const input = parse(
       z.object({
         userIds: z.array(z.string().uuid()).min(1).max(100),
@@ -309,9 +317,10 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete('/shares/:type/:id/:userId', async (request, reply) => {
     const actor = requireActor(request);
-    const { type, id, userId } = request.params as {
-      type: sharing.ShareableType; id: string; userId: string;
-    };
+    const { type, id, userId } = parse(
+      shareTarget.extend({ userId: z.string().uuid() }),
+      request.params,
+    );
     await sharing.revokeShare(actor, type, id, userId);
     return reply.code(204).send();
   });
@@ -339,6 +348,34 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
       statusCode: 201,
       body: await sharing.sendMessage(actor, input),
     }));
+  });
+
+  // ---- who is on a project ------------------------------------------------
+  app.get('/projects/:id/members', async (request) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    return { items: await tasks.listProjectMembers(actor, id) };
+  });
+
+  app.post('/projects/:id/members', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id } = parse(idParam, request.params);
+    const input = parse(
+      z.object({ userIds: z.array(z.string().uuid()).min(1).max(200) }),
+      request.body,
+    );
+    reply.code(201);
+    return tasks.addProjectMembers(actor, id, input.userIds);
+  });
+
+  app.delete('/projects/:id/members/:userId', async (request, reply) => {
+    const actor = requireActor(request);
+    const { id, userId } = parse(
+      z.object({ id: z.string().uuid(), userId: z.string().uuid() }),
+      request.params,
+    );
+    await tasks.removeProjectMember(actor, id, userId);
+    return reply.code(204).send();
   });
 
   app.patch('/projects/:id', async (request) => {
@@ -626,6 +663,7 @@ export async function approvalRoutes(app: FastifyInstance): Promise<void> {
           amount: z.number().nonnegative().max(1e12).nullable().optional(),
           currency: z.string().length(3).optional(),
           data: z.record(z.unknown()).optional(),
+          evidenceFileIds: z.array(z.string().uuid()).max(10).optional(),
         }),
         request.body,
       );
@@ -682,6 +720,10 @@ export async function announcementRoutes(app: FastifyInstance): Promise<void> {
             z.object({ scope: z.literal('company') }),
             z.object({ scope: z.literal('department'), departmentIds: z.array(z.string().uuid()).min(1) }),
             z.object({ scope: z.literal('group'), groupIds: z.array(z.string().uuid()).min(1) }),
+            z.object({
+              scope: z.literal('organisation'),
+              organisationIds: z.array(z.string().uuid()).min(1),
+            }),
           ])
           .optional(),
         requiresAck: z.boolean().optional(),

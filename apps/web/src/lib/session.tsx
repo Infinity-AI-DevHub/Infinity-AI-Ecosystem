@@ -24,7 +24,7 @@ type SessionState = {
   capabilities: Capabilities | null;
   /** True when the role grants the capability. The server checks again on every call. */
   can: (capability: string) => boolean;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<Capabilities | null>;
   signOut: () => Promise<void>;
 };
 
@@ -52,17 +52,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setSession(me);
       setCapabilities(caps);
       setStatus(me.user ? 'authenticated' : 'anonymous');
+      return caps;
     } catch (err) {
       if (err instanceof ApiError && err.isUnauthenticated) {
         setSession(null);
         setCapabilities(null);
         setStatus('anonymous');
-        return;
+        return null;
       }
       // A transient failure must not silently sign the user out; surface it as loading
       // failure and let the shell show a retry affordance.
       setStatus('anonymous');
     }
+    return null;
   }, []);
 
   useEffect(() => {

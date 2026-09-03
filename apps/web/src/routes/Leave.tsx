@@ -6,7 +6,10 @@
  * is the difference between "I have ten days" and "I have ten days unless the request I
  * made on Tuesday comes back".
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Paperclip } from 'lucide-react';
+import { EvidenceUpload, EvidenceList, type AttachedFile } from '../components/EvidenceUpload';
+import { FilePreview, type PreviewTarget } from '../components/FilePreview';
 import { CalendarPlus, Users } from 'lucide-react';
 import { api, idempotencyKey } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
@@ -45,6 +48,7 @@ type LeaveRequest = {
   working_days: string;
   status: string;
   reason: string | null;
+  evidence_count?: number;
 };
 
 type Away = {
@@ -199,12 +203,14 @@ export default function Leave() {
 }
 
 function LeaveRow({ request }: { request: LeaveRequest }) {
+  const [showing, setShowing] = useState(false);
   const cancel = useMutation(
     async () => api.post(`/leave/requests/${request.id}/cancel`, { reason: 'No longer needed' }),
     { invalidates: ['/leave'] },
   );
 
   const cancellable = request.status === 'pending' || request.status === 'approved';
+  const attached = request.evidence_count ?? 0;
 
   return (
     <li className="leave-row">
@@ -219,8 +225,15 @@ function LeaveRow({ request }: { request: LeaveRequest }) {
           {Number(request.working_days) === 1 ? '' : 's'}
           {request.reason ? ` · ${request.reason}` : ''}
         </span>
+        {attached > 0 ? (
+          <button type="button" className="link-button leave-evidence" onClick={() => setShowing(true)}>
+            <Paperclip size={12} aria-hidden="true" />
+            {attached} {attached === 1 ? 'document' : 'documents'}
+          </button>
+        ) : null}
       </div>
       <span className={`status-tag status-${request.status}`}>{titleCase(request.status)}</span>
+      {showing ? <LeaveEvidenceDialog requestId={request.id} onClose={() => setShowing(false)} /> : null}
       {cancellable ? (
         <button
           type="button"
@@ -246,6 +259,7 @@ function BookDialog({ onClose }: { onClose: () => void }) {
   const [halfDayStart, setHalfDayStart] = useState(false);
   const [halfDayEnd, setHalfDayEnd] = useState(false);
   const [reason, setReason] = useState('');
+  const [evidence, setEvidence] = useState<AttachedFile[]>([]);
   const key = useMemo(() => idempotencyKey(), []);
 
   const book = useMutation(
@@ -259,6 +273,7 @@ function BookDialog({ onClose }: { onClose: () => void }) {
           halfDayStart,
           halfDayEnd,
           reason: reason || null,
+          evidenceFileIds: evidence.map((file) => file.id),
         },
         { idempotencyKey: key },
       ),
@@ -363,6 +378,13 @@ function BookDialog({ onClose }: { onClose: () => void }) {
             />
           </div>
 
+          <EvidenceUpload
+            files={evidence}
+            onChange={setEvidence}
+            label="Supporting documents"
+            hint="A medical certificate, a booking, anything your approver will want to see."
+          />
+
           <div className="dialog-actions">
             <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>
             <button type="submit" className="primary-button" disabled={book.pending || !leaveTypeId || !startDate}>
@@ -370,6 +392,45 @@ function BookDialog({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What was attached to a leave request.
+ *
+ * Fetched when opened rather than with the list: most rows have nothing attached, and an
+ * approver opens one at a time.
+ */
+function LeaveEvidenceDialog({ requestId, onClose }: { requestId: string; onClose: () => void }) {
+  const [items, setItems] = useState<
+    { id: string; file_id: string; name: string; mime_type: string | null; size_bytes: number }[]
+  >([]);
+  const [error, setError] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState<PreviewTarget | null>(null);
+
+  useEffect(() => {
+    void api
+      .get<{ items: typeof items }>(`/leave/requests/${requestId}/evidence`)
+      .then((result) => setItems(result.items))
+      .catch(() => setError('Those documents could not be loaded'));
+  }, [requestId]);
+
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <div className="dialog" role="dialog" aria-label="Supporting documents"
+           onClick={(event) => event.stopPropagation()}>
+        <h3>Supporting documents</h3>
+        {error ? <p className="field-error">{error}</p> : (
+          <EvidenceList items={items} onOpen={setPreviewing} />
+        )}
+        <div className="dialog-actions">
+          <button type="button" className="ghost-button" onClick={onClose}>Close</button>
+        </div>
+        {previewing ? (
+          <FilePreview target={previewing} onClose={() => setPreviewing(null)} />
+        ) : null}
       </div>
     </div>
   );

@@ -5,6 +5,8 @@
  * history behaves as expected (blueprint 16).
  */
 import { lazy, Suspense } from 'react';
+import Attendance from './routes/Attendance';
+import { AttendanceProvider } from './lib/attendance';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider, useSession } from './lib/session';
 import { NotifyProvider } from './lib/notify';
@@ -83,6 +85,7 @@ function AppRoutes() {
                   <Route path="/reports" element={<Reports />} />
                   <Route path="/growth" element={<Growth />} />
                   <Route path="/finance" element={<Finance />} />
+                  <Route path="/attendance" element={<Attendance />} />
                   <Route path="/leave" element={<Leave />} />
                   <Route path="/clients" element={<Clients />} />
                   <Route path="/clients/:organizationId" element={<Clients />} />
@@ -121,7 +124,9 @@ export default function App() {
     <BrowserRouter>
       <NotifyProvider>
         <SessionProvider>
+          <AttendanceProvider>
         <AppRoutes />
+          </AttendanceProvider>
         </SessionProvider>
         {/* Outside the session provider: a banner must still be able to say the
             session ended, which is exactly when that provider has no session. */}

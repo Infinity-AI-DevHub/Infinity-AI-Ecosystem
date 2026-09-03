@@ -17,9 +17,23 @@
  * a grant.
  */
 const GUEST_ROUTES: RegExp[] = [
-  // Their own identity and session.
+  // Their own identity and session. Capabilities belong here too: the client
+  // application asks for them immediately after sign-in, so refusing them meant a guest
+  // could authenticate successfully and then be bounced straight back to the sign-in
+  // screen - the portal was unreachable rather than merely empty.
   /^\/api\/v1\/me$/,
-  /^\/api\/v1\/auth\/(logout|password)$/,
+  /^\/api\/v1\/me\/capabilities$/,
+  /*
+   * Session management, not data.
+   *
+   * `login` and `token/refresh` belong here for the same reason as logout: the guard
+   * exists to stop a guest reading company-wide listings, and refusing authentication
+   * does not protect anything. Leaving login out meant a guest holding a still-valid
+   * cookie was refused when they tried to sign in again, with a message about guest
+   * accounts that told them nothing they could act on.
+   */
+  /^\/api\/v1\/auth\/(login|logout|password)$/,
+  /^\/api\/v1\/auth\/token\/refresh$/,
   /^\/api\/v1\/auth\/sessions(\/[\w-]+)?$/,
 
   // Files and folders they have been granted. Listing is already grant-scoped, and
@@ -43,6 +57,15 @@ const GUEST_ROUTES: RegExp[] = [
 
   // Their own notifications.
   /^\/api\/v1\/notifications(\/.*)?$/,
+
+  // The client portal: their organisation's invoices and quotations. Every one of these
+  // scopes by the caller's own membership - see domains/portal.ts.
+  /^\/api\/v1\/portal\/(overview|invoices|quotations|payments|next-payment|notices|pages|uploads)$/,
+  /^\/api\/v1\/portal\/(invoices|quotations)\/[\w-]+$/,
+
+  // Uploading their own documents. The file itself goes through /files, already open
+  // above; this only records what it was for.
+  /^\/api\/v1\/files\/uploads(\/.*)?$/,
 ];
 
 /**

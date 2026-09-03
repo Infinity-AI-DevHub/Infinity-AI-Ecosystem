@@ -14,7 +14,8 @@ export function initials(name: string): string {
     .join('');
 }
 
-export function formatDateTime(value: string | Date, timeZone?: string): string {
+export function formatDateTime(value: string | Date | null | undefined, timeZone?: string): string {
+  if (!value) return '';
   const date = typeof value === 'string' ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat(undefined, {
@@ -30,7 +31,8 @@ export function formatTime(value: string | Date, timeZone?: string): string {
   return new Intl.DateTimeFormat(undefined, { timeStyle: 'short', timeZone }).format(date);
 }
 
-export function formatDate(value: string | Date, timeZone?: string): string {
+export function formatDate(value: string | Date | null | undefined, timeZone?: string): string {
+  if (!value) return '';
   const date = typeof value === 'string' ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone }).format(date);

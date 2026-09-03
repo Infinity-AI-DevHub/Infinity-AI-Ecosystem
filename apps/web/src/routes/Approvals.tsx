@@ -5,6 +5,8 @@
  * and the immutable decision history is shown alongside the current state.
  */
 import { useMemo, useState } from 'react';
+import { FilePreview, type PreviewTarget } from '../components/FilePreview';
+import { EvidenceUpload, EvidenceList, type AttachedFile } from '../components/EvidenceUpload';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Check, FilePlus2, RotateCcw, X } from 'lucide-react';
 import { api, idempotencyKey } from '../lib/api';
@@ -36,6 +38,9 @@ type RequestDetail = Request & {
     comment: string | null;
     created_at: string;
     approver_name: string;
+  }[];
+  evidence?: {
+    id: string; file_id: string; name: string; mime_type: string | null; size_bytes: number;
   }[];
 };
 
@@ -169,6 +174,7 @@ function RequestDetailView({ detail }: { detail: ReturnType<typeof useQuery<Requ
   const request = detail.data!;
   const { session } = useSession();
   const [comment, setComment] = useState('');
+  const [previewing, setPreviewing] = useState<PreviewTarget | null>(null);
   // One key per mounted request, so a retried click is recognised as the same decision.
   const key = useMemo(() => idempotencyKey(), [request.id]);
 
@@ -215,6 +221,20 @@ function RequestDetailView({ detail }: { detail: ReturnType<typeof useQuery<Requ
       ) : null}
 
       <section>
+        <h4>
+          Supporting documents
+          {(request.evidence?.length ?? 0) > 0 ? (
+            <span className="count-badge">{request.evidence!.length}</span>
+          ) : null}
+        </h4>
+        <EvidenceList
+          items={request.evidence ?? []}
+          onOpen={setPreviewing}
+          emptyText="Nothing was attached to this request."
+        />
+      </section>
+
+      <section>
         <h4>Route</h4>
         <ol className="route-list">
           {request.steps.map((step) => (
@@ -242,6 +262,10 @@ function RequestDetailView({ detail }: { detail: ReturnType<typeof useQuery<Requ
           </ul>
           <p className="field-hint">This history is immutable and cannot be edited.</p>
         </section>
+      ) : null}
+
+      {previewing ? (
+        <FilePreview target={previewing} onClose={() => setPreviewing(null)} />
       ) : null}
 
       {request.status === 'pending' && awaitingMe ? (
@@ -304,6 +328,7 @@ function RaiseDialog({
   const [definitionKey, setDefinitionKey] = useState('');
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
+  const [evidence, setEvidence] = useState<AttachedFile[]>([]);
   const key = useMemo(() => idempotencyKey(), []);
 
   const definitions = useQuery<{ items: Definition[] }>('/approvals/definitions', (signal) =>
@@ -318,6 +343,7 @@ function RaiseDialog({
           definitionKey: definitionKey || definitions.data?.items[0]?.key,
           title,
           amount: amount ? Number(amount) : null,
+          evidenceFileIds: evidence.map((file) => file.id),
         },
         { idempotencyKey: key },
       ),
@@ -382,6 +408,13 @@ function RaiseDialog({
               needs to approve.
             </p>
           </div>
+
+          <EvidenceUpload
+            files={evidence}
+            onChange={setEvidence}
+            label="Supporting documents"
+            hint="A receipt, a quote, a contract — whatever the approver needs to decide."
+          />
 
           <div className="dialog-actions">
             <button type="button" className="ghost-button" onClick={onClose}>Cancel</button>

@@ -14,6 +14,7 @@ import * as approvals from '../domains/approvals.js';
 import { purgeExpired } from '../core/ratelimit.js';
 import { storage } from '../adapters/storage.js';
 import * as files from '../domains/files.js';
+import * as attendance from '../domains/attendance.js';
 
 type Job = { name: string; intervalMs: number; lockKey: string; run: () => Promise<void> };
 
@@ -237,6 +238,17 @@ const jobs: Job[] = [
   } },
   // Hourly: the cadence is measured in days, so a tighter tick only adds load.
   { name: 'invoice-reminders', intervalMs: 3_600_000, lockKey: 'iw_invoice_reminders', run: invoiceReminders },
+  /*
+   * Auto clock-out.
+   *
+   * The event this responds to is an absence - the app stopped reporting - so nothing
+   * arrives to trigger it and it has to be looked for. Every minute, because the session
+   * ends at the last heartbeat and the delay only decides how soon the record settles.
+   */
+  { name: 'attendance-auto-clockout', intervalMs: 60_000, lockKey: 'iw_attendance_stale', run: async () => {
+    const { closed } = await attendance.closeStaleSessions();
+    if (closed > 0) logger.info({ closed }, 'closed attendance sessions with no heartbeat');
+  } },
 ];
 
 const timers: NodeJS.Timeout[] = [];

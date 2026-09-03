@@ -5,13 +5,21 @@
  * persistent store, and announces errors to assistive technology.
  */
 import { useState } from 'react';
+
+/**
+ * Where a client is meant to go instead. The portal is on the web so that nobody outside
+ * the company has to install anything; this is the one place a client is likely to end
+ * up by mistake, so it says the address rather than just refusing.
+ */
+const PORTAL_MESSAGE =
+  'This is the staff workspace. Clients should use the portal at app.iinfinityai.com/portal.';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { KeyRound } from 'lucide-react';
 import { api, ApiError, NetworkError } from '../lib/api';
 import { useSession } from '../lib/session';
 import { isDesktop } from '../lib/desktop';
 import { setGrant, type Grant } from '../lib/tokens';
-import { clearNotice, readNotice } from '../lib/notice';
+import { clearNotice, readNotice, setNotice } from '../lib/notice';
 import { FieldMessage } from '../components/States';
 import { Logo } from '../components/Logo';
 
@@ -33,7 +41,7 @@ function safeReturnPath(value: unknown): string {
 }
 
 export default function SignIn() {
-  const { status, refresh } = useSession();
+  const { status, refresh, signOut } = useSession();
   const navigate = useNavigate();
   const location = useLocation();
   const returnTo = safeReturnPath((location.state as { from?: string } | null)?.from);
@@ -72,7 +80,23 @@ export default function SignIn() {
       // The password is discarded as soon as it is no longer needed.
       setPassword('');
       clearNotice();
-      await refresh();
+      const identity = await refresh();
+
+      /*
+       * A client has an account here, and it will authenticate — but the workspace is not
+       * their surface. Every module would refuse them and they would be left staring at a
+       * sidebar of errors, so they are signed out again and sent to the portal, which is
+       * on the web precisely so they never have to install this.
+       */
+      if (identity?.accessLevel === 'guest') {
+        // Through the notice store, not component state: signing out remounts this
+        // screen, which would discard anything held locally and leave them looking at
+        // a blank form with no idea why they were refused.
+        setNotice(PORTAL_MESSAGE);
+        await signOut();
+        return;
+      }
+
       navigate(returnTo, { replace: true });
     } catch (err) {
       setError(err instanceof ApiError || err instanceof NetworkError ? err : new NetworkError());

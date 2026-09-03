@@ -448,7 +448,14 @@ code, pre { font-family: var(--font-mono); font-size: 0.92em; }
    Forms
    ========================================================================== */
 
-.field { margin-bottom: var(--sp-4); min-width: 0; }
+/*
+ * `display: block` matters: .field is usually put on a <label>, which is inline by
+ * default, so two fields in a row ran into each other - "…outside this system.Description"
+ * - and the vertical margin below was ignored as well.
+ */
+.field { display: block; margin-bottom: var(--sp-4); min-width: 0; }
+/* The hint is a <span>; without this it trails the input on the same line. */
+.field > .field-hint { display: block; }
 .field > label, .field > legend {
   display: block;
   margin-bottom: var(--sp-2);
@@ -1898,7 +1905,7 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
   background: var(--bg-surface);
 }
 .leave-bar { width: 3px; align-self: stretch; min-height: 30px; border-radius: var(--r-full); flex-shrink: 0; }
-.leave-body { flex: 1; min-width: 0; }
+.leave-body { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .leave-body strong { display: block; font-size: var(--text-sm); font-weight: var(--weight-medium); }
 .leave-body span { font-size: var(--text-xs); color: var(--fg-tertiary); overflow-wrap: anywhere; }
 
@@ -2760,6 +2767,25 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 /* Two columns: the work on the left, its facts on the right. */
 .task-detail-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: var(--sp-6); }
 @media (max-width: 860px) { .task-detail-body { grid-template-columns: 1fr; } }
+/* ---- project members ----------------------------------------------------- */
+.project-members { display: grid; gap: var(--sp-3); margin: var(--sp-5) 0; }
+.project-members h4 {
+  display: flex; align-items: center; gap: var(--sp-2);
+  margin: 0; font-size: var(--text-sm); color: var(--fg-secondary);
+}
+.member-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.member-list li {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2); border-radius: var(--r-md);
+}
+.member-list li:hover { background: var(--bg-sunken); }
+.member-name {
+  display: flex; align-items: center; gap: var(--sp-2);
+  flex: 1 1 auto; min-width: 0; font-weight: var(--weight-medium); font-size: var(--text-sm);
+}
+.member-add { display: grid; gap: var(--sp-2); padding-top: var(--sp-2); border-top: 1px solid var(--border-subtle); }
+.member-add-actions { display: flex; justify-content: flex-end; }
+
 /* ---- task detail dialog -------------------------------------------------
    Two columns: what the task says, and the facts about it. Sections are spaced
    deliberately rather than left to collapse into one another. */
@@ -2775,6 +2801,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   min-width: 20px; height: 20px; padding: 0 6px;
   border-radius: 999px; background: var(--bg-sunken);
   font-size: var(--text-2xs); color: var(--fg-secondary);
+  /* It follows a heading's text, so it needs its own space rather than sitting flush. */
+  margin-left: 8px;
+  vertical-align: middle;
 }
 
 /* A comment is a person saying something, so it leads with who. */
@@ -2994,3 +3023,127 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .doc-sig-name { font-size: var(--text-xs); font-weight: var(--weight-semi); color: #1a2430; }
 .doc-sig-date { font-size: var(--text-2xs); color: #7a8794; }
+
+/* ---------------------------------------------------------------- attendance */
+
+/* The clock reads as an instrument: one big number, one button, one measure of the day. */
+.clock-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'face action' 'today today';
+  gap: 20px 24px;
+  align-items: center;
+}
+.clock-face { grid-area: face; display: flex; flex-direction: column; gap: 4px; }
+.clock-actions { grid-area: action; }
+.clock-today {
+  grid-area: today;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-areas: 'label total bar' 'hint hint hint';
+  align-items: center;
+  gap: 6px 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+.clock-today-label {
+  grid-area: label;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.clock-today > strong { grid-area: total; font-variant-numeric: tabular-nums; }
+.clock-today > .field-hint { grid-area: hint; }
+.clock-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.clock-elapsed {
+  font-size: 2.4rem;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--text-muted);
+}
+.clock-elapsed.is-running { color: var(--text-strong); }
+.clock-bar {
+  grid-area: bar;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+.clock-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 240ms ease;
+}
+.clock-bar span.is-met { background: var(--success, #2f9e6f); }
+
+.day-list, .session-list.session-list { list-style: none; margin: 0; padding: 0; }
+.day-list li, .session-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.day-list li:last-child, .session-list li:last-child { border-bottom: 0; }
+.day-date { font-variant-numeric: tabular-nums; min-width: 6.5rem; }
+.day-total { font-variant-numeric: tabular-nums; font-weight: 600; }
+.day-total.is-met { color: var(--success, #2f9e6f); }
+.day-total.is-short { color: var(--warning, #b5730f); }
+.session-when { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.session-flag { flex-basis: 100%; }
+
+.evidence-chips { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; padding: 0; }
+.evidence-chips li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  font-size: 0.82rem;
+}
+
+/* The dashboard clock: quiet, because it is context and not a call to action. */
+.datetime-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: 'icon time' 'icon date' 'icon state';
+  align-items: center;
+  column-gap: 12px;
+  padding: 14px 18px;
+  min-width: 15rem;
+}
+.datetime-card > svg { grid-area: icon; color: var(--text-muted); }
+.datetime-time {
+  grid-area: time;
+  font-size: 1.4rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.datetime-date { grid-area: date; font-size: 0.82rem; color: var(--text-muted); }
+.datetime-card > .field-hint { grid-area: state; }
+
+@media (max-width: 720px) {
+  .clock-panel { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'face' 'action' 'today'; }
+}
+
+/* The evidence affordance sits under the request's own line, not run into the end of it. */
+.leave-evidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.leave-evidence:hover { color: var(--accent); }
