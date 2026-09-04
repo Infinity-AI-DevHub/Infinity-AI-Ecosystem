@@ -228,7 +228,19 @@ export async function financeRoutes(app: FastifyInstance): Promise<void> {
     const actor = requireActor(request);
     const query = parse(
       z.object({
-        bucket: z.enum(['all', 'draft', 'open', 'partially_paid', 'paid', 'void', 'overdue', 'outstanding'])
+        /*
+         * Every bucket the domain knows about.
+         *
+         * `pending_approval` was missing here while both the domain and the Finance
+         * page had it, so the "Awaiting approval" tab asked for something the schema
+         * refused and the section rendered a validation error. A test keeps this list
+         * and BUCKETS in step.
+         */
+        bucket: z
+          .enum([
+            'all', 'draft', 'pending_approval', 'open', 'partially_paid',
+            'paid', 'void', 'overdue', 'outstanding',
+          ])
           .default('all'),
         clientOrgId: z.string().uuid().optional(),
         projectId: z.string().uuid().optional(),
