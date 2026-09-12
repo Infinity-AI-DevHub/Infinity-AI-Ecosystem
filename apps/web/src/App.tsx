@@ -27,6 +27,7 @@ import './App.css';
 
 // Modules load on demand so the initial sign-in payload stays small.
 const Home = lazy(() => import('./routes/Home'));
+const Reminders = lazy(() => import('./routes/Reminders'));
 const Meetings = lazy(() => import('./routes/Meetings'));
 const Chat = lazy(() => import('./routes/Chat'));
 const Tasks = lazy(() => import('./routes/Tasks'));
@@ -85,6 +86,7 @@ function AppRoutes() {
                   <Route path="/reports" element={<Reports />} />
                   <Route path="/growth" element={<Growth />} />
                   <Route path="/finance" element={<Finance />} />
+                  <Route path="/reminders" element={<Reminders />} />
                   <Route path="/attendance" element={<Attendance />} />
                   <Route path="/leave" element={<Leave />} />
                   <Route path="/clients" element={<Clients />} />

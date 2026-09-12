@@ -388,7 +388,19 @@ export async function freeBusy(actor: Actor, userIds: string[], from: Date, to: 
   return busy;
 }
 
-export async function getEvent(actor: Actor, eventId: string) {
+/**
+ * One meeting — and, for a series, one occurrence of it.
+ *
+ * A recurring meeting is stored once, so every occurrence shares the stored row's dates.
+ * Reading the row alone therefore described the *first* occurrence no matter which one
+ * had been opened: a daily stand-up clicked on the twelfth reported the second, which is
+ * both wrong and impossible to tell apart from a bug in the list.
+ *
+ * `occurrence` is the start of the instance being looked at. It is honoured only when it
+ * is genuinely one of the series' occurrences, so a made-up timestamp cannot invent a
+ * meeting that was never scheduled.
+ */
+export async function getEvent(actor: Actor, eventId: string, occurrence?: Date) {
   const event = await one<EventRow & { rsvp: string | null }>(
     `SELECT e.*, me.rsvp
        FROM calendar_events e
@@ -411,7 +423,44 @@ export async function getEvent(actor: Actor, eventId: string) {
     resourceId: eventId,
     membership: isAttendee || event.visibility === 'company',
   });
-  return { ...publicEvent(event), attendees };
+  const shown = occurrenceOf(event, occurrence);
+  return {
+    ...publicEvent(shown),
+    attendees,
+    /** The series' own start, so a client can say "repeats daily since …". */
+    seriesStartsAt: event.starts_at,
+  };
+}
+
+/**
+ * The row as it reads for one occurrence of a series.
+ *
+ * Returns the stored row unchanged for a one-off meeting, for a series with no
+ * occurrence asked for, or when the timestamp does not land on an occurrence of the
+ * rule — the last of which keeps a hand-edited URL from describing a meeting that does
+ * not exist.
+ */
+function occurrenceOf<T extends EventRow>(row: T, occurrence?: Date): T {
+  if (!occurrence || !row.recurrence_rule || Number.isNaN(occurrence.getTime())) return row;
+  const rule = parseRecurrence(row.recurrence_rule);
+  if (!rule) return row;
+
+  const start = new Date(row.starts_at);
+  const duration = new Date(row.ends_at).getTime() - start.getTime();
+  // A one-millisecond window either side: the caller echoes back a timestamp this same
+  // expansion produced, so it either matches exactly or is not an occurrence at all.
+  const matches = occurrencesBetween(
+    start, duration, rule,
+    new Date(occurrence.getTime() - 1),
+    new Date(occurrence.getTime() + 1),
+  ).some((candidate) => candidate.getTime() === occurrence.getTime());
+  if (!matches) return row;
+
+  return {
+    ...row,
+    starts_at: occurrence,
+    ends_at: new Date(occurrence.getTime() + duration),
+  };
 }
 
 export async function updateEvent(
@@ -650,5 +699,13 @@ export function publicEvent(row: EventRow & { attendee_count?: number; rsvp?: st
     attendeeCount: row.attendee_count,
     myRsvp: row.rsvp ?? null,
     version: row.version,
+    /**
+     * Unique per occurrence of a series; the event's own id for a one-off.
+     *
+     * It was computed when the series was expanded and then dropped here, so every
+     * occurrence of a daily meeting reached the client looking identical. That made it
+     * impossible to key a list by, to highlight one of, or to open one of.
+     */
+    occurrenceId: (row as EventRow & { occurrence_id?: string }).occurrence_id ?? row.id,
   };
 }

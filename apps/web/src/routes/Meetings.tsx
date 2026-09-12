@@ -5,7 +5,7 @@
  * no media provider is configured the screen says so plainly rather than failing.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CalendarPlus, Check, Video, X } from 'lucide-react';
 import { api, idempotencyKey } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
@@ -18,6 +18,8 @@ import { MeetingsCalendar, startOfWeek } from '../components/MeetingsCalendar';
 
 type Event = {
   id: string;
+  /** Unique per occurrence of a series; equals `id` for a one-off meeting. */
+  occurrenceId: string;
   title: string;
   description: string;
   location: string | null;
@@ -68,6 +70,11 @@ export default function Meetings() {
   const [optimisticRsvp, setOptimisticRsvp] = useState<Event['myRsvp']>(null);
   const [view, setView] = useState<'calendar' | 'list'>('calendar');
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
+  const [search] = useSearchParams();
+
+  /** Opens one occurrence: the series id, plus which instance of it. */
+  const openOccurrence = (id: string, at?: string) =>
+    navigate(at ? `/meetings/${id}?at=${encodeURIComponent(at)}` : `/meetings/${id}`);
 
   /*
    * The window follows the view. The agenda keeps its fortnight; the calendar asks for
@@ -90,9 +97,24 @@ export default function Meetings() {
   const listKey = `/calendar/events?from=${range.from}&to=${range.to}`;
   const events = useQuery<{ items: Event[] }>(listKey, (signal) => api.get(listKey, signal));
 
-  const detailKey = eventId ? `/calendar/events/${eventId}` : null;
-  const detail = useQuery<EventDetail>(detailKey, (signal) =>
-    api.get(`/calendar/events/${eventId}`, signal),
+  /*
+   * Which occurrence is open, not just which series.
+   *
+   * A recurring meeting is one stored row, so every occurrence carries the same id.
+   * Navigating by id alone meant the detail panel always described the row — that is,
+   * the first occurrence — whichever day had been clicked. The instance's own start
+   * rides along in the query string and the server resolves it back to that occurrence.
+   */
+  const occurrenceAt = search.get('at');
+  /** Matches the `occurrenceId` the server sends, so exactly one row highlights. */
+  const selectedOccurrence = eventId
+    ? (occurrenceAt ? `${eventId}:${occurrenceAt}` : eventId)
+    : null;
+  const detailPath = eventId
+    ? `/calendar/events/${eventId}${occurrenceAt ? `?occurrence=${encodeURIComponent(occurrenceAt)}` : ''}`
+    : null;
+  const detail = useQuery<EventDetail>(detailPath, (signal) =>
+    api.get(detailPath!, signal),
   );
 
   const rsvp = useMutation(
@@ -301,8 +323,8 @@ export default function Meetings() {
                   events={data.items}
                   weekStart={weekStart}
                   onWeekChange={setWeekStart}
-                  selectedId={eventId ?? null}
-                  onSelect={(id: string) => navigate(`/meetings/${id}`)}
+                  selectedId={selectedOccurrence}
+                  onSelect={(id: string, at?: string) => openOccurrence(id, at)}
                 />
               )}
             </AsyncSection>
@@ -331,11 +353,15 @@ export default function Meetings() {
                       <h3>{formatDate(dayEvents[0]!.startsAt)}</h3>
                       <ul>
                         {dayEvents.map((event) => (
-                          <li key={event.id}>
+                          // Keyed by occurrence: every instance of a series shares an id,
+                          // so keying by that gave React duplicate keys and highlighted
+                          // the whole series whenever one of them was opened.
+                          <li key={event.occurrenceId}>
                             <button
                               type="button"
-                              className={`agenda-item ${event.id === eventId ? 'agenda-active' : ''}`}
-                              onClick={() => navigate(`/meetings/${event.id}`)}
+                              className={`agenda-item ${
+                                event.occurrenceId === selectedOccurrence ? 'agenda-active' : ''}`}
+                              onClick={() => openOccurrence(event.id, event.startsAt)}
                             >
                               <time dateTime={event.startsAt}>{formatTime(event.startsAt)}</time>
                               <div>

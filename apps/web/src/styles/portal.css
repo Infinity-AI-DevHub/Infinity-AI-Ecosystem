@@ -312,3 +312,21 @@
  */
 .portal-main:has(.task-board) { width: min(1360px, 100%); }
 .portal-main .task-board { overflow-x: auto; padding-bottom: var(--sp-2); }
+
+/*
+ * The notices strip on the overview.
+ *
+ * Sits between the figures and the section links because a notice is the one thing on
+ * this page that might need acting on today. It disappears entirely when there are none,
+ * rather than standing there saying so.
+ */
+.portal-notice-strip { margin-bottom: var(--sp-6); }
+.portal-notice-strip header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--sp-3); margin-bottom: var(--sp-3);
+}
+.portal-notice-strip h2 {
+  display: flex; align-items: center; gap: 8px;
+  font-size: var(--text-sm); color: var(--fg-secondary); margin: 0;
+}
+.portal-notice-strip header a { font-size: var(--text-xs); }

@@ -15,6 +15,7 @@ import { purgeExpired } from '../core/ratelimit.js';
 import { storage } from '../adapters/storage.js';
 import * as files from '../domains/files.js';
 import * as attendance from '../domains/attendance.js';
+import * as reminders from '../domains/reminders.js';
 
 type Job = { name: string; intervalMs: number; lockKey: string; run: () => Promise<void> };
 
@@ -245,6 +246,15 @@ const jobs: Job[] = [
    * arrives to trigger it and it has to be looked for. Every minute, because the session
    * ends at the last heartbeat and the delay only decides how soon the record settles.
    */
+  /*
+   * Reminders are a day-grained thing, so this does not need to be frequent — but it
+   * does need to be reliable across a restart, which is why it is every ten minutes
+   * rather than "once at 8am" and the domain tracks the last day it told anyone.
+   */
+  { name: 'reminders', intervalMs: 600_000, lockKey: 'iw_reminders', run: async () => {
+    const { notified } = await reminders.notifyDue();
+    if (notified > 0) logger.info({ notified }, 'reminders sent');
+  } },
   { name: 'attendance-auto-clockout', intervalMs: 60_000, lockKey: 'iw_attendance_stale', run: async () => {
     const { closed } = await attendance.closeStaleSessions();
     if (closed > 0) logger.info({ closed }, 'closed attendance sessions with no heartbeat');

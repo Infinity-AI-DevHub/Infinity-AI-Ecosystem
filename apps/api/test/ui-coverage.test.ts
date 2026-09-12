@@ -67,7 +67,20 @@ function walk(dir: string, out: string[] = []): string[] {
  * excluded guests here, and the announcement handler never had.
  */
 describe('announcement audience', () => {
-  it('never selects guests as recipients', () => {
+  /**
+   * An internal announcement must never reach a client.
+   *
+   * A guest holds a row in the same company as the staff, so any recipient query that
+   * scopes by company alone would email one. Every internal scope therefore has to
+   * exclude them explicitly.
+   *
+   * The one exception is the 'organisation' scope, which exists precisely to address
+   * client organisations and is read in the portal. It is not enough for that query to
+   * merely omit the guard — it has to select guests *deliberately*, by naming the
+   * access level and joining the membership that limits it to the organisations
+   * addressed. Anything else is a company-wide query that forgot the guard.
+   */
+  it('lets only the client-facing scope reach guests, and only on purpose', () => {
     const src = readFileSync('src/workers/handlers.ts', 'utf8');
     const start = src.indexOf('const onAnnouncementPublished');
     assert.ok(start > -1, 'announcement handler not found - update this test');
@@ -78,12 +91,23 @@ describe('announcement audience', () => {
     const fromUsers = queries.filter((q) => /FROM users/i.test(q));
     assert.ok(fromUsers.length > 0, 'no recipient queries found - update this test');
 
-    const leaky = fromUsers.filter((q) => !/access_level\s*<>\s*'guest'/.test(q));
+    const excludesGuests = (q: string) => /access_level\s*<>\s*'guest'/.test(q);
+    /** Addresses clients on purpose: guests only, and only at the named organisations. */
+    const isClientScope = (q: string) =>
+      /access_level\s*=\s*'guest'/.test(q)
+      && /external_memberships/.test(q)
+      && /organization_id/.test(q);
+
+    const leaky = fromUsers.filter((q) => !excludesGuests(q) && !isClientScope(q));
     assert.deepEqual(
       leaky,
       [],
       `these announcement queries would email guests:\n${leaky.join('\n---\n')}`,
     );
+
+    // And the deliberate one must exist, so this test cannot pass by it being removed.
+    assert.equal(fromUsers.filter(isClientScope).length, 1,
+      'expected exactly one query addressing client organisations');
   });
 });
 

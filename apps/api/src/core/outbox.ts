@@ -43,6 +43,7 @@ export type DomainEventType =
   | 'announcement.published'
   | 'announcement.updated'
   | 'portal.upload'
+  | 'reminder.due'
   | 'attendance.flagged'
   | 'attendance.reviewed'
   | 'notification.created';
