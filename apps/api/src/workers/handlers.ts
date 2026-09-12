@@ -1173,21 +1173,85 @@ const onSignatureRequested: Handler = async (event) => {
    */
   if (!created || !signerEmail) return;
 
+  const profile = await billingProfile(event.company_id);
+  const lines = [
+    `${signerName},`,
+    `${requestedBy} has signed ${documentLabel} and asked you to countersign it.`,
+    ...(note ? [`"${note}"`] : []),
+    'Open Infinity Workspace and go to Finance to review and sign it.',
+    'Signing records your account and the time, along with a fingerprint of the document '
+      + 'as it reads now — so read it before you sign.',
+  ];
+
   await notifier.send({
-    from: { address: systemSender(), name: 'Infinity Workspace' },
+    from: { address: systemSender(), name: profile.legal_name ?? 'Infinity Workspace' },
     to: [signerEmail],
     subject: `Your signature is needed on ${documentLabel}`,
-    text: [
-      `${signerName},`,
-      '',
-      `${requestedBy} has signed ${documentLabel} and asked you to countersign it.`,
-      note ? `\n"${note}"\n` : '',
-      `Open Infinity Workspace and go to Finance to review and sign it.`,
-      `${config.publicUrl}${route}`,
-      '',
-      'Signing records your account and the time, along with a fingerprint of the',
-      'document as it reads now — so read it before you sign.',
-    ].filter(Boolean).join('\n'),
+    html: renderNoticeEmail(profile, {
+      heading: `Please countersign ${documentLabel}`,
+      lines,
+      footnote: `${config.publicUrl}${route}`,
+    }),
+    text: [...lines, '', `${config.publicUrl}${route}`].join('\n'),
+  });
+};
+
+/**
+ * The colleague you asked has signed it.
+ *
+ * The other half of a request. Without this the person who asked learned nothing: they
+ * had to remember they had asked, go back to the document and look. Both channels,
+ * because the thing they were waiting for is now unblocked and they may well be
+ * elsewhere.
+ */
+const onSignatureCompleted: Handler = async (event) => {
+  const { documentType, documentId, documentLabel, signedBy, requestedBy } =
+    event.payload as {
+      documentType: string; documentId: string; documentLabel: string;
+      signedBy: string; requestedBy: string;
+    };
+
+  const route =
+    documentType === 'quotation' ? `/finance?tab=quotations&open=${documentId}`
+      : `/finance?tab=invoices&open=${documentId}`;
+
+  const created = await notifications.create({
+    companyId: event.company_id,
+    userId: requestedBy,
+    type: 'signature.completed',
+    title: `${signedBy} signed ${documentLabel}`,
+    body: 'The signature you asked for is in place.',
+    link: route,
+    resourceType: documentType,
+    resourceId: documentId,
+    dedupeKey: `signature.completed:${documentId}:${requestedBy}`,
+  });
+  if (!created) return; // redelivery: told once already
+
+  const asker = await one<{ email_display: string | null; display_name: string }>(
+    `SELECT email_display, display_name FROM users
+      WHERE id = $1 AND status IN ('invited', 'active')`,
+    [requestedBy],
+  );
+  if (!asker?.email_display) return;
+
+  const profile = await billingProfile(event.company_id);
+  const lines = [
+    `${asker.display_name},`,
+    `${signedBy} has countersigned ${documentLabel}.`,
+    'It is ready for whatever comes next — sending it, or issuing the invoice against it.',
+  ];
+
+  await notifier.send({
+    from: { address: systemSender(), name: profile.legal_name ?? 'Infinity Workspace' },
+    to: [asker.email_display],
+    subject: `${signedBy} signed ${documentLabel}`,
+    html: renderNoticeEmail(profile, {
+      heading: `${documentLabel} is signed`,
+      lines,
+      footnote: `${config.publicUrl}${route}`,
+    }),
+    text: [...lines, '', `${config.publicUrl}${route}`].join('\n'),
   });
 };
 
@@ -1433,6 +1497,7 @@ export const handlers: Record<string, Handler> = {
   'user.reactivated': onAccessChanged,
   'user.password_reset_requested': onPasswordResetRequested,
   'signature.requested': onSignatureRequested,
+  'signature.completed': onSignatureCompleted,
   'meeting.reminder_due': onMeetingReminder,
   'message.broadcast': onBroadcast,
   'quotation.sent': onQuotationSent,

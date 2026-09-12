@@ -478,11 +478,15 @@ export async function listTasks(actor: Actor, projectId: string) {
 }
 
 /**
- * One task, for the client to read.
+ * One task, for the client to read — discussion included.
  *
- * Comments and internal notes are deliberately absent. A task's discussion is where
- * colleagues talk to each other about the client's work, and handing that over
- * unedited is how a portal becomes something people are afraid to use.
+ * The thread was withheld at first, on the reasoning that a task's comments are where
+ * colleagues talk to each other. That is no longer the intent: a client with access to
+ * the project is meant to see what is being said about their work, so the same thread
+ * everyone else reads is returned here.
+ *
+ * Read-only. The portal has no route that writes a comment, so a client follows the
+ * conversation without being able to join it.
  */
 export async function getTask(actor: Actor, taskId: string) {
   const org = await myOrganisation(actor);
@@ -498,8 +502,24 @@ export async function getTask(actor: Actor, taskId: string) {
     [taskId, actor.companyId, org.id],
   );
   if (!row) throw notFound('Task not found');
+
+  // Joined back to the project the same way the task itself is, so the tenant and the
+  // organisation are conditions of this query rather than something the caller checked
+  // a few lines earlier and could stop checking.
+  const comments = await many(
+    `SELECT c.id, c.body, c.created_at, u.display_name AS author_name
+       FROM task_comments c
+       JOIN tasks t ON t.id = c.task_id
+       JOIN projects p ON p.id = t.project_id
+       LEFT JOIN users u ON u.id = c.author_id
+      WHERE c.task_id = $1 AND t.company_id = $2 AND p.client_org_id = $3
+      ORDER BY c.created_at`,
+    [taskId, actor.companyId, org.id],
+  );
+
   return {
     ...publicTask(row as never),
     projectName: (row as { project_name: string }).project_name,
+    comments,
   };
 }

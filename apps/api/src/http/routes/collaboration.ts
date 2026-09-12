@@ -484,6 +484,13 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
         status: z.enum(['todo', 'in_progress', 'review', 'blocked', 'done', 'cancelled']).optional(),
         priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
         assigneeId: z.string().uuid().nullable().optional(),
+        /*
+         * The whole set, which the edit dialog has always sent and this schema has
+         * always dropped. Zod strips what it does not declare, so changing who is on a
+         * task saved successfully and changed nothing — the same silent no-op as the
+         * create route had, one layer along.
+         */
+        assigneeIds: z.array(z.string().uuid()).max(50).optional(),
         dueAt: z.string().datetime().nullable().optional(),
         labels: z.array(z.string().max(40)).max(20).optional(),
         position: z.number().optional(),

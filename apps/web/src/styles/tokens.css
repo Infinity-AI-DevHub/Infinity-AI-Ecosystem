@@ -18,33 +18,33 @@
   /* ---- brand -------------------------------------------------------------
      Read from the logo. --brand-700 is the ground the mark sits on; --brand-500
      is the interactive blue that carries action and focus. */
-  --brand-900: #061F2E;
-  --brand-800: #082D42;
-  --brand-700: #0D4260;
-  --brand-600: #14587D;
-  --brand-500: #1A6288;
-  --brand-400: #2E7FB0;
-  --brand-300: #5BA3CE;
-  --brand-200: #8FC3E4;
-  --brand-100: #C5E2F4;
-  --brand-50:  #EAF4FB;
+  --brand-900: #061B2A;
+  --brand-800: #082B42;
+  --brand-700: #0A4568;
+  --brand-600: #0B5F8D;
+  --brand-500: #0E76A8;
+  --brand-400: #258FC1;
+  --brand-300: #58AFD3;
+  --brand-200: #9BD0E7;
+  --brand-100: #D0E9F4;
+  --brand-50:  #EDF7FB;
 
   /* ---- neutral ramp ------------------------------------------------------
      Hue-biased toward the brand rather than a dead grey. */
   --n-0:  #ffffff;
-  --n-25: #fbfdff;
-  --n-50: #f5f9fc;
-  --n-100:#edf4f9;
-  --n-150:#e4e9f0;
-  --n-200:#d8dfe8;
-  --n-300:#bcc7d4;
-  --n-400:#8d9aab;
-  --n-500:#627384;
-  --n-600:#475768;
-  --n-700:#33414f;
-  --n-800:#212b36;
-  --n-900:#141b23;
-  --n-950:#0b1117;
+  --n-25: #fbfcfe;
+  --n-50: #f6f8fb;
+  --n-100:#eef2f6;
+  --n-150:#e4eaf0;
+  --n-200:#d8e0e8;
+  --n-300:#bcc8d4;
+  --n-400:#8a9aab;
+  --n-500:#637487;
+  --n-600:#46586b;
+  --n-700:#304255;
+  --n-800:#1c2c3b;
+  --n-900:#101d29;
+  --n-950:#08121b;
 
   /* ---- status ------------------------------------------------------------ */
   --ok-50:   #ecfdf5;  --ok-200:  #a7f3d0;  --ok-500: #10b981;  --ok-600: #059669;  --ok-700: #047857;
@@ -60,7 +60,7 @@
   --a-700:var(--brand-700);
 
   /* ---- semantic surfaces ------------------------------------------------- */
-  --bg-app:        var(--n-100);
+  --bg-app:        #f3f6f9;
   --bg-surface:    var(--n-0);
   --bg-raised:     var(--n-0);
   --bg-sunken:     var(--n-50);
@@ -84,12 +84,12 @@
 
   /* Navigation is the brand plane: the one place the identity is stated, so every
      other surface can stay quiet. */
-  --nav-bg:        var(--brand-800);
-  --nav-bg-accent: var(--brand-900);
-  --nav-fg:        #9FBACB;
+  --nav-bg:        #092c43;
+  --nav-bg-accent: #061b2a;
+  --nav-fg:        #a9c0ce;
   --nav-fg-strong: #ffffff;
-  --nav-hover:     rgba(255, 255, 255, 0.07);
-  --nav-active:    rgba(143, 195, 228, 0.16);
+  --nav-hover:     rgba(255, 255, 255, 0.075);
+  --nav-active:    rgba(115, 196, 231, 0.17);
   --nav-border:    rgba(255, 255, 255, 0.09);
   --nav-marker:    var(--brand-200);
 
@@ -103,10 +103,10 @@
   --text-xs:  0.75rem;
   --text-sm:  0.84375rem;
   --text-md:  0.9375rem;
-  --text-lg:  1rem;
-  --text-xl:  1.125rem;
-  --text-2xl: 1.375rem;
-  --text-3xl: 1.75rem;
+  --text-lg:  1.0625rem;
+  --text-xl:  1.25rem;
+  --text-2xl: 1.5625rem;
+  --text-3xl: 2rem;
 
   --leading-tight: 1.25;
   --leading-snug:  1.4;
@@ -129,30 +129,30 @@
   --sp-10:2.5rem;   --sp-12:3rem;     --sp-16:4rem;
 
   /* ---- radii ------------------------------------------------------------- */
-  --r-xs: 4px;  --r-sm: 6px;  --r-md: 9px;  --r-lg: 13px;
-  --r-xl: 18px; --r-full: 999px;
+  --r-xs: 5px;  --r-sm: 8px;  --r-md: 11px;  --r-lg: 15px;
+  --r-xl: 22px; --r-full: 999px;
 
   /* ---- elevation ---------------------------------------------------------
      A hairline for definition plus a soft ambient shadow, tinted with the brand
      hue so shadows sit in the same world as the colour above them. */
-  --shadow-xs: 0 1px 2px rgba(8, 45, 66, 0.05);
-  --shadow-sm: 0 1px 2px rgba(8, 45, 66, 0.06), 0 1px 3px rgba(8, 45, 66, 0.05);
-  --shadow-md: 0 2px 4px rgba(8, 45, 66, 0.05), 0 6px 16px rgba(8, 45, 66, 0.07);
-  --shadow-lg: 0 4px 8px rgba(8, 45, 66, 0.06), 0 16px 32px rgba(8, 45, 66, 0.11);
-  --shadow-xl: 0 8px 16px rgba(8, 45, 66, 0.07), 0 28px 60px rgba(8, 45, 66, 0.17);
-  --ring-focus: 0 0 0 3px rgba(46, 127, 176, 0.32);
+  --shadow-xs: 0 1px 2px rgba(6, 27, 42, 0.045), 0 1px 1px rgba(6, 27, 42, 0.025);
+  --shadow-sm: 0 2px 5px rgba(6, 27, 42, 0.055), 0 1px 2px rgba(6, 27, 42, 0.04);
+  --shadow-md: 0 8px 24px rgba(6, 27, 42, 0.075), 0 2px 6px rgba(6, 27, 42, 0.045);
+  --shadow-lg: 0 18px 44px rgba(6, 27, 42, 0.12), 0 4px 12px rgba(6, 27, 42, 0.055);
+  --shadow-xl: 0 30px 80px rgba(6, 27, 42, 0.22), 0 8px 24px rgba(6, 27, 42, 0.08);
+  --ring-focus: 0 0 0 4px rgba(37, 143, 193, 0.22);
   --ring-danger:0 0 0 3px rgba(239, 68, 68, 0.28);
 
   /* ---- motion ------------------------------------------------------------ */
   --ease: cubic-bezier(0.2, 0, 0.13, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --dur-fast: 90ms;
-  --dur-base: 140ms;
-  --dur-slow: 220ms;
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 300ms;
 
   /* ---- layout ------------------------------------------------------------ */
-  --nav-width: 264px;
-  --topbar-height: 60px;
+  --nav-width: 276px;
+  --topbar-height: 68px;
   --content-max: 1720px;
   --z-nav: 40;
   --z-topbar: 30;

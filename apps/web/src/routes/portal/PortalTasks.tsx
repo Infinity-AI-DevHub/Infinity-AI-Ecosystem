@@ -15,7 +15,7 @@ import { api } from '../../lib/api';
 import { useQuery } from '../../lib/query';
 import { AsyncSection, Empty, ErrorState, Loading } from '../../components/States';
 import { TaskPriority } from '../../components/TaskPriority';
-import { formatDate, relativeTime, titleCase } from '../../lib/format';
+import { formatDate, formatDateTime, initials, relativeTime, titleCase } from '../../lib/format';
 
 /** The same columns, in the same order, as the workspace board. */
 const COLUMNS = ['todo', 'in_progress', 'review', 'blocked', 'done'] as const;
@@ -160,7 +160,10 @@ export function PortalTasks() {
   );
 }
 
-type TaskDetail = Task & { projectName: string };
+type Comment = {
+  id: string; body: string; created_at: string; author_name: string | null;
+};
+type TaskDetail = Task & { projectName: string; comments: Comment[] };
 
 /** A task, to read. Nothing here changes anything. */
 function PortalTaskDialog({ taskId, onClose }: { taskId: string; onClose: () => void }) {
@@ -231,6 +234,43 @@ function PortalTaskDialog({ taskId, onClose }: { taskId: string; onClose: () => 
                 <p className="message-text">{task.description}</p>
               </section>
             ) : null}
+
+            {/*
+              * The same thread the team reads.
+              *
+              * Read-only: the portal has no route that writes a comment, so a client
+              * follows what is being said about their work without joining in.
+              */}
+            <section className="task-block">
+              <h4>
+                Updates
+                {task.comments?.length ? (
+                  <span className="count-badge">{task.comments.length}</span>
+                ) : null}
+              </h4>
+              {task.comments?.length ? (
+                <ul className="comment-list">
+                  {task.comments.map((entry) => (
+                    <li key={entry.id}>
+                      <span className="avatar avatar-sm" aria-hidden="true">
+                        {initials(entry.author_name ?? '?')}
+                      </span>
+                      <div className="comment-body">
+                        <p className="comment-meta">
+                          <strong>{entry.author_name ?? 'Infinity AI'}</strong>
+                          <time dateTime={entry.created_at} title={formatDateTime(entry.created_at)}>
+                            {relativeTime(entry.created_at)}
+                          </time>
+                        </p>
+                        <p className="comment-text">{entry.body}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="comment-empty">Nothing posted yet.</p>
+              )}
+            </section>
 
             <div className="dialog-actions">
               <button type="button" className="ghost-button" onClick={onClose}>Close</button>

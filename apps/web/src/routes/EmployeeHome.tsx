@@ -16,6 +16,7 @@ import { useState } from 'react';
 import { api, type Widget } from '../lib/api';
 import { useQuery } from '../lib/query';
 import { ErrorState, Loading } from '../components/States';
+import { SignatureRequests } from '../components/SignatureRequests';
 import { useSession } from '../lib/session';
 import { useNotify } from '../lib/notify';
 import { formatTime, relativeTime } from '../lib/format';
@@ -84,6 +85,8 @@ export default function EmployeeHome() {
         </div>
         <LiveClock />
       </header>
+
+      <SignatureRequests />
 
       <div className="employee-grid">
         <ClockCard onChanged={() => dashboard.reload()} />

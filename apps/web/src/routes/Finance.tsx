@@ -11,6 +11,7 @@ import { Laptop, Paperclip, Plus, Receipt, Trash2, Wallet } from 'lucide-react';
 import { api, idempotencyKey } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, FormError } from '../components/States';
+import { SignatureRequests } from '../components/SignatureRequests';
 import { formatCurrency, formatDate, initials, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 import { Invoices } from '../components/Invoices';
@@ -94,6 +95,8 @@ export default function Finance() {
           <Link className="ghost-button" to="/settings">Document settings</Link>
         ) : null}
       </header>
+
+      <SignatureRequests />
 
       <div className="tab-row" role="tablist" aria-label="Finance sections">
         {tabs.map(([value, label]) => (
