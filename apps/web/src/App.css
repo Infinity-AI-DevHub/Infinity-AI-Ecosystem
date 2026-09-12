@@ -109,10 +109,23 @@ code, pre { font-family: var(--font-mono); font-size: 0.92em; }
     var(--bg-app);
 }
 
+/*
+ * The sidebar is exactly the window's height, and its list scrolls inside it.
+ *
+ * It used to be 100vh with no overflow handling, which is fine until the modules
+ * outgrow the window — and they have. On a 700px-tall window the content stood 900px
+ * tall, so the last few items and the whole footer sat below the fold with no way to
+ * reach them: not scrolled off, simply gone.
+ *
+ * `dvh` rather than `vh` because the two differ wherever browser chrome appears and
+ * retracts, and being a hundred pixels too tall is the same bug again.
+ */
 .sidebar {
   position: sticky;
   top: 0;
-  height: 100vh;
+  height: 100dvh;
+  /* Clips rather than spills; the scrolling belongs to the list, not to this. */
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: var(--sp-5);
@@ -128,6 +141,7 @@ code, pre { font-family: var(--font-mono); font-size: 0.92em; }
 }
 
 .brand-lockup {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: var(--sp-3);
@@ -158,7 +172,35 @@ code, pre { font-family: var(--font-mono); font-size: 0.92em; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-.nav-list { display: grid; gap: 2px; flex: 1; align-content: start; }
+/*
+ * The only part that scrolls, so the brand stays at the top and the account stays at
+ * the bottom however long the list gets.
+ *
+ * `min-height: 0` is what makes it work: a flex item will not shrink below its content
+ * height without it, so the list simply grew and pushed the footer out of the window
+ * instead of gaining a scrollbar.
+ */
+.nav-list {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
+  /* Reaching the end of the modules should not start scrolling the page behind it. */
+  overscroll-behavior: contain;
+}
+
+/* The global scrollbar is tuned for light surfaces and disappears on the dark nav. */
+.nav-list::-webkit-scrollbar { width: 10px; }
+.nav-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--r-full);
+}
+.nav-list:hover::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.28); background-clip: content-box; }
+.nav-list::-webkit-scrollbar-track { background: transparent; }
 .nav-item {
   position: relative;
   display: flex;
@@ -209,6 +251,8 @@ code, pre { font-family: var(--font-mono); font-size: 0.92em; }
   gap: var(--sp-3);
   padding-top: var(--sp-4);
   border-top: 1px solid var(--nav-border);
+  /* Neither end gives way when the list is long; only the list scrolls. */
+  flex: 0 0 auto;
 }
 .security-panel {
   display: flex;
