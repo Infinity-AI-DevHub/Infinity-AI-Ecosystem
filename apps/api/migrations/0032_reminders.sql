@@ -61,7 +61,7 @@ CREATE TABLE reminders (
   CONSTRAINT chk_reminder_status CHECK (status IN ('active','done','cancelled')),
   CONSTRAINT chk_reminder_lead   CHECK (lead_days >= 0 AND lead_days <= 3650),
   CONSTRAINT chk_reminder_every  CHECK (repeat_interval >= 1 AND repeat_interval <= 99)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- The scheduler's query is "active, not snoozed, due window has opened, not told today".
 CREATE INDEX idx_reminders_due ON reminders (company_id, status, due_on);
@@ -74,7 +74,7 @@ CREATE TABLE reminder_watchers (
   PRIMARY KEY (reminder_id, user_id),
   CONSTRAINT fk_reminder_watcher_reminder FOREIGN KEY (reminder_id) REFERENCES reminders (id) ON DELETE CASCADE,
   CONSTRAINT fk_reminder_watcher_user     FOREIGN KEY (user_id)     REFERENCES users (id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB;
 
 -- Everybody internal keeps their own reminders; guests do not, because the portal has
 -- no place for them and a client should not be handed the company's renewal calendar.
