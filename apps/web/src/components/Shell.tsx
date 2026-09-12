@@ -26,6 +26,8 @@ import {
   Users,
   Handshake,
   Palmtree,
+  PanelLeftClose,
+  PanelLeftOpen,
   BookText,
   Wallet,
   Target,
@@ -90,6 +92,9 @@ export function Shell({ children }: { children: ReactNode }) {
   useEffect(() => { notifyRef.current = notify; }, [notify]);
   useEffect(() => { prefsRef.current = preferences; }, [preferences]);
   const [navOpen, setNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
+    isDesktop && window.localStorage.getItem('infinity:sidebar-collapsed') === 'true',
+  );
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionState>('closed');
   const searchRef = useRef<HTMLInputElement>(null);
@@ -166,6 +171,12 @@ export function Shell({ children }: { children: ReactNode }) {
     setNotificationsOpen(false);
   }, [location.pathname]);
 
+  useEffect(() => {
+    if (isDesktop) {
+      window.localStorage.setItem('infinity:sidebar-collapsed', String(sidebarCollapsed));
+    }
+  }, [sidebarCollapsed]);
+
   // "/" focuses search, the convention people already expect.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -233,7 +244,7 @@ export function Shell({ children }: { children: ReactNode }) {
     NAV_ITEMS.find((item) => location.pathname.startsWith(item.to))?.label ?? 'Workspace';
 
   return (
-    <div className="workspace-shell">
+    <div className={`workspace-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <a className="skip-link" href="#main-content">
         Skip to main content
       </a>
@@ -249,6 +260,17 @@ export function Shell({ children }: { children: ReactNode }) {
             <strong>Infinity Workspace</strong>
             <span>{session?.company?.name ?? 'Workspace'}</span>
           </div>
+          {isDesktop ? (
+            <button
+              type="button"
+              className="desktop-collapse-toggle"
+              aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            >
+              {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+            </button>
+          ) : null}
         </div>
 
         <ul className="nav-list">
@@ -256,6 +278,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <li key={item.to}>
               <NavLink
                 to={item.to}
+                title={sidebarCollapsed ? item.label : undefined}
                 className={({ isActive }) => `nav-item ${isActive ? 'nav-item-active' : ''}`}
               >
                 <item.icon size={17} aria-hidden="true" />

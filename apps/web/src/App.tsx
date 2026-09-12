@@ -25,6 +25,7 @@ import SharedResource from './routes/SharedResource';
 import ResetPassword from './routes/ResetPassword';
 import './App.css';
 import './styles/redesign.css';
+import './styles/desktop.css';
 
 // Modules load on demand so the initial sign-in payload stays small.
 const Home = lazy(() => import('./routes/Home'));
