@@ -31,6 +31,7 @@ export type DomainEventType =
   | 'file.recycled'
   | 'quotation.sent'
   | 'signature.requested'
+  | 'signature.completed'
   | 'message.broadcast'
   | 'meeting.reminder_due'
   | 'invoice.issued'

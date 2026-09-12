@@ -9,6 +9,7 @@ import { DateTimeCard } from './Attendance';
 import { CalendarDays, CheckSquare, Megaphone, ShieldCheck, HardDrive } from 'lucide-react';
 import { api, type Widget } from '../lib/api';
 import { TaskPriority } from '../components/TaskPriority';
+import { SignatureRequests } from '../components/SignatureRequests';
 import { useQuery } from '../lib/query';
 import { Loading, ErrorState } from '../components/States';
 import { useSession } from '../lib/session';
@@ -61,6 +62,8 @@ export default function Command() {
         </div>
         <DateTimeCard />
       </header>
+
+      <SignatureRequests />
 
       <section className="metric-row" aria-label="Summary">
         <Link to="/approvals" className="metric-card">

@@ -15,7 +15,7 @@
  * electronic signature and does not claim to be.
  */
 import { createHash } from 'node:crypto';
-import { many, newId, one, pool, type Queryable } from '../core/db.js';
+import { many, newId, one, pool, query, type Queryable } from '../core/db.js';
 import { badRequest, conflict, forbidden, notFound } from '../core/errors.js';
 import { authorize, capabilitiesForRole, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
@@ -283,6 +283,42 @@ export async function signDocument(
     metadata: { role: input.role, label: document.label, hash: document.hash },
   });
 
+  /*
+   * If somebody was waiting on this, tell them.
+   *
+   * A countersignature was previously a dead end: the colleague who asked had no way of
+   * learning it had happened except by going back to look at the document. Closing the
+   * request here means the answer travels the same way the question did.
+   */
+  const waiting = await one<{ id: string; requested_by: string; document_label: string }>(
+    `SELECT id, requested_by, document_label FROM signature_requests
+      WHERE company_id = $1 AND document_type = $2 AND document_id = $3
+        AND signer_id = $4 AND state = 'pending'`,
+    [actor.companyId, input.documentType, input.documentId, actor.userId],
+  );
+  if (waiting) {
+    await query(
+      `UPDATE signature_requests SET state = 'signed', signed_at = NOW(3) WHERE id = $1`,
+      [waiting.id],
+    );
+    // Not told about their own signature: asking yourself and then being emailed about
+    // it is the kind of noise that teaches people to ignore the sender.
+    if (waiting.requested_by !== actor.userId) {
+      await emit({
+        companyId: actor.companyId,
+        type: 'signature.completed',
+        actorId: actor.userId,
+        payload: {
+          documentType: input.documentType,
+          documentId: input.documentId,
+          documentLabel: waiting.document_label,
+          signedBy: actor.displayName,
+          requestedBy: waiting.requested_by,
+        },
+      });
+    }
+  }
+
   return (await one<SignatureRow>('SELECT * FROM document_signatures WHERE id = $1', [id]))!;
 }
 
@@ -400,6 +436,30 @@ export async function requestCountersignature(
   }
   if (internal.length >= 2) throw conflict('Both internal signatures are already in place');
 
+  /*
+   * Recorded, not just announced.
+   *
+   * The notification alone left nothing to list and nobody to tell when the document
+   * was eventually signed. Asking again replaces the existing ask rather than making a
+   * second one — a repeated request is the same request, said twice.
+   */
+  await query(
+    `INSERT INTO signature_requests
+       (id, company_id, document_type, document_id, document_label, requested_by, signer_id, note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ON DUPLICATE KEY UPDATE
+       requested_by = VALUES(requested_by),
+       document_label = VALUES(document_label),
+       note = VALUES(note),
+       state = 'pending',
+       signed_at = NULL,
+       created_at = NOW(3)`,
+    [
+      newId(), actor.companyId, input.documentType, input.documentId, document.label,
+      actor.userId, signer.id, input.note ?? null,
+    ],
+  );
+
   await emit({
     companyId: actor.companyId,
     type: 'signature.requested',
@@ -473,4 +533,34 @@ export async function verify(
     complete: required.every((role) => rows.some((row) => row.role === role)),
     intact: signatures.every((signature) => signature.valid),
   };
+}
+
+/**
+ * The signature requests waiting on this person.
+ *
+ * Read by the banner at the top of the dashboard and Finance, so it answers the only
+ * question that banner asks: what have colleagues asked me to sign, and who asked.
+ */
+export async function pendingSignatureRequests(actor: Actor) {
+  const rows = await many<{
+    id: string; document_type: string; document_id: string; document_label: string;
+    note: string | null; created_at: Date; requested_by_name: string;
+  }>(
+    `SELECT r.id, r.document_type, r.document_id, r.document_label, r.note, r.created_at,
+            u.display_name AS requested_by_name
+       FROM signature_requests r
+       JOIN users u ON u.id = r.requested_by
+      WHERE r.company_id = $1 AND r.signer_id = $2 AND r.state = 'pending'
+      ORDER BY r.created_at`,
+    [actor.companyId, actor.userId],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    documentType: row.document_type,
+    documentId: row.document_id,
+    documentLabel: row.document_label,
+    note: row.note,
+    requestedBy: row.requested_by_name,
+    requestedAt: row.created_at,
+  }));
 }

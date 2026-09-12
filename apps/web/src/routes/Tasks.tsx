@@ -12,7 +12,7 @@ import { api, ApiError } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { TaskPriority } from '../components/TaskPriority';
-import { formatDate, initials, relativeTime, titleCase } from '../lib/format';
+import { formatDate, formatDateTime, initials, relativeTime, titleCase } from '../lib/format';
 import { PeoplePicker } from '../components/PeoplePicker';
 import { useSession } from '../lib/session';
 import { ShareWith } from '../components/ShareWith';
@@ -344,17 +344,24 @@ function TaskDialog({
                           <div className="comment-body">
                             <p className="comment-meta">
                               <strong>{entry.author_name ?? 'Unknown'}</strong>
-                              <time dateTime={entry.created_at}>{relativeTime(entry.created_at)}</time>
+                              {/* Relative to read, exact on hover: "3 days ago" is what
+                                  you want at a glance and never what you want in a
+                                  dispute about when something was said. */}
+                              <time dateTime={entry.created_at} title={formatDateTime(entry.created_at)}>
+                                {relativeTime(entry.created_at)}
+                              </time>
                             </p>
                             <p className="comment-text">{entry.body}</p>
                           </div>
                         </li>
                       ))}
                     </ul>
-                  ) : null}
+                  ) : (
+                    <p className="comment-empty">No comments yet.</p>
+                  )}
 
-                  {/* The composer, not a heading over emptiness: with no comments the
-                      only useful thing on screen is the box for writing the first one. */}
+                  {/* The composer sits below the thread, with the empty state said above
+                      it rather than used as the placeholder of the box you type into. */}
                   <form
                     className="comment-form"
                     onSubmit={(event) => {
@@ -368,11 +375,7 @@ function TaskDialog({
                       rows={3}
                       value={comment}
                       onChange={(event) => setComment(event.target.value)}
-                      placeholder={
-                        detail.data.comments.length === 0
-                          ? 'No comments yet — start the thread.'
-                          : 'Add a comment…'
-                      }
+                      placeholder="Write a comment…"
                     />
                     <div className="comment-actions">
                       <button

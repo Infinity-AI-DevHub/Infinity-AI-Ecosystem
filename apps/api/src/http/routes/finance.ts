@@ -472,6 +472,12 @@ export async function financeRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(204).send();
   });
 
+  /** What colleagues have asked this person to sign. Feeds the banner. */
+  app.get('/signatures/requests', async (request) => {
+    const actor = requireActor(request);
+    return { items: await signatures.pendingSignatureRequests(actor) };
+  });
+
   app.get('/signatures/:type/:id', async (request) => {
     const actor = requireActor(request);
     const { type, id } = request.params as { type: signatures.DocumentType; id: string };

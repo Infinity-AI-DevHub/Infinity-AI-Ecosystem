@@ -484,6 +484,12 @@ export async function listTasks(
           -- branch here, a project started by an employee never appeared in their list.
           $7
           OR pm.user_id IS NOT NULL
+          -- The work assigned to you is yours to see, whether or not anybody put you on
+          -- the project. Without this a task could be given to somebody who then could
+          -- not find it.
+          OR t.assignee_id = $2
+          OR EXISTS (SELECT 1 FROM task_assignees ta
+                      WHERE ta.task_id = t.id AND ta.user_id = $2)
           OR EXISTS (
             SELECT 1 FROM resource_grants g
              WHERE g.company_id = t.company_id
@@ -553,7 +559,21 @@ export async function updateTask(
     : changingDefinition
       ? 'task.update'
       : 'task.progress';
-  await requireProject(actor, existing.project_id, capability);
+
+  if (capability === 'task.progress') {
+    /*
+     * Moving your own card does not require membership of its project.
+     *
+     * Deciding what a task says, or who else does it, still does — those belong to
+     * whoever runs the project. But being handed a job and then being unable to mark it
+     * in progress is the same missing claim that kept assignees from opening the task
+     * at all.
+     */
+    await requireTaskRead(actor, existing);
+    await authorize({ actor, capability, resourceless: true });
+  } else {
+    await requireProject(actor, existing.project_id, capability);
+  }
   if (expectedVersion !== null && existing.version !== expectedVersion) throw preconditionFailed();
   if (input.assigneeId) await assertCompanyMember(actor.companyId, input.assigneeId);
 
@@ -692,13 +712,40 @@ export async function updateTask(
  * The project check also asked for `task.update`, so reading required permission to
  * change - which locked out read-only roles as well as guests.
  */
+/** Whether this person is on the task itself, rather than on its project. */
+async function isAssignee(actor: Actor, taskId: string): Promise<boolean> {
+  const row = await one(
+    `SELECT 1 FROM tasks t
+      WHERE t.id = $1
+        AND (t.assignee_id = $2
+             OR EXISTS (SELECT 1 FROM task_assignees ta
+                         WHERE ta.task_id = t.id AND ta.user_id = $2))`,
+    [taskId, actor.userId],
+  );
+  return Boolean(row);
+}
+
+/**
+ * Who may open a task.
+ *
+ * Three ways in, and the second was missing: through the project, by being the person
+ * doing the work, or through a share.
+ *
+ * Being assigned a task granted nothing at all. Someone given a job could not open it,
+ * could not move it across the board and could not read the discussion on it — the task
+ * did not even appear in their own list — unless somebody had separately added them to
+ * the project. Assignment is the most direct claim on a task there is, so it is checked
+ * before the share.
+ */
 async function requireTaskRead(actor: Actor, task: TaskRow): Promise<void> {
   try {
     await requireProject(actor, task.project_id, 'task.read');
     return;
   } catch {
-    // Not reachable through the project; a direct share is the remaining possibility.
+    // Not reachable through the project; being on the task is the next possibility.
   }
+  if (await isAssignee(actor, task.id)) return;
+
   await authorize({
     actor,
     capability: 'task.read',
@@ -758,8 +805,12 @@ export async function comment(actor: Actor, taskId: string, body: string) {
    * `task.update`, because saying what you did is the other half of moving the card —
    * requiring the editing capability would have left employees able to change a task's
    * status and unable to explain it.
+   *
+   * Reached through the task rather than only the project, so the person actually doing
+   * the work can say something about it without being a member of the project.
    */
-  await requireProject(actor, task.project_id, 'task.progress');
+  await requireTaskRead(actor, task);
+  await authorize({ actor, capability: 'task.progress', resourceless: true });
   const commentId = newId();
   await pool.query(
     `INSERT INTO task_comments (id, company_id, task_id, author_id, body) VALUES ($1,$2,$3,$4,$5)`,

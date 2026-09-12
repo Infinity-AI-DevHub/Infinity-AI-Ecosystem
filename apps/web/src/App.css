@@ -446,7 +446,6 @@ code, pre { font-family: var(--font-mono); font-size: 0.92em; }
               color var(--dur-fast) var(--ease);
 }
 .chip:hover { border-color: var(--border-strong); color: var(--fg-primary); }
-.chip-active { background: var(--a-600); border-color: var(--a-600); color: var(--fg-inverse); }
 .toggle-active { background: var(--bg-selected); border-color: var(--a-200); color: var(--a-700); }
 
 /* ==========================================================================
@@ -1314,10 +1313,7 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 
 .comment-list, .activity-list, .dependency-list,
 .decision-list, .route-list, .session-list, .group-list { display: grid; gap: var(--sp-3); }
-.comment-list li { padding-left: var(--sp-3); border-left: 2px solid var(--border-default); }
-.comment-list strong { font-size: var(--text-sm); margin-right: var(--sp-2); }
-.comment-list time, .activity-list time { font-size: var(--text-2xs); color: var(--fg-muted); }
-.comment-list p { margin-top: var(--sp-1); font-size: var(--text-sm); }
+.activity-list time { font-size: var(--text-2xs); color: var(--fg-muted); }
 .activity-list li {
   display: flex; justify-content: space-between; gap: var(--sp-3); min-width: 0;
   font-size: var(--text-xs); color: var(--fg-secondary); overflow-wrap: anywhere;
@@ -2863,16 +2859,51 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 
 /* A comment is a person saying something, so it leads with who. */
+/*
+ * The comment thread.
+ *
+ * Read top to bottom like a conversation: who, when, what — separated by a hairline
+ * rather than boxed, because a column of cards turns three remarks into something that
+ * looks like a form. The avatar anchors the left edge so the eye can find each speaker
+ * without reading the names.
+ */
+.comment-list { display: grid; gap: 0; }
 .comment-list li {
-  display: flex; gap: var(--sp-3); align-items: flex-start;
-  padding: 0; border-left: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--sp-3);
+  align-items: start;
+  padding: var(--sp-3) 0;
+  border-top: 1px solid var(--border-subtle);
 }
-.comment-body { min-width: 0; }
-.comment-meta { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; }
-.comment-text { margin: 2px 0 0; font-size: var(--text-sm); white-space: pre-wrap; }
+.comment-list li:first-child { border-top: 0; padding-top: 0; }
+
+.comment-body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.comment-meta {
+  display: flex; align-items: baseline; gap: var(--sp-2);
+  margin: 0; flex-wrap: wrap;
+}
+.comment-meta strong { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.comment-meta time { font-size: var(--text-2xs); color: var(--fg-muted); }
+.comment-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  /* Author's line breaks kept; a long unbroken string still wraps rather than
+     stretching the dialog sideways. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .avatar-sm { width: 26px; height: 26px; font-size: var(--text-2xs); flex: 0 0 auto; }
 
-.comment-form { display: grid; gap: var(--sp-2); }
+/* Said once, quietly, instead of as placeholder text inside the box you type into. */
+.comment-empty {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--text-sm);
+  color: var(--fg-tertiary);
+}
+
+.comment-form { display: grid; gap: var(--sp-2); margin-top: var(--sp-4); }
 .comment-form textarea { width: 100%; }
 .comment-actions { display: flex; justify-content: flex-end; }
 
@@ -3344,10 +3375,21 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 
 .chip-row { gap: var(--sp-2); }
+/*
+ * The later refinement of a chip's resting look.
+ *
+ * It must not set `background`. This block sits after `.chip-active`, and at equal
+ * specificity the last rule wins — so a plain background here painted over the selected
+ * chip's fill while the selected chip's white text stayed, leaving white on near-white
+ * and a filter that looked blank. The selected state is the one thing this block leaves
+ * alone.
+ */
+.chip:not(.chip-active) {
+  background: color-mix(in srgb, var(--bg-surface) 92%, var(--brand-50));
+}
 .chip {
   min-height: 34px;
   border-color: color-mix(in srgb, var(--border-default) 78%, var(--brand-100));
-  background: color-mix(in srgb, var(--bg-surface) 92%, var(--brand-50));
 }
 .chip-active { box-shadow: 0 4px 10px rgba(13, 66, 96, 0.17); }
 
@@ -3426,3 +3468,32 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 
 .field-row { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
 .field-row > .field { flex: 1 1 160px; }
+
+/* ---------------------------------------------------- signature requests banner */
+
+/*
+ * Something a colleague is waiting on. Accent-edged rather than red: it is a request,
+ * not a failure, and a page that shouts at you about ordinary work stops being read.
+ * Absent entirely when there is nothing waiting.
+ */
+.signature-requests { display: grid; gap: var(--sp-2); margin-bottom: var(--sp-5); }
+.signature-request {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-inline-start: 3px solid var(--brand-500);
+  border-radius: var(--r-lg);
+}
+.signature-request > svg { color: var(--brand-500); }
+.signature-request > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.signature-request strong { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.signature-request .primary-button { white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .signature-request { grid-template-columns: auto minmax(0, 1fr); }
+  .signature-request .primary-button { grid-column: 1 / -1; justify-content: center; }
+}
