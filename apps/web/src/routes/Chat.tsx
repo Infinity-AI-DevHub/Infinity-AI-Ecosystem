@@ -94,6 +94,7 @@ export default function Chat() {
     for (const message of live) seen.set(message.seq, message);
     return [...seen.values()].sort((a, b) => a.seq - b.seq);
   })();
+  const activeRoom = rooms.data?.items.find((room) => room.id === roomId);
 
   useLayoutEffect(() => {
     const container = scrollRef.current;
@@ -163,6 +164,10 @@ export default function Chat() {
 
       <div className="chat-layout">
         <nav className="chat-rooms" aria-label="Conversations">
+          <div className="chat-rooms-head">
+            <span>Conversations</span>
+            <span className="chat-room-total">{rooms.data?.items.length ?? 0}</span>
+          </div>
           <AsyncSection query={rooms}>
             {(data) =>
               data.items.length === 0 ? (
@@ -196,6 +201,19 @@ export default function Chat() {
         </nav>
 
         <section className="chat-thread" aria-label="Messages">
+          {roomId ? (
+            <header className="chat-thread-header">
+              <span className={`chat-thread-symbol chat-thread-${activeRoom?.type ?? 'channel'}`} aria-hidden="true">
+                {activeRoom?.type === 'direct'
+                  ? initials(activeRoom.counterpart_name ?? '?')
+                  : <Hash size={17} />}
+              </span>
+              <div>
+                <strong>{activeRoom ? roomLabel(activeRoom) : 'Conversation'}</strong>
+                <span>{activeRoom?.topic || (activeRoom?.type === 'direct' ? 'Direct conversation' : 'Team conversation')}</span>
+              </div>
+            </header>
+          ) : null}
           {!roomId ? (
             <Empty title="Select a conversation" description="Choose a channel or colleague." />
           ) : history.loading ? (
@@ -245,24 +263,27 @@ export default function Chat() {
               </div>
 
               <form className="chat-composer" onSubmit={submit}>
-                <label className="visually-hidden" htmlFor="chat-input">
-                  Write a message
-                </label>
-                <textarea
-                  id="chat-input"
-                  rows={2}
-                  value={draft}
-                  placeholder="Write a message…"
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    // Enter sends, Shift+Enter makes a new line - and the button below
-                    // remains a full keyboard-accessible alternative.
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault();
-                      void submit(event);
-                    }
-                  }}
-                />
+                <div className="chat-compose-field">
+                  <label className="visually-hidden" htmlFor="chat-input">
+                    Write a message
+                  </label>
+                  <textarea
+                    id="chat-input"
+                    rows={2}
+                    value={draft}
+                    placeholder="Write a message…"
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      // Enter sends, Shift+Enter makes a new line - and the button below
+                      // remains a full keyboard-accessible alternative.
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault();
+                        void submit(event);
+                      }
+                    }}
+                  />
+                  <span className="chat-compose-hint">Enter to send · Shift + Enter for a new line</span>
+                </div>
                 <button type="submit" className="primary-button" disabled={send.pending}>
                   <Send size={15} aria-hidden="true" />
                   <span className="visually-hidden">Send message</span>

@@ -32,6 +32,7 @@ import { PortalMeetings, PortalNotices } from './routes/portal/PortalMeetings';
 import { PortalGuard } from './routes/portal/PortalGuard';
 import './App.css';
 import './styles/portal.css';
+import './styles/redesign.css';
 
 /**
  * Anything else here is somebody following a stale or mistyped link. It says so plainly
