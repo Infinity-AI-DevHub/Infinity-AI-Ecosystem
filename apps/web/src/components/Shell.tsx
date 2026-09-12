@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell,
+  BellRing,
   CalendarDays,
   Clock,
   CheckSquare,
@@ -62,6 +63,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/announcements', label: 'Announcements', icon: Megaphone, badge: 'announcements' },
   { to: '/messages', label: 'Messages', icon: Megaphone, capability: 'message.broadcast' },
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, capability: 'request.create', badge: 'approvals' },
+  { to: '/reminders', label: 'Reminders', icon: BellRing, capability: 'reminder.manage' },
   { to: '/attendance', label: 'Attendance', icon: Clock, capability: 'attendance.record' },
   { to: '/leave', label: 'Leave', icon: Palmtree, capability: 'leave.request', badge: 'leave' },
   { to: '/finance', label: 'Finance', icon: Wallet, capability: 'expense.submit', badge: 'invoices' },

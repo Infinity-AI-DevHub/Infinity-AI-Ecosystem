@@ -29,6 +29,15 @@ type Announcement = {
 };
 
 type Stats = { reads: number; acks: number; audience_size: number };
+
+/**
+ * Who a notice is addressed to.
+ *
+ * The first three are internal. 'organisation' addresses client organisations, who read
+ * it in the portal — announcements are otherwise invisible to them, since a guest is
+ * refused the announcements endpoint entirely.
+ */
+type Scope = 'company' | 'department' | 'group' | 'organisation';
 type Department = { id: string; name: string };
 type Group = { id: string; name: string };
 
@@ -376,7 +385,7 @@ function ComposeAnnouncement({
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [priority, setPriority] = useState<'normal' | 'important' | 'critical'>('normal');
-  const [scope, setScope] = useState<'company' | 'department' | 'group'>('company');
+  const [scope, setScope] = useState<Scope>('company');
   const [targetIds, setTargetIds] = useState<string[]>([]);
   const [requiresAck, setRequiresAck] = useState(false);
   const [expiresAt, setExpiresAt] = useState('');
@@ -405,6 +414,16 @@ function ComposeAnnouncement({
   const groups = useQuery<{ items: Group[] }>('/admin/groups', (signal) =>
     api.get('/admin/groups', signal),
   );
+  /*
+   * Client organisations, for a notice addressed outside the company.
+   *
+   * Only fetched when that audience is chosen: the client list is commercial information
+   * and there is no reason to pull it in every time somebody writes to their department.
+   */
+  const organisations = useQuery<{ items: { id: string; name: string }[] }>(
+    scope === 'organisation' ? '/external/organizations' : null,
+    (signal) => api.get('/external/organizations', signal),
+  );
 
   const create = useMutation(
     async () => {
@@ -413,7 +432,9 @@ function ComposeAnnouncement({
           ? { scope: 'company' as const }
           : scope === 'department'
             ? { scope: 'department' as const, departmentIds: targetIds }
-            : { scope: 'group' as const, groupIds: targetIds };
+            : scope === 'organisation'
+              ? { scope: 'organisation' as const, organisationIds: targetIds }
+              : { scope: 'group' as const, groupIds: targetIds };
 
       return api.post<{ id: string }>('/announcements', {
         title,
@@ -427,7 +448,10 @@ function ComposeAnnouncement({
     { invalidates: ['/announcements'], onSuccess: (result) => onCreated(result.id) },
   );
 
-  const targets = scope === 'department' ? (departments.data?.items ?? []) : (groups.data?.items ?? []);
+  const targets =
+    scope === 'department' ? (departments.data?.items ?? [])
+      : scope === 'organisation' ? (organisations.data?.items ?? [])
+        : (groups.data?.items ?? []);
 
   return (
     <div className="dialog-scrim announcement-dialog-layer" role="presentation">
@@ -498,20 +522,31 @@ function ComposeAnnouncement({
                 id="ann-scope"
                 value={scope}
                 onChange={(event) => {
-                  setScope(event.target.value as 'company' | 'department' | 'group');
+                  setScope(event.target.value as Scope);
                   setTargetIds([]);
                 }}
               >
                 <option value="company">Everyone in the company</option>
                 <option value="department">Specific departments</option>
                 <option value="group">Specific groups</option>
+                <option value="organisation">Client organisations</option>
               </select>
+              {scope === 'organisation' ? (
+                <span className="field-hint">
+                  Clients read this in their portal. Nobody inside the company sees it.
+                </span>
+              ) : (
+                <span className="field-hint">Only people inside the company see this.</span>
+              )}
             </div>
           </div>
 
           {scope !== 'company' ? (
             <fieldset className="field">
-              <legend>{scope === 'department' ? 'Departments' : 'Groups'}</legend>
+              <legend>
+                {scope === 'department' ? 'Departments'
+                  : scope === 'organisation' ? 'Clients' : 'Groups'}
+              </legend>
               <div className="attendee-picker">
                 {targets.length === 0 ? (
                   <p className="field-hint">None available.</p>

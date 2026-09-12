@@ -69,7 +69,15 @@ export async function calendarRoutes(app: FastifyInstance): Promise<void> {
   app.get('/calendar/events/:id', async (request, reply) => {
     const actor = requireActor(request);
     const { id } = parse(idParam, request.params);
-    const event = await calendar.getEvent(actor, id);
+    // Which occurrence of a series is being looked at. Absent for a one-off meeting, and
+    // for a series it defaults to the stored row, which is the first occurrence.
+    const { occurrence } = parse(
+      z.object({ occurrence: z.string().datetime().optional() }),
+      request.query,
+    );
+    const event = await calendar.getEvent(
+      actor, id, occurrence ? new Date(occurrence) : undefined,
+    );
     setVersionHeader(reply, event.version);
     return event;
   });

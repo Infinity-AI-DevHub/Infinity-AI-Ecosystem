@@ -215,11 +215,23 @@ export async function update(
   return announcement;
 }
 
-/** Returns the announcements this specific person is targeted by. */
+/**
+ * The announcements this person is targeted by — plus, for whoever can publish them,
+ * the ones they have sent to clients.
+ *
+ * A client notice is addressed to an organisation, so it matches none of the internal
+ * scopes and would be invisible to its own author: sent, and then gone. Publishers see
+ * them so they can find and manage what they sent; everybody else's feed is unchanged,
+ * which is what keeps a notice meant for a client out of an employee's timeline.
+ */
 export async function listForUser(actor: Actor, limit = 20) {
-  const groupClause = jsonArrayOverlaps("JSON_EXTRACT(a.audience, '$.groupIds')", actor.groupIds, 5);
+  const mayManage = actor.capabilities.has('announcement.create');
+  const groupClause = jsonArrayOverlaps("JSON_EXTRACT(a.audience, '$.groupIds')", actor.groupIds, 6);
   return many(
     `SELECT a.id, a.title, a.body, a.priority, a.requires_ack, a.publish_at, a.expires_at,
+            -- Carried so the interface can say who a notice went to, which matters most
+            -- for the ones that left the company.
+            a.audience,
             u.display_name AS author_name,
             r.read_at, r.acknowledged_at
        FROM announcements a
@@ -235,13 +247,14 @@ export async function listForUser(actor: Actor, limit = 20) {
               AND $3 IS NOT NULL
               AND JSON_CONTAINS(JSON_EXTRACT(a.audience, '$.departmentIds'), JSON_QUOTE($3)))
           OR (JSON_UNQUOTE(JSON_EXTRACT(a.audience, '$.scope')) = 'group' AND ${groupClause})
+          OR ($5 AND JSON_UNQUOTE(JSON_EXTRACT(a.audience, '$.scope')) = 'organisation')
         )
       ORDER BY
         CASE a.priority WHEN 'critical' THEN 0 WHEN 'important' THEN 1 ELSE 2 END,
         a.publish_at DESC
       LIMIT $4`,
     // Group ids go last so expanding them cannot shift the placeholders before them.
-    [actor.companyId, actor.userId, actor.departmentId, limit, ...actor.groupIds],
+    [actor.companyId, actor.userId, actor.departmentId, limit, mayManage, ...actor.groupIds],
   );
 }
 
@@ -254,7 +267,20 @@ export async function listForUser(actor: Actor, limit = 20) {
  * target group reads as not found rather than leaking the content.
  */
 export async function getForUser(actor: Actor, announcementId: string) {
-  const groupClause = jsonArrayOverlaps("JSON_EXTRACT(a.audience, '$.groupIds')", actor.groupIds, 5);
+  /*
+   * Whoever can publish an announcement can read one back.
+   *
+   * The audience clauses below describe who a notice was *addressed to*, which is the
+   * right test for a reader. It is the wrong test for its author: a notice addressed to
+   * a client organisation matches none of the internal scopes, so publishing one and
+   * then being told "Announcement not found" was the only possible outcome — the
+   * composer could not show what it had just created.
+   *
+   * This widens who may open one by id; it does not widen anybody's feed. The list
+   * query still matches audience alone, so client notices stay out of staff timelines.
+   */
+  const mayManage = actor.capabilities.has('announcement.create');
+  const groupClause = jsonArrayOverlaps("JSON_EXTRACT(a.audience, '$.groupIds')", actor.groupIds, 6);
   const row = await one(
     `SELECT a.id, a.title, a.body, a.priority, a.requires_ack, a.publish_at, a.expires_at,
             u.display_name AS author_name,
@@ -273,9 +299,13 @@ export async function getForUser(actor: Actor, announcementId: string) {
               AND $4 IS NOT NULL
               AND JSON_CONTAINS(JSON_EXTRACT(a.audience, '$.departmentIds'), JSON_QUOTE($4)))
           OR (JSON_UNQUOTE(JSON_EXTRACT(a.audience, '$.scope')) = 'group' AND ${groupClause})
+          OR $5
         )`,
     // Group ids last, so expanding them cannot shift the placeholders before them.
-    [actor.companyId, actor.userId, announcementId, actor.departmentId, ...actor.groupIds],
+    [
+      actor.companyId, actor.userId, announcementId, actor.departmentId,
+      mayManage, ...actor.groupIds,
+    ],
   );
   if (!row) throw notFound('Announcement not found');
   return row;

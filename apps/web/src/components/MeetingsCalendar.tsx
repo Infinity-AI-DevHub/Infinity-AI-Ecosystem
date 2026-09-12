@@ -13,6 +13,8 @@ import { ChevronLeft, ChevronRight, Video } from 'lucide-react';
 
 export type CalendarEvent = {
   id: string;
+  /** Unique per occurrence of a series; equals `id` for a one-off meeting. */
+  occurrenceId: string;
   title: string;
   startsAt: string;
   endsAt: string;
@@ -103,7 +105,8 @@ export function MeetingsCalendar({
   weekStart: Date;
   onWeekChange: (next: Date) => void;
   selectedId?: string | null;
-  onSelect: (id: string) => void;
+  /** The series id, and which occurrence of it was clicked. */
+  onSelect: (id: string, at?: string) => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const today = new Date();
@@ -209,9 +212,9 @@ export function MeetingsCalendar({
                 );
                 return (
                   <button
-                    key={event.id}
+                    key={event.occurrenceId}
                     type="button"
-                    className={`calendar-event ${selectedId === event.id ? 'is-selected' : ''} ${
+                    className={`calendar-event ${selectedId === event.occurrenceId ? 'is-selected' : ''} ${
                       event.myRsvp === 'declined' ? 'is-declined' : ''}`}
                     style={{
                       top: `${top}px`,
@@ -219,7 +222,7 @@ export function MeetingsCalendar({
                       left: `calc(${(lane / lanes) * 100}% + 2px)`,
                       width: `calc(${100 / lanes}% - 4px)`,
                     }}
-                    onClick={() => onSelect(event.id)}
+                    onClick={() => onSelect(event.id, event.startsAt)}
                   >
                     <span className="calendar-event-time">
                       {start.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}

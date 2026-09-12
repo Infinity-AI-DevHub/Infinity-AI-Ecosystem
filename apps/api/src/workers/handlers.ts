@@ -18,7 +18,8 @@ import * as finance from '../domains/finance.js';
 import * as files from '../domains/files.js';
 import { publish, publishToUser } from '../core/realtime.js';
 import {
-  billingProfile, buildModel, renderEmailHtml, renderPdf, signatureSlots,
+  billingProfile, buildModel, money, renderEmailHtml, renderNoticeEmail, renderPdf,
+  signatureSlots,
   type DocumentKind, type RenderModel,
 } from '../domains/document-render.js';
 
@@ -920,32 +921,119 @@ const onInvoicePayment: Handler = async (event) => {
  */
 const onInvoiceReminder: Handler = async (event) => {
   const { invoiceId, daysLate } = event.payload as { invoiceId: string; daysLate: number };
-  const invoice = await one<{ number: string; currency: string; total: string; amount_paid: string; due_date: string }>(
-    'SELECT number, currency, total, amount_paid, due_date FROM invoices WHERE id = $1',
-    [invoiceId],
-  );
-  if (!invoice) return;
-  const recipients = await clientRecipients(invoiceId);
-  if (recipients.length === 0) {
-    // Reachable only if the billing address was cleared after the invoice was approved.
-    logger.error({ invoiceId }, 'invoice has no recipient; nothing was sent');
-    return;
-  }
 
-  const balance = (Number(invoice.total) - Number(invoice.amount_paid)).toFixed(2);
-  await notifier.send({
-    from: { address: systemSender(), name: 'Infinity Workspace' },
-    to: recipients,
-    subject: `Reminder: invoice ${invoice.number} is overdue`,
-    text: [
-      `Invoice ${invoice.number} was due on ${String(invoice.due_date).slice(0, 10)}, ${daysLate} day(s) ago.`,
-      '',
-      `Outstanding: ${balance} ${invoice.currency}`,
-      '',
-      'If payment is already on its way, please ignore this message.',
-      'If something is wrong with the invoice, reply and we will sort it out.',
-    ].join('\n'),
+  /*
+   * A reminder is the same letter as the invoice, with a different first line.
+   *
+   * It used to be hand-written plain text from "Infinity Workspace", with no letterhead,
+   * no figures beyond a bare number, and none of the payment details — so the one email
+   * a client is most likely to act on looked the least like it came from the company.
+   * Going through sendDocument gives it the same letterhead, the same lines, the same
+   * how-to-pay block and the invoice itself attached, which is what somebody being asked
+   * to pay actually needs in front of them.
+   */
+  await sendDocument('invoice', invoiceId, event.company_id, (model) => {
+    const outstanding = model.total - model.amountPaid;
+    const due = model.dueDate ?? 'its due date';
+    return {
+      subject: `Reminder: invoice ${model.number} is overdue`,
+      intro: daysLate === 1
+        ? `Invoice ${model.number} was due yesterday, on ${due}, and `
+          + `${money(outstanding, model.currency)} is still outstanding.`
+        : `Invoice ${model.number} was due on ${due}, ${daysLate} days ago, and `
+          + `${money(outstanding, model.currency)} is still outstanding.`,
+    };
   });
+};
+
+/**
+ * A reminder has come due, or is inside its lead-in.
+ *
+ * Both channels, deliberately. The bell is for whoever is already in the app; the email
+ * is for the renewal that falls on a Saturday, the person who is on site that week, and
+ * the subscription nobody would have thought about until the card was declined. A
+ * reminder that only fires where you happen to be looking is not a reminder.
+ *
+ * The scheduler sends at most one of these per reminder per day, so this fans out
+ * without any deduplication of its own beyond the notification key.
+ */
+const onReminderDue: Handler = async (event) => {
+  const { reminderId, title, notes, kind, dueOn, daysLeft, amount, currency, recipients } =
+    event.payload as {
+      reminderId: string;
+      title: string;
+      notes: string | null;
+      kind: string;
+      dueOn: string;
+      daysLeft: number;
+      amount: number | null;
+      currency: string | null;
+      recipients: string[];
+    };
+  if (recipients.length === 0) return;
+
+  /** "in 3 days", "today", "4 days ago" — the part people actually read. */
+  const when = daysLeft > 1 ? `in ${daysLeft} days`
+    : daysLeft === 1 ? 'tomorrow'
+      : daysLeft === 0 ? 'today'
+        : daysLeft === -1 ? 'yesterday — overdue'
+          : `${Math.abs(daysLeft)} days ago — overdue`;
+
+  const noun = kind === 'payment' ? 'Payment due'
+    : kind === 'renewal' ? 'Renewal due'
+      : 'Reminder';
+
+  await notifications.createMany(recipients, (userId) => ({
+    companyId: event.company_id,
+    userId,
+    type: daysLeft < 0 ? 'reminder_overdue' : 'reminder',
+    title: `${noun}: ${title}`,
+    body: `Due ${when} (${dueOn})`,
+    link: '/reminders',
+    resourceType: 'reminder',
+    resourceId: reminderId,
+    // Keyed by the day as well as the reminder: tomorrow's nudge is a new thing to say,
+    // not a duplicate of today's.
+    dedupeKey: `reminder:${reminderId}:${dueOn}:${daysLeft}:${userId}`,
+  }));
+
+  const profile = await billingProfile(event.company_id);
+  const rows = await many<{ email_display: string }>(
+    `SELECT email_display FROM users
+      WHERE id IN (${recipients.map((_, i) => `$${i + 1}`).join(',')})
+        AND status IN ('invited', 'active') AND email_display IS NOT NULL`,
+    recipients,
+  );
+
+  const money = amount != null && currency ? `${currency} ${amount.toFixed(2)}` : null;
+  const html = renderNoticeEmail(profile, {
+    heading: `${noun}: ${title}`,
+    lines: [
+      `This is due ${when}, on ${dueOn}.`,
+      ...(notes ? [notes] : []),
+    ],
+    highlight: money,
+    footnote: 'Mark it done in Infinity Workspace and this will stop — or move to its next date if it repeats.',
+  });
+
+  // One message each, never one with everybody in To.
+  for (const row of rows) {
+    await notifier.send({
+      from: { address: systemSender(), name: profile.legal_name ?? 'Infinity Workspace' },
+      to: [row.email_display],
+      subject: `${noun}: ${title} — due ${when}`,
+      html,
+      text: [
+        `${noun}: ${title}`,
+        '',
+        `Due ${when}, on ${dueOn}.`,
+        ...(money ? ['', money] : []),
+        ...(notes ? ['', notes] : []),
+        '',
+        'Mark it done in Infinity Workspace and this will stop.',
+      ].join('\n'),
+    });
+  }
 };
 
 /** Someone was given access to a folder, file or document: tell them it exists. */
@@ -1221,7 +1309,12 @@ const onAnnouncementPublished: Handler = async (event) => {
   const { announcementId, title, audience } = event.payload as {
     announcementId: string;
     title: string;
-    audience: { scope: string; departmentIds?: string[]; groupIds?: string[] };
+    audience: {
+      scope: string;
+      departmentIds?: string[];
+      groupIds?: string[];
+      organisationIds?: string[];
+    };
   };
 
   let recipients: { id: string }[] = [];
@@ -1261,7 +1354,29 @@ const onAnnouncementPublished: Handler = async (event) => {
           AND JSON_CONTAINS($2, JSON_QUOTE(gm.group_id))`,
       [event.company_id, JSON.stringify(audience.groupIds ?? [])],
     );
+  } else if (audience.scope === 'organisation') {
+    /*
+     * The one audience that is deliberately external.
+     *
+     * Guests are excluded from every branch above because an announcement is an internal
+     * notice. This scope exists precisely to address clients, so here they are the only
+     * recipients — and only the contacts at the organisations named, whose access has
+     * not expired.
+     */
+    recipients = await many<{ id: string }>(
+      `SELECT DISTINCT u.id FROM users u
+         JOIN external_memberships m ON m.user_id = u.id
+        WHERE u.company_id = $1 AND u.status IN ('invited', 'active')
+          AND u.access_level = 'guest'
+          AND (m.access_expires_at IS NULL OR m.access_expires_at > NOW(3))
+          AND JSON_CONTAINS($2, JSON_QUOTE(m.organization_id))`,
+      [event.company_id, JSON.stringify(audience.organisationIds ?? [])],
+    );
   }
+
+  // A client cannot open /announcements — the guest surface refuses it — so their
+  // notification has to point at the portal, which is where they can read it.
+  const link = audience.scope === 'organisation' ? '/portal/notices' : `/announcements/${announcementId}`;
 
   await notifications.createMany(
     recipients.map((r) => r.id),
@@ -1270,7 +1385,7 @@ const onAnnouncementPublished: Handler = async (event) => {
       userId,
       type: 'announcement',
       title,
-      link: `/announcements/${announcementId}`,
+      link,
       resourceType: 'announcement',
       resourceId: announcementId,
       // The edit carries its own key: an update deduped against the original would be
@@ -1346,6 +1461,7 @@ export const handlers: Record<string, Handler> = {
     await onApprovalSettled(event);
   },
   'portal.upload': onPortalUpload,
+  'reminder.due': onReminderDue,
   'attendance.flagged': onAttendanceFlagged,
   'attendance.reviewed': onAttendanceReviewed,
   'announcement.published': onAnnouncementPublished,

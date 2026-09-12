@@ -7,11 +7,13 @@
  * organisation in SQL.
  */
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, CreditCard, FileText, FolderOpen, Receipt, Upload } from 'lucide-react';
+import {
+  AlertTriangle, ArrowRight, CreditCard, FileText, FolderOpen, Megaphone, Receipt, Upload,
+} from 'lucide-react';
 import { api } from '../../lib/api';
 import { useQuery } from '../../lib/query';
 import { AsyncSection } from '../../components/States';
-import { formatCurrency } from '../../lib/format';
+import { formatCurrency, formatDate } from '../../lib/format';
 
 type Overview = {
   organisation: { id: string; name: string; contact_name: string | null };
@@ -72,6 +74,8 @@ export function PortalHome() {
             </Link>
           </section>
 
+          <RecentNotices />
+
           <nav className="portal-jump" aria-label="Sections">
             <Link to="/portal/invoices" className="portal-jump-card">
               <Receipt size={18} aria-hidden="true" />
@@ -104,3 +108,46 @@ export function PortalHome() {
     </AsyncSection>
   );
 }
+
+/**
+ * The latest notices, on the page a client actually lands on.
+ *
+ * There is a Notices page, but a notice nobody opens is not a notice — the point of
+ * telling a client something is that they see it without going looking. Only the two
+ * most recent, so the overview stays an overview.
+ */
+function RecentNotices() {
+  const notices = useQuery<{ items: Notice[] }>('/portal/notices', (signal) =>
+    api.get('/portal/notices', signal),
+  );
+
+  const items = notices.data?.items ?? [];
+  // Nothing at all rather than an empty box: a client with no notices should not be
+  // shown a permanent reminder that there are none.
+  if (items.length === 0) return null;
+
+  return (
+    <section className="portal-notice-strip" aria-label="Notices">
+      <header>
+        <h2><Megaphone size={15} aria-hidden="true" /> Notices</h2>
+        {items.length > 2 ? <Link to="/portal/notices">See all {items.length}</Link> : null}
+      </header>
+      <ul className="portal-notice-list">
+        {items.slice(0, 2).map((notice) => (
+          <li key={notice.id} className={`portal-notice priority-${notice.priority}`}>
+            <Megaphone size={15} aria-hidden="true" />
+            <div>
+              <strong>{notice.title}</strong>
+              <span className="field-hint">{formatDate(notice.publish_at)}</span>
+              <p className="portal-notice-body">{notice.body}</p>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+type Notice = {
+  id: string; title: string; body: string; priority: string; publish_at: string;
+};

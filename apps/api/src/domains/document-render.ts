@@ -56,6 +56,13 @@ export type SignatureSlot = {
   signedOn: string | null;
   /** Decoded PNG, when the signer has an image and it could be read. */
   image: { width: number; height: number; rgb: Buffer; alpha: Buffer | null } | null;
+  /**
+   * How wide the signer drew it, as a fraction of the page's content width.
+   *
+   * Null for a signature recorded before this was carried through, which falls back to
+   * the old fixed size.
+   */
+  width: number | null;
   /** False when the document changed after this was signed. */
   valid: boolean;
 };
@@ -94,7 +101,7 @@ function formatDate(value: unknown): string {
 const amount = (value: number) =>
   value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const money = (value: number, currency: string) => `${currency} ${amount(value)}`;
+export const money = (value: number, currency: string) => `${currency} ${amount(value)}`;
 
 const TITLE: Record<DocumentKind, string> = {
   invoice: 'INVOICE', quotation: 'QUOTATION', receipt: 'RECEIPT',
@@ -263,10 +270,10 @@ export function renderPdf(model: RenderModel, profile: Profile): Buffer {
       const inner = columnWidth - 16;
 
       if (slot.image) {
-        // Scaled to fit the slot rather than its natural size: a signature exported at
-        // 2000px would otherwise run across the whole page.
-        const width = Math.min(inner, 110);
-        doc.image(x, top + 4, slot.image, width);
+        // Bounded by the whole column, not the text width inside it: a signature may
+        // use the gutter between columns, which is what it does on paper, and only a
+        // choice that would cross into the next signature's column is trimmed.
+        doc.image(x, top + 4, slot.image, signatureWidth(slot.width, RIGHT - MARGIN, columnWidth));
       }
 
       doc.line(x, top + 44, x + inner, { colour: [0.10, 0.14, 0.19], width: 0.8 });
@@ -302,6 +309,63 @@ export function renderPdf(model: RenderModel, profile: Profile): Buffer {
  * particular ignores most of a stylesheet. A plain-text alternative goes alongside it so
  * the message is readable in a client that shows neither.
  */
+/**
+ * A branded shell for an email that is not a document.
+ *
+ * The invoice template needs an invoice; reminders, notices and the rest had nothing but
+ * `text:`, and arrived looking like a machine talking to itself. This is the same
+ * letterhead, accent and footer with a heading and some lines poured into it, so a
+ * message from the company looks like one wherever it came from.
+ */
+export function renderNoticeEmail(
+  profile: Profile,
+  content: { heading: string; lines: string[]; highlight?: string | null; footnote?: string | null },
+): string {
+  const accentHex = profile.accent_colour ?? '#1A6288';
+  const esc = (value: string) =>
+    value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const paragraphs = content.lines
+    .filter((line) => line && line.trim().length > 0)
+    .map((line) => `<p style="margin:0 0 12px;font:15px/1.55 Helvetica,Arial,sans-serif;color:#1a2430">${esc(line)}</p>`)
+    .join('');
+
+  const highlight = content.highlight
+    ? `<table role="presentation" width="100%" style="margin:18px 0;border-collapse:collapse">
+         <tr><td style="padding:14px 16px;background:#f4f7fa;border-radius:8px;
+                        font:600 17px Helvetica,Arial,sans-serif;color:${accentHex}">
+           ${esc(content.highlight)}
+         </td></tr>
+       </table>`
+    : '';
+
+  const contact = [profile.contact_email, profile.contact_phone]
+    .filter((value): value is string => Boolean(value))
+    .map(esc)
+    .join(' &middot; ');
+
+  return `<!doctype html>
+<html><body style="margin:0;padding:24px;background:#eef2f6">
+  <table role="presentation" width="100%" style="border-collapse:collapse">
+    <tr><td align="center">
+      <table role="presentation" width="560" style="width:560px;max-width:100%;border-collapse:collapse;background:#ffffff;border-radius:10px;overflow:hidden">
+        <tr><td style="padding:22px 28px;background:${accentHex}">
+          <div style="font:600 18px Helvetica,Arial,sans-serif;color:#ffffff">${esc(content.heading)}</div>
+        </td></tr>
+        <tr><td style="padding:26px 28px">
+          ${paragraphs}
+          ${highlight}
+          ${content.footnote ? `<p style="margin:16px 0 0;font:13px/1.5 Helvetica,Arial,sans-serif;color:#61727f">${esc(content.footnote)}</p>` : ''}
+        </td></tr>
+        <tr><td style="padding:16px 28px 24px;border-top:1px solid #eef2f6;
+                       font:12px Helvetica,Arial,sans-serif;color:#8494a1">
+          ${esc(profile.legal_name ?? 'Infinity AI')}${contact ? `<br>${contact}` : ''}
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+}
+
 export function renderEmailHtml(model: RenderModel, profile: Profile, intro: string): string {
   const accentHex = profile.accent_colour ?? '#1A6288';
   const esc = (value: string) =>
@@ -525,6 +589,33 @@ export async function buildModel(kind: DocumentKind, documentId: string): Promis
 
 
 /**
+ * How wide to draw a signature, in points.
+ *
+ * The placer stores the size as a fraction of the document's width, so it is resolved
+ * against the page's content width and the printed signature matches what was set on
+ * screen. This was the bug: the fraction was written at signing time and never read, so
+ * every signature printed at the same fixed 110pt however it had been sized.
+ *
+ * Bounded at both ends. Below a couple of dozen points a signature is an illegible
+ * smudge; wider than its own column it runs across the neighbouring signature's label.
+ * A signature recorded before the width was carried through has none, and keeps the old
+ * fixed size rather than silently changing on a document that has already gone out.
+ */
+export function signatureWidth(
+  fraction: number | null,
+  contentWidth: number,
+  columnWidth: number,
+): number {
+  const chosen = fraction == null || !Number.isFinite(fraction) || fraction <= 0
+    ? DEFAULT_SIGNATURE_WIDTH
+    : fraction * contentWidth;
+  return Math.max(MIN_SIGNATURE_WIDTH, Math.min(columnWidth, chosen));
+}
+
+const DEFAULT_SIGNATURE_WIDTH = 110;
+const MIN_SIGNATURE_WIDTH = 24;
+
+/**
  * The signature slots for a document, with the images decoded ready to draw.
  *
  * Reads the bytes from object storage: the PDF has to carry the image itself, because
@@ -541,8 +632,13 @@ export async function signatureSlots(
   const rows = await many<{
     role: string; signer_name: string; signed_at: Date; signed_hash: string;
     image_file_id: string | null; object_key: string | null; mime_type: string | null;
+    width: string | number | null;
   }>(
     `SELECT s.role, s.signer_name, s.signed_at, s.signed_hash, s.image_file_id,
+            -- The size the signer chose. It was written at signing time and then never
+            -- read, so every signature printed at the same fixed width no matter what
+            -- was set in the placer.
+            s.width,
             v.object_key, f.mime_type
        FROM document_signatures s
        LEFT JOIN files f ON f.id = s.image_file_id
@@ -588,6 +684,7 @@ export async function signatureSlots(
       signerName: row?.signer_name ?? null,
       signedOn: row ? formatDate(row.signed_at) : null,
       image,
+      width: row?.width == null ? null : Number(row.width),
       valid: true,
     });
   }
