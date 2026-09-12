@@ -206,6 +206,100 @@
   .portal-document-actions { justify-content: flex-start; }
 }
 
+/* Premium client-facing layer. All changes remain visual and inherit the workspace
+   tokens so the portal and employee product feel like one corporate suite. */
+.portal {
+  background:
+    radial-gradient(circle at 92% 4%, rgba(88, 175, 211, .13), transparent 28rem),
+    linear-gradient(180deg, #f8fafc, var(--bg-app));
+}
+.portal-bar {
+  min-height: 72px;
+  padding: var(--sp-4) clamp(var(--sp-5), 4vw, var(--sp-10));
+  background: color-mix(in srgb, var(--bg-surface) 86%, transparent);
+  backdrop-filter: blur(22px) saturate(170%);
+  border-bottom-color: color-mix(in srgb, var(--border-subtle) 74%, transparent);
+  box-shadow: 0 10px 30px rgba(6,27,42,.035);
+}
+.portal-brand .product-icon { width: 38px; height: 38px; border-radius: 12px; box-shadow: 0 8px 20px rgba(11,95,141,.16); }
+.portal-brand strong { font-size: var(--text-md); letter-spacing: var(--tracking-tight); }
+.portal-link {
+  min-height: 38px;
+  padding-inline: var(--sp-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  font-weight: var(--weight-medium);
+  transition: all var(--dur-base) var(--ease);
+}
+.portal-link:hover { transform: translateY(-1px); border-color: var(--border-subtle); box-shadow: var(--shadow-sm); }
+.portal-link.is-active {
+  color: var(--brand-700);
+  border-color: var(--brand-100);
+  background: var(--brand-50);
+  box-shadow: inset 0 1px 0 #fff;
+}
+.portal-main { width: min(1180px, 100%); padding: clamp(var(--sp-6), 4vw, var(--sp-12)) clamp(var(--sp-4), 4vw, var(--sp-10)); }
+.portal-head { margin-bottom: var(--sp-8); }
+.portal-head h1 { font-size: clamp(1.75rem, 1.4rem + 1vw, 2.5rem); letter-spacing: -.035em; }
+.portal-head p { margin-top: var(--sp-2); font-size: var(--text-md); }
+.portal-figures { gap: var(--sp-5); margin-bottom: var(--sp-8); }
+.portal-figure, .portal-jump-card, .portal-quote, .portal-file,
+.portal-task-list li, .portal-due, .portal-meeting-list li, .portal-notice, .portal-send {
+  border-color: color-mix(in srgb, var(--border-default) 72%, var(--brand-100));
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,.7);
+  transition: transform var(--dur-slow) var(--ease-out), box-shadow var(--dur-slow) var(--ease),
+              border-color var(--dur-slow) var(--ease);
+}
+.portal-figure { position: relative; overflow: hidden; min-height: 142px; justify-content: center; padding: var(--sp-6); }
+.portal-figure::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, var(--brand-400), var(--brand-200), transparent 80%);
+}
+.portal-figure-value { margin-top: var(--sp-2); font-size: clamp(1.65rem, 1.35rem + .8vw, 2.25rem); }
+.portal-figure-link:hover, .portal-jump-card:hover, .portal-quote:hover, .portal-file:hover {
+  transform: translateY(-3px);
+  border-color: var(--brand-200);
+  box-shadow: var(--shadow-md);
+}
+.portal-jump-card { min-height: 84px; padding: var(--sp-5) var(--sp-6); }
+.portal-table-wrap { border: 1px solid var(--border-default); border-radius: var(--r-xl); background: var(--bg-surface); box-shadow: var(--shadow-sm); }
+.portal-table thead th { background: linear-gradient(180deg, var(--brand-50), var(--bg-sunken)); color: var(--brand-700); }
+.portal-foot { padding: var(--sp-8); background: color-mix(in srgb, var(--bg-surface) 76%, transparent); }
+.portal-signin.auth-card { box-shadow: 0 34px 90px rgba(0,10,18,.34), inset 0 1px 0 #fff; }
+
+@media (max-width: 720px) {
+  .portal-bar { padding: var(--sp-4); }
+  .portal-nav { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+  .portal-link { flex: 0 0 auto; }
+  .portal-main { padding: var(--sp-6) var(--sp-4); }
+  .portal-figure { min-height: 120px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-link:hover, .portal-figure-link:hover, .portal-jump-card:hover,
+  .portal-quote:hover, .portal-file:hover { transform: none; }
+}
+
+/* Keep the premium surface treatment authoritative over the older module-specific
+   declarations below without changing their layout or behaviour. */
+.portal-signin.share-card {
+  width: min(520px, 100%);
+  padding: clamp(var(--sp-6), 4vw, var(--sp-8));
+  border-radius: 26px;
+  box-shadow: 0 34px 90px rgba(0,10,18,.34), inset 0 1px 0 #fff;
+}
+.portal-signin .portal-mark-lg {
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  background: linear-gradient(135deg, var(--brand-400), var(--brand-700));
+  box-shadow: 0 10px 24px rgba(11,95,141,.24), inset 0 1px 0 rgba(255,255,255,.22);
+}
+
 /* ---------------------------------------------------- payments and documents */
 
 /* The next payment is the single fact a client opens this page for. */
