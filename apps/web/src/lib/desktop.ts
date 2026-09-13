@@ -22,6 +22,7 @@ export type DesktopBridge = {
     clear: () => Promise<void>;
   };
   openExternal: (url: string) => Promise<boolean>;
+  openMail: () => Promise<'opened' | 'not_installed'>;
   saveFile: (input: { suggestedName: string; data: ArrayBuffer }) => Promise<string | null>;
   pickFiles: (input?: { accept?: string[]; multiple?: boolean }) => Promise<
     { name: string; path: string; size: number }[]

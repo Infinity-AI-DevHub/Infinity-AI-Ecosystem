@@ -431,6 +431,19 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     assert.equal(settings.status, 403);
   });
 
+  it('shows client activity on the dashboard only to roles that read clients', async () => {
+    const adminDashboard = await admin.get('/api/v1/me/dashboard');
+    assert.equal(adminDashboard.status, 200);
+    assert.equal(adminDashboard.body.clients.state, 'ok');
+    assert.ok(Array.isArray(adminDashboard.body.clients.data.uploads));
+    assert.equal(typeof adminDashboard.body.clients.data.invoices.overdue, 'number');
+
+    const staffDashboard = await staff.get('/api/v1/me/dashboard');
+    assert.equal(staffDashboard.status, 200);
+    // Absent, not empty: a staff member must not learn how many invoices are overdue.
+    assert.equal('clients' in staffDashboard.body, false);
+  });
+
   it('prevents a person from raising their own access level', async () => {
     const attempt = await staff.patch('/api/v1/me', { accessLevel: 'admin' } as Json);
     // accessLevel is not part of the /me schema, so it is ignored rather than applied.
@@ -1925,6 +1938,507 @@ describe('Infinity Workspace end to end', { skip: !enabled && 'TEST_DATABASE_URL
     // The session must still be usable straight afterwards.
     const stillSignedIn = await admin.get('/api/v1/me');
     assert.equal(stillSignedIn.status, 200);
+  });
+
+  // --------------------------------------------------------------- service desk
+
+  describe('service desk', () => {
+    const PASS = 'Service-Desk-Passphrase-2026!';
+    let requester: Client;
+    let technician: Client;
+    let outsiderStaff: Client;
+    let requesterId: string;
+    let technicianId: string;
+    let internalQueue: string;
+    let clientQueue: string;
+    let ticketId: string;
+    let orgId: string;
+    let otherOrgId: string;
+    let guest: Client;
+
+    async function makeUser(label: string, level: string): Promise<{ id: string; client: Client }> {
+      const id = randomUUID();
+      const email = `${label}.${Date.now()}@e2e.test`;
+      await db.query(
+        `INSERT INTO users (id, company_id, email, email_display, display_name, access_level, status, activated_at, modules)
+         VALUES ($1,$2,$3,$3,$4,$5,'active',NOW(3), JSON_ARRAY())`,
+        [id, companyId, email, label, level],
+      );
+      await db.query('INSERT INTO identities (user_id, password_hash, password_set_at) VALUES ($1,$2,NOW(3))',
+        [id, await crypto.hashPassword(PASS)]);
+      return { id, client: await signIn(email, PASS) };
+    }
+
+    before(async () => {
+      ({ id: requesterId, client: requester } = await makeUser('sd.requester', 'staff'));
+      ({ id: technicianId, client: technician } = await makeUser('sd.technician', 'staff'));
+      ({ client: outsiderStaff } = await makeUser('sd.bystander', 'staff'));
+    });
+
+    it('lets only a service manager configure queues and SLA targets', async () => {
+      const denied = await requester.post('/api/v1/service/queues', { name: 'Not allowed' });
+      assert.equal(denied.status, 403);
+
+      const created = await admin.post('/api/v1/service/queues', { name: `IT Helpdesk ${Date.now()}` });
+      assert.equal(created.status, 201);
+      internalQueue = created.body.id;
+      const clientCreated = await admin.post('/api/v1/service/queues', { name: `Client Support ${Date.now()}`, audience: 'client' });
+      assert.equal(clientCreated.status, 201);
+      clientQueue = clientCreated.body.id;
+
+      assert.equal((await admin.put(`/api/v1/service/queues/${internalQueue}/members`, { userIds: [technicianId] })).status, 200);
+      assert.equal((await admin.put(`/api/v1/service/queues/${clientQueue}/members`, { userIds: [technicianId] })).status, 200);
+
+      const sla = await admin.put('/api/v1/service/sla-policies/high', { firstResponseMinutes: 15, resolutionMinutes: 120 });
+      assert.equal(sla.status, 200);
+      const backwards = await admin.put('/api/v1/service/sla-policies/low', { firstResponseMinutes: 600, resolutionMinutes: 60 });
+      assert.equal(backwards.status, 422);
+      const staffSla = await requester.put('/api/v1/service/sla-policies/high', { firstResponseMinutes: 1, resolutionMinutes: 1 });
+      assert.equal(staffSla.status, 403);
+    });
+
+    it('raises a ticket with a number and SLA due times from the priority', async () => {
+      const created = await requester.post('/api/v1/service/tickets', {
+        subject: 'Laptop will not start', description: 'Black screen since this morning.', priority: 'high', queueId: internalQueue,
+      });
+      assert.equal(created.status, 201);
+      ticketId = created.body.id;
+      assert.match(created.body.ref, /^SD-\d+$/);
+      assert.equal(created.body.status, 'new');
+      const minutes = (new Date(created.body.sla.firstResponseDueAt).getTime() - new Date(created.body.createdAt).getTime()) / 60000;
+      assert.ok(Math.abs(minutes - 15) < 1, `first response due in 15 minutes, got ${minutes}`);
+
+      // A client queue is not offered to an employee raising their own request.
+      const wrongQueue = await requester.post('/api/v1/service/tickets', { subject: 'Wrong queue', description: 'x', queueId: clientQueue });
+      assert.equal(wrongQueue.status, 422);
+    });
+
+    it('hides a ticket from colleagues who neither raised nor work it', async () => {
+      assert.equal((await outsiderStaff.get(`/api/v1/service/tickets/${ticketId}`)).status, 404);
+      const list = await outsiderStaff.get('/api/v1/service/tickets?limit=50');
+      assert.equal(list.body.items.some((t: Json) => t.id === ticketId), false);
+      const techList = await technician.get(`/api/v1/service/tickets?limit=50&queueId=${internalQueue}`);
+      assert.equal(techList.body.items.some((t: Json) => t.id === ticketId), true);
+    });
+
+    it('keeps internal notes and working fields away from the requester', async () => {
+      const note = await technician.post(`/api/v1/service/tickets/${ticketId}/comments`, { body: 'Probably the PSU.', visibility: 'internal' });
+      assert.equal(note.status, 201);
+      assert.equal(note.body.status, 'new', 'an internal note is not a response');
+
+      const asRequester = await requester.get(`/api/v1/service/tickets/${ticketId}`);
+      assert.equal(asRequester.body.comments.some((c: Json) => c.visibility === 'internal'), false);
+      assert.equal(asRequester.body.permissions.canWork, false);
+
+      assert.equal((await requester.post(`/api/v1/service/tickets/${ticketId}/comments`, { body: 'sneaky', visibility: 'internal' })).status, 403);
+      assert.equal((await requester.patch(`/api/v1/service/tickets/${ticketId}`, { priority: 'urgent' })).status, 403);
+      assert.equal((await requester.patch(`/api/v1/service/tickets/${ticketId}`, { assigneeId: requesterId })).status, 403);
+    });
+
+    it('assigns only to people who work the queue, and records the first response', async () => {
+      const bad = await technician.patch(`/api/v1/service/tickets/${ticketId}`, { assigneeId: requesterId });
+      assert.equal(bad.status, 422);
+      const assigned = await technician.patch(`/api/v1/service/tickets/${ticketId}`, { assigneeId: technicianId });
+      assert.equal(assigned.status, 200);
+      assert.equal(assigned.body.assigneeId, technicianId);
+
+      const reply = await technician.post(`/api/v1/service/tickets/${ticketId}/comments`, { body: 'Bring it to the IT desk at 2pm.' });
+      assert.equal(reply.status, 201);
+      assert.equal(reply.body.status, 'open');
+      assert.ok(reply.body.firstRespondedAt);
+      assert.equal(reply.body.sla.firstResponse, 'met');
+
+      const notified = await db.one<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM notifications WHERE user_id = $1 AND type = 'ticket.replied' AND resource_id = $2", [requesterId, ticketId]);
+      assert.equal(Number(notified!.n), 1);
+    });
+
+    it('rejects a stale edit and lets the requester reopen a resolved ticket by replying', async () => {
+      const current = await technician.get(`/api/v1/service/tickets/${ticketId}`);
+      const stale = await technician.patch(`/api/v1/service/tickets/${ticketId}`, { status: 'pending' }, { 'if-match': String(current.body.version - 1) });
+      assert.equal(stale.status, 412);
+
+      const resolved = await technician.patch(`/api/v1/service/tickets/${ticketId}`, { status: 'resolved' });
+      assert.equal(resolved.status, 200, JSON.stringify(resolved.body));
+      assert.equal(resolved.body.status, 'resolved');
+      assert.ok(resolved.body.resolvedAt);
+
+      const reopened = await requester.post(`/api/v1/service/tickets/${ticketId}/comments`, { body: 'Still broken after restart.' });
+      assert.equal(reopened.body.status, 'open');
+      assert.equal(reopened.body.resolvedAt, null);
+
+      await technician.patch(`/api/v1/service/tickets/${ticketId}`, { status: 'resolved' });
+      const rated = await requester.post(`/api/v1/service/tickets/${ticketId}/feedback`, { rating: 5, comment: 'Quick fix' });
+      assert.equal(rated.status, 201);
+      assert.equal((await requester.post(`/api/v1/service/tickets/${ticketId}/feedback`, { rating: 1 })).status, 409);
+      const timeline = rated.body.events.map((e: Json) => e.kind);
+      assert.ok(timeline.includes('created') && timeline.includes('status'), JSON.stringify(timeline));
+    });
+
+    it('flags a missed target once and tells the assignee', async () => {
+      const late = await requester.post('/api/v1/service/tickets', { subject: 'Printer offline', description: 'Floor 2', queueId: internalQueue });
+      await technician.patch(`/api/v1/service/tickets/${late.body.id}`, { assigneeId: technicianId });
+      await db.query('UPDATE tickets SET first_response_due_at = DATE_SUB(NOW(3), INTERVAL 1 MINUTE), resolution_due_at = DATE_SUB(NOW(3), INTERVAL 1 MINUTE) WHERE id = $1', [late.body.id]);
+      const { checkSla } = await import('../src/domains/service.js');
+      await checkSla();
+      await checkSla();
+      const flagged = await technician.get(`/api/v1/service/tickets/${late.body.id}`);
+      assert.equal(flagged.body.sla.firstResponse, 'breached');
+      assert.equal(flagged.body.events.filter((e: Json) => e.kind === 'sla_breach').length, 2);
+      const alerts = await db.one<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM notifications WHERE user_id = $1 AND type = 'ticket.sla_breached' AND resource_id = $2", [technicianId, late.body.id]);
+      assert.equal(Number(alerts!.n), 2, 'one alert per target, not one per tick');
+      const breached = await technician.get('/api/v1/service/tickets?view=breached&limit=50');
+      assert.equal(breached.body.items.some((t: Json) => t.id === late.body.id), true);
+    });
+
+    it('confines a client to their own organisation\'s tickets and public replies', async () => {
+      orgId = (await admin.post('/api/v1/external/organizations', { name: `Wavecrest Client ${Date.now()}`, kind: 'client' })).body.id;
+      otherOrgId = (await admin.post('/api/v1/external/organizations', { name: `SD Other ${Date.now()}`, kind: 'client' })).body.id;
+      const guestId = randomUUID();
+      const guestEmail = `sd.client.${Date.now()}@client-external.test`;
+      await db.query(
+        `INSERT INTO users (id, company_id, email, email_display, display_name, access_level, status, activated_at, modules)
+         VALUES ($1,$2,$3,$3,'SD Client Contact','guest','active',NOW(3), JSON_ARRAY())`, [guestId, companyId, guestEmail]);
+      await db.query('INSERT INTO identities (user_id, password_hash, password_set_at) VALUES ($1,$2,NOW(3))', [guestId, await crypto.hashPassword(PASS)]);
+      await db.query('INSERT INTO external_memberships (user_id, organization_id, company_id, invited_by) VALUES ($1,$2,$3,$4)', [guestId, orgId, companyId, adminId]);
+      guest = await signIn(guestEmail, PASS);
+
+      const raised = await guest.post('/api/v1/portal/tickets', { subject: 'Invoice question', description: 'Why is VAT different?' });
+      assert.equal(raised.status, 201);
+      assert.equal(raised.body.channel, 'portal');
+      assert.equal(raised.body.clientOrgId, orgId);
+      assert.equal(raised.body.queueName, null, 'internal queue names are not shown to clients');
+
+      // The workspace routes stay closed to a guest even though the domain would scope them.
+      assert.equal((await guest.get('/api/v1/service/tickets?limit=10')).status, 403);
+      assert.equal((await guest.get(`/api/v1/portal/tickets/${ticketId}`)).status, 404);
+
+      const otherClientTicket = await technician.post('/api/v1/service/tickets', {
+        subject: 'Other client', description: 'x', queueId: clientQueue, clientOrgId: otherOrgId,
+      });
+      assert.equal(otherClientTicket.status, 201);
+      assert.equal((await guest.get(`/api/v1/portal/tickets/${otherClientTicket.body.id}`)).status, 404);
+      const mine = await guest.get('/api/v1/portal/tickets?limit=50');
+      assert.deepEqual(mine.body.items.map((t: Json) => t.id), [raised.body.id]);
+
+      await technician.post(`/api/v1/service/tickets/${raised.body.id}/comments`, { body: 'Checking with finance.', visibility: 'internal' });
+      await technician.post(`/api/v1/service/tickets/${raised.body.id}/comments`, { body: 'The rate changed in August.' });
+      const seen = await guest.get(`/api/v1/portal/tickets/${raised.body.id}`);
+      assert.deepEqual(seen.body.comments.map((c: Json) => c.body), ['The rate changed in August.']);
+      assert.equal(seen.body.events.every((e: Json) => ['created', 'status'].includes(e.kind)), true);
+
+      const emailQueued = await db.one<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM outbox_events WHERE type = 'ticket.replied' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.ticketId')) = $1", [raised.body.id]);
+      assert.equal(Number(emailQueued!.n), 1, 'only the public reply is sent to the client');
+    });
+
+    it('gates client and ticket search results by role', async () => {
+      const staffSearch = await outsiderStaff.get('/api/v1/search?q=Wavecrest');
+      assert.equal(staffSearch.status, 200);
+      assert.equal(staffSearch.body.hits.some((h: Json) => h.docType === 'client' || h.docType === 'ticket'), false);
+      const adminSearch = await admin.get('/api/v1/search?q=Wavecrest');
+      assert.equal(adminSearch.body.hits.some((h: Json) => h.docType === 'client'), true);
+    });
+
+    it('does not reach another company\'s tickets', async () => {
+      const otherCompany = randomUUID();
+      await db.query(`INSERT INTO companies (id, name, verified_domains, settings) VALUES ($1,'SD Other Co', JSON_ARRAY('sd-other.test'), JSON_OBJECT())`, [otherCompany]);
+      const otherUser = randomUUID();
+      await db.query(`INSERT INTO users (id, company_id, email, email_display, display_name, access_level, status, modules)
+                      VALUES ($1,$2,'x@sd-other.test','x@sd-other.test','X','super_admin','active', JSON_ARRAY())`, [otherUser, otherCompany]);
+      const queue = randomUUID();
+      await db.query(`INSERT INTO service_queues (id, company_id, name) VALUES ($1,$2,'Foreign')`, [queue, otherCompany]);
+      const foreign = randomUUID();
+      await db.query(`INSERT INTO tickets (id, company_id, number, subject, description, queue_id, requester_id)
+                      VALUES ($1,$2,1,'Foreign ticket','x',$3,$4)`, [foreign, otherCompany, queue, otherUser]);
+      assert.equal((await admin.get(`/api/v1/service/tickets/${foreign}`)).status, 404);
+      assert.equal((await admin.patch(`/api/v1/service/tickets/${foreign}`, { status: 'closed' })).status, 404);
+      assert.equal((await admin.put(`/api/v1/service/queues/${queue}/members`, { userIds: [] })).status, 404);
+      const listed = await admin.get('/api/v1/service/tickets?limit=100');
+      assert.equal(listed.body.items.some((t: Json) => t.id === foreign), false);
+      await db.purgeTransaction((tx) => tx.query('DELETE FROM companies WHERE id = $1', [otherCompany]));
+    });
+  });
+
+  // --------------------------------------------------------------- service management
+
+  describe('service management', () => {
+    const PASS = 'Service-Mgmt-Passphrase-2026!';
+    let tech: Client; let techId: string;
+    let employee: Client; let employeeId: string;
+    let guest: Client;
+    let queueId: string; let categoryId: string;
+
+    async function person(label: string, level: string, managerId: string | null = null) {
+      const id = randomUUID();
+      const email = `${label}.${Date.now()}@e2e.test`;
+      await db.query(
+        `INSERT INTO users (id, company_id, email, email_display, display_name, access_level, status, activated_at, modules, manager_id)
+         VALUES ($1,$2,$3,$3,$4,$5,'active',NOW(3), JSON_ARRAY(), $6)`, [id, companyId, email, label, level, managerId]);
+      await db.query('INSERT INTO identities (user_id, password_hash, password_set_at) VALUES ($1,$2,NOW(3))', [id, await crypto.hashPassword(PASS)]);
+      return { id, email, client: await signIn(email, PASS) };
+    }
+
+    before(async () => {
+      ({ id: techId, client: tech } = await person('sm.tech', 'staff'));
+      ({ id: employeeId, client: employee } = await person('sm.employee', 'staff', adminId));
+      queueId = (await admin.post('/api/v1/service/queues', { name: `SM Desk ${Date.now()}` })).body.id;
+      await admin.put(`/api/v1/service/queues/${queueId}/members`, { userIds: [techId] });
+      categoryId = (await admin.post(`/api/v1/service/queues/${queueId}/categories`, { name: 'Access' })).body.id;
+      const orgId = (await admin.post('/api/v1/external/organizations', { name: `SM Client ${Date.now()}`, kind: 'client' })).body.id;
+      const guestId = randomUUID();
+      const guestEmail = `sm.guest.${Date.now()}@sm-client.test`;
+      await db.query(`INSERT INTO users (id, company_id, email, email_display, display_name, access_level, status, activated_at, modules)
+                      VALUES ($1,$2,$3,$3,'SM Guest','guest','active',NOW(3), JSON_ARRAY())`, [guestId, companyId, guestEmail]);
+      await db.query('INSERT INTO identities (user_id, password_hash, password_set_at) VALUES ($1,$2,NOW(3))', [guestId, await crypto.hashPassword(PASS)]);
+      await db.query('INSERT INTO external_memberships (user_id, organization_id, company_id, invited_by) VALUES ($1,$2,$3,$4)', [guestId, orgId, companyId, adminId]);
+      guest = await signIn(guestEmail, PASS);
+    });
+
+    it('lets queue workers write articles, sanitises them, and shows each audience only its own', async () => {
+      assert.equal((await employee.post('/api/v1/service/knowledge', { title: 'Nope', body: '<p>x</p>' })).status, 403);
+
+      const internal = await tech.post('/api/v1/service/knowledge', {
+        title: 'Resetting VPN credentials', body: '<p>Open the portal.</p><script>alert(1)</script><img src=x onerror=alert(1)>', audience: 'internal',
+      });
+      assert.equal(internal.status, 201);
+      assert.equal(internal.body.status, 'draft');
+      assert.equal(/script|onerror/i.test(internal.body.body), false, 'script must be stripped');
+
+      // A draft is invisible to readers.
+      assert.equal((await employee.get(`/api/v1/service/knowledge/${internal.body.id}`)).status, 404);
+      await tech.post(`/api/v1/service/knowledge/${internal.body.id}/status`, { status: 'published' });
+      assert.equal((await employee.get(`/api/v1/service/knowledge/${internal.body.id}`)).status, 200);
+      assert.equal((await guest.get(`/api/v1/portal/knowledge/${internal.body.id}`)).status, 404, 'internal articles never reach clients');
+
+      const pub = await tech.post('/api/v1/service/knowledge', { title: 'Paying an invoice online', body: '<p>Use the Pay button.</p>', audience: 'public' });
+      await tech.post(`/api/v1/service/knowledge/${pub.body.id}/status`, { status: 'published' });
+      const portalList = await guest.get('/api/v1/portal/knowledge');
+      assert.deepEqual(portalList.body.items.map((a: Json) => a.id), [pub.body.id]);
+      assert.equal(portalList.body.items[0].authorName, null);
+
+      await employee.post(`/api/v1/service/knowledge/${internal.body.id}/vote`, { helpful: true });
+      await employee.post(`/api/v1/service/knowledge/${internal.body.id}/vote`, { helpful: true });
+      const switched = await employee.post(`/api/v1/service/knowledge/${internal.body.id}/vote`, { helpful: false });
+      assert.equal(switched.body.helpful, 0);
+      assert.equal(switched.body.unhelpful, 1);
+
+      const suggested = await employee.get('/api/v1/service/knowledge/suggest?q=my%20vpn%20is%20broken');
+      assert.equal(suggested.body.items.some((a: Json) => a.id === internal.body.id), true);
+    });
+
+    it('validates request forms on the server', async () => {
+      assert.equal((await tech.put(`/api/v1/service/categories/${categoryId}/form`, { fields: [] })).status, 403);
+      const bad = await admin.put(`/api/v1/service/categories/${categoryId}/form`, { fields: [{ key: 'sys', label: 'System', type: 'select', options: ['Only one'] }] });
+      assert.equal(bad.status, 422);
+      const form = await admin.put(`/api/v1/service/categories/${categoryId}/form`, { fields: [
+        { key: 'system', label: 'System', type: 'select', options: ['CRM', 'ERP'], required: true },
+        { key: 'needed_by', label: 'Needed by', type: 'date' },
+      ] });
+      assert.equal(form.status, 200);
+
+      const missing = await employee.post('/api/v1/service/tickets', { subject: 'Access to CRM', description: 'Please', queueId, categoryId });
+      assert.equal(missing.status, 422);
+      const wrongChoice = await employee.post('/api/v1/service/tickets', { subject: 'Access to CRM', description: 'Please', queueId, categoryId, formAnswers: { system: 'Payroll' } });
+      assert.equal(wrongChoice.status, 422);
+      const ok = await employee.post('/api/v1/service/tickets', {
+        subject: 'Access to CRM', description: 'Please', queueId, categoryId, formAnswers: { system: 'CRM', needed_by: '2026-10-01', injected: 'dropped' },
+      });
+      assert.equal(ok.status, 201);
+      assert.deepEqual(ok.body.form.map((f: Json) => [f.key, f.value]), [['system', 'CRM'], ['needed_by', '2026-10-01']]);
+    });
+
+    it('links incidents to a problem and keeps root cause on the problem', async () => {
+      const incident = await employee.post('/api/v1/service/tickets', { subject: 'Email bouncing', description: 'x', queueId, type: 'incident' });
+      const other = await employee.post('/api/v1/service/tickets', { subject: 'Not a problem', description: 'x', queueId, type: 'incident' });
+      const problem = await tech.post('/api/v1/service/tickets', { subject: 'Mail relay certificate expired', description: 'x', queueId, type: 'problem' });
+      assert.equal((await employee.put(`/api/v1/service/tickets/${incident.body.id}/problem`, { problemId: problem.body.id })).status, 403);
+      assert.equal((await tech.put(`/api/v1/service/tickets/${incident.body.id}/problem`, { problemId: other.body.id })).status, 422);
+      const linked = await tech.put(`/api/v1/service/tickets/${incident.body.id}/problem`, { problemId: problem.body.id });
+      assert.equal(linked.body.problem.id, problem.body.id);
+      assert.equal((await tech.patch(`/api/v1/service/tickets/${incident.body.id}/problem-record`, { rootCause: 'x' })).status, 422);
+      const record = await tech.patch(`/api/v1/service/tickets/${problem.body.id}/problem-record`, { rootCause: 'Certificate not renewed', workaround: 'Use webmail' });
+      assert.equal(record.body.rootCause, 'Certificate not renewed');
+      assert.deepEqual(record.body.incidents.map((i: Json) => i.id), [incident.body.id]);
+    });
+
+    it('routes a change through the approvals engine and settles it', async () => {
+      const draft = await employee.post('/api/v1/service/changes', { title: 'Upgrade mail relay', description: 'Replace certificate and upgrade', risk: 'high' });
+      assert.equal(draft.status, 201);
+      assert.match(draft.body.ref, /^CHG-\d+$/);
+      const incomplete = await employee.post(`/api/v1/service/changes/${draft.body.id}/submit`, {});
+      assert.equal(incomplete.status, 422, 'plans are required before approval');
+
+      await employee.patch(`/api/v1/service/changes/${draft.body.id}`, {
+        implementationPlan: 'Install cert, restart relay', rollbackPlan: 'Restore previous cert', plannedStart: new Date(Date.now() + 86400000).toISOString(),
+      });
+      // An administrator exists before submission, so routing resolves them for step 2.
+      const { client: cab } = await person('sm.cab', 'admin');
+      const submitted = await employee.post(`/api/v1/service/changes/${draft.body.id}/submit`, {});
+      assert.equal(submitted.status, 200);
+      assert.equal(submitted.body.status, 'pending_approval');
+      const approvalId = submitted.body.approval.id;
+      const steps = await db.many<{ step_number: number }>('SELECT DISTINCT step_number FROM approval_steps WHERE request_id = $1', [approvalId]);
+      assert.equal(steps.length, 2, 'high risk adds the administrator step');
+
+      // Not editable while waiting, and not decidable by the requester.
+      assert.equal((await employee.patch(`/api/v1/service/changes/${draft.body.id}`, { title: 'Sneaky' })).status, 409);
+      assert.equal((await employee.post(`/api/v1/approvals/${approvalId}/decisions`, { decision: 'approved' }, { 'idempotency-key': `chg-self-${Date.now()}` })).status, 403);
+
+      // Step 1 is the requester's manager (the super administrator here). Step 2 routes to
+      // the 'admin' access level, which the super administrator is not - so a real admin
+      // must decide it, and the manager's second attempt is refused.
+      const managerDecision = await admin.post(`/api/v1/approvals/${approvalId}/decisions`, { decision: 'approved' }, { 'idempotency-key': `chg-1-${Date.now()}` });
+      assert.equal(managerDecision.status, 201, JSON.stringify(managerDecision.body));
+      assert.equal((await admin.post(`/api/v1/approvals/${approvalId}/decisions`, { decision: 'approved' }, { 'idempotency-key': `chg-1b-${Date.now()}` })).status, 403);
+      const cabDecision = await cab.post(`/api/v1/approvals/${approvalId}/decisions`, { decision: 'approved' }, { 'idempotency-key': `chg-2-${Date.now()}` });
+      assert.equal(cabDecision.status, 201, JSON.stringify(cabDecision.body));
+      const completed = await db.one<{ id: number; company_id: string; type: string; payload: unknown; actor_id: string | null }>(
+        "SELECT * FROM outbox_events WHERE type = 'approval.completed' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.requestId')) = $1", [approvalId]);
+      const { handlers } = await import('../src/workers/handlers.js');
+      await handlers['approval.completed']!({ ...(completed as Json), payload: typeof completed!.payload === 'string' ? JSON.parse(completed!.payload) : completed!.payload } as never);
+      const approved = await employee.get(`/api/v1/service/changes/${draft.body.id}`);
+      assert.equal(approved.body.status, 'approved');
+
+      assert.equal((await employee.post(`/api/v1/service/changes/${draft.body.id}/transition`, { action: 'complete', outcome: 'successful' })).status, 409);
+      await employee.post(`/api/v1/service/changes/${draft.body.id}/transition`, { action: 'start' });
+      const done = await employee.post(`/api/v1/service/changes/${draft.body.id}/transition`, { action: 'complete', outcome: 'rolled_back', notes: 'Relay refused cert' });
+      assert.equal(done.body.status, 'failed');
+
+      // A bystander can read the change but not steer it.
+      const { client: bystander } = await person('sm.bystander', 'staff');
+      assert.equal((await bystander.get(`/api/v1/service/changes/${draft.body.id}`)).status, 200);
+      assert.equal((await bystander.post(`/api/v1/service/changes/${draft.body.id}/transition`, { action: 'close' })).status, 403);
+
+      const standard = await employee.post('/api/v1/service/changes', { title: 'Monthly patching', description: 'Routine', changeType: 'standard', risk: 'low' });
+      const pre = await employee.post(`/api/v1/service/changes/${standard.body.id}/submit`, {});
+      assert.equal(pre.body.status, 'approved');
+      assert.equal(pre.body.approval, null);
+    });
+
+    it('enforces licence seats and keeps licences away from ordinary staff', async () => {
+      assert.equal((await employee.get('/api/v1/service/licences')).status, 403);
+      const lic = await admin.post('/api/v1/service/licences', { name: 'Figma Professional', seats: 1, renewsOn: '2026-12-01', managedAt: 'Figma admin' });
+      assert.equal(lic.status, 201);
+      assert.equal((await admin.post(`/api/v1/service/licences/${lic.body.id}/holders`, { userId: techId })).status, 200);
+      assert.equal((await admin.post(`/api/v1/service/licences/${lic.body.id}/holders`, { userId: employeeId })).status, 409);
+      assert.equal((await admin.put(`/api/v1/service/licences/${lic.body.id}`, { name: 'Figma Professional', seats: 0 })).status, 409);
+      const vendor = await admin.post('/api/v1/vendors', { name: `SM Vendor ${Date.now()}` });
+      const contract = await admin.post('/api/v1/service/contracts', { vendorId: vendor.body.id, title: 'Support agreement', startsOn: '2026-01-01', endsOn: '2025-12-01' });
+      assert.equal(contract.status, 422);
+      const ok = await admin.post('/api/v1/service/contracts', {
+        vendorId: vendor.body.id, title: 'Support agreement', startsOn: '2026-01-01', endsOn: new Date(Date.now() + 20 * 86400000).toISOString().slice(0, 10), noticeDays: 10,
+      });
+      assert.equal(ok.status, 201);
+      const soon = await admin.get('/api/v1/service/expiring?days=30');
+      assert.equal(soon.body.contracts.some((c: Json) => c.id === ok.body.id), true);
+    });
+
+    it('turns signed email into tickets and replies, and refuses anything unsigned or unknown', async () => {
+      const setup = await admin.post('/api/v1/service/inbound-email/rotate', { queueId });
+      assert.equal(setup.status, 200);
+      assert.ok(setup.body.secret);
+      const again = await admin.get('/api/v1/service/inbound-email');
+      assert.equal(again.body.secret, undefined, 'the secret is shown once');
+      const key = setup.body.endpoint.split('/').pop();
+      const { sign } = await import('../src/domains/inbound-email.js');
+      const employeeEmail = (await db.one<{ email: string }>('SELECT email FROM users WHERE id = $1', [employeeId]))!.email;
+
+      const send = async (payload: Json, opts: { secret?: string; ts?: number } = {}) => {
+        const body = JSON.stringify(payload);
+        const ts = String(opts.ts ?? Math.floor(Date.now() / 1000));
+        const res = await app.inject({ method: 'POST', url: `/api/v1/service/inbound-email/${key}`, payload: body,
+          headers: { 'content-type': 'application/json', 'x-infinity-timestamp': ts, 'x-infinity-signature': sign(opts.secret ?? setup.body.secret, ts, body) } });
+        return { status: res.statusCode, body: JSON.parse(res.body) };
+      };
+
+      const created = await send({ messageId: `<m1-${Date.now()}@mail>`, from: `Emp <${employeeEmail.toUpperCase()}>`, subject: 'Printer jammed', text: 'Floor 3 printer' });
+      assert.equal(created.status, 201);
+      assert.equal(created.body.outcome, 'created');
+      const ticket = await employee.get(`/api/v1/service/tickets/${created.body.ticketId}`);
+      assert.equal(ticket.body.channel, 'email');
+
+      const msgId = `<m2-${Date.now()}@mail>`;
+      const reply = await send({ messageId: msgId, from: employeeEmail, subject: `Re: [${ticket.body.ref}] Printer jammed`, text: 'Still jammed\n\nOn Monday someone wrote:\n> old text' });
+      assert.equal(reply.body.outcome, 'replied');
+      assert.equal((await send({ messageId: msgId, from: employeeEmail, subject: 'dup', text: 'x' })).body.outcome, 'duplicate');
+      const withReply = await employee.get(`/api/v1/service/tickets/${created.body.ticketId}`);
+      assert.equal(withReply.body.comments.at(-1).body, 'Still jammed');
+
+      assert.equal((await send({ messageId: `<m3-${Date.now()}>`, from: 'stranger@example.com', subject: 'Hi', text: 'spam' })).body.outcome, 'rejected_sender');
+      assert.equal((await send({ messageId: `<m4-${Date.now()}>`, from: employeeEmail, subject: 'x', text: 'x' }, { secret: 'wrong' })).status, 401);
+      assert.equal((await send({ messageId: `<m5-${Date.now()}>`, from: employeeEmail, subject: 'x', text: 'x' }, { ts: Math.floor(Date.now() / 1000) - 3600 })).status, 401);
+    });
+  });
+
+  describe('service levels and bulk work', () => {
+    let queueId: string;
+
+    before(async () => {
+      queueId = (await admin.post('/api/v1/service/queues', { name: `SLA Desk ${Date.now()}` })).body.id;
+    });
+
+    it('pauses targets while waiting on the requester and moves them out on resume', async () => {
+      await admin.put('/api/v1/service/sla-policies/low', { firstResponseMinutes: 60, resolutionMinutes: 600, useBusinessHours: false });
+      const t = await admin.post('/api/v1/service/tickets', { subject: 'Pause me please', description: 'x', queueId, priority: 'low' });
+      const originalDue = new Date(t.body.sla.resolutionDueAt).getTime();
+
+      const pending = await admin.patch(`/api/v1/service/tickets/${t.body.id}`, { status: 'pending' });
+      assert.equal(pending.body.sla.resolution, 'paused');
+      // Pretend the ticket sat waiting for two hours, then was also past due while paused.
+      await db.query('UPDATE tickets SET sla_paused_at = DATE_SUB(NOW(3), INTERVAL 120 MINUTE), resolution_due_at = DATE_SUB(NOW(3), INTERVAL 1 MINUTE) WHERE id = $1', [t.body.id]);
+      const { checkSla } = await import('../src/domains/service.js');
+      await checkSla();
+      const stillPaused = await admin.get(`/api/v1/service/tickets/${t.body.id}`);
+      assert.equal(stillPaused.body.sla.resolution, 'paused', 'no breach is flagged while paused');
+      await db.query('UPDATE tickets SET resolution_due_at = FROM_UNIXTIME($2 / 1000) WHERE id = $1', [t.body.id, originalDue]);
+
+      const resumed = await admin.patch(`/api/v1/service/tickets/${t.body.id}`, { status: 'open' });
+      const shifted = (new Date(resumed.body.sla.resolutionDueAt).getTime() - originalDue) / 60000;
+      assert.ok(Math.abs(shifted - 120) <= 1, `resolution moved out by the pause, got ${shifted} minutes`);
+      const stored = await db.one<{ sla_paused_minutes: number; sla_paused_at: string | null }>('SELECT sla_paused_minutes, sla_paused_at FROM tickets WHERE id = $1', [t.body.id]);
+      assert.equal(stored!.sla_paused_at, null);
+      assert.ok(Math.abs(Number(stored!.sla_paused_minutes) - 120) <= 1);
+    });
+
+    it('counts business minutes on the service calendar when a policy asks for it', async () => {
+      assert.equal((await admin.put('/api/v1/service/calendar', { timezone: 'Not/AZone', days: { 1: [540, 1020] }, holidays: [] })).status, 422);
+      const cal = await admin.put('/api/v1/service/calendar', {
+        timezone: 'UTC', days: { 1: [540, 1020], 2: [540, 1020], 3: [540, 1020], 4: [540, 1020], 5: [540, 1020] }, holidays: [],
+      });
+      assert.equal(cal.status, 200);
+      await admin.put('/api/v1/service/sla-policies/normal', { firstResponseMinutes: 240, resolutionMinutes: 960, useBusinessHours: true });
+      const t = await admin.post('/api/v1/service/tickets', { subject: 'Business hours please', description: 'x', queueId, priority: 'normal' });
+      const { addBusinessMinutes } = await import('../src/core/business-hours.js');
+      const expected = addBusinessMinutes(new Date(t.body.createdAt), 240, { timezone: 'UTC', days: { 1: [540, 1020], 2: [540, 1020], 3: [540, 1020], 4: [540, 1020], 5: [540, 1020] }, holidays: [] });
+      assert.ok(Math.abs(new Date(t.body.sla.firstResponseDueAt).getTime() - expected.getTime()) < 2000);
+      await admin.put('/api/v1/service/sla-policies/normal', { firstResponseMinutes: 240, resolutionMinutes: 1440, useBusinessHours: false });
+    });
+
+    it('applies bulk changes through the normal rules and reports failures per ticket', async () => {
+      const a = await admin.post('/api/v1/service/tickets', { subject: 'Bulk one', description: 'x', queueId });
+      const b = await admin.post('/api/v1/service/tickets', { subject: 'Bulk two', description: 'x', queueId });
+      const empty = await admin.patch('/api/v1/service/tickets/bulk', { ids: [a.body.id] });
+      assert.equal(empty.status, 422);
+      const res = await admin.patch('/api/v1/service/tickets/bulk', { ids: [a.body.id, b.body.id, randomUUID()], priority: 'high', assigneeId: adminId });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.updated, 2);
+      assert.equal(res.body.failed.length, 1);
+      assert.equal((await admin.get(`/api/v1/service/tickets/${b.body.id}`)).body.priority, 'high');
+      // Whatever the bystander's session state, the ticket must be untouched afterwards.
+      await staff.patch('/api/v1/service/tickets/bulk', { ids: [a.body.id], status: 'closed' });
+      assert.notEqual((await admin.get(`/api/v1/service/tickets/${a.body.id}`)).body.status, 'closed', 'a bystander changes nothing');
+    });
+
+    it('counts an article view once per person per day', async () => {
+      const art = await admin.post('/api/v1/service/knowledge', { title: 'Counting views', body: '<p>Hello</p>' });
+      await admin.post(`/api/v1/service/knowledge/${art.body.id}/status`, { status: 'published' });
+      await admin.get(`/api/v1/service/knowledge/${art.body.id}`);
+      await admin.get(`/api/v1/service/knowledge/${art.body.id}`);
+      const third = await admin.get(`/api/v1/service/knowledge/${art.body.id}`);
+      assert.equal(third.body.views, 1);
+    });
   });
 
   it('never leaks internal detail or stack traces in an error body', async () => {

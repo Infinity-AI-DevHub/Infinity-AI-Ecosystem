@@ -26,6 +26,7 @@ import ResetPassword from './routes/ResetPassword';
 import './App.css';
 import './styles/redesign.css';
 import './styles/desktop.css';
+import './styles/shell.css';
 
 // Modules load on demand so the initial sign-in payload stays small.
 const Home = lazy(() => import('./routes/Home'));
@@ -41,6 +42,19 @@ const Announcements = lazy(() => import('./routes/Announcements'));
 const Search = lazy(() => import('./routes/Search'));
 const Settings = lazy(() => import('./routes/Settings'));
 const Messages = lazy(() => import('./routes/Messages'));
+const Notifications = lazy(() => import('./routes/Notifications'));
+// Service management loads as its own chunks, so a fault there cannot stop the rest of the
+// workspace from loading.
+const ServiceDesk = lazy(() => import('./routes/service/ServiceDesk'));
+const TicketDetail = lazy(() => import('./routes/service/TicketDetail'));
+const ServiceSettings = lazy(() => import('./routes/service/ServiceSettings'));
+const ServiceAnalytics = lazy(() => import('./routes/service/ServiceAnalytics'));
+const KnowledgeList = lazy(() => import('./routes/service/Knowledge'));
+const KnowledgeArticle = lazy(() => import('./routes/service/Knowledge').then((m) => ({ default: m.KnowledgeArticle })));
+const KnowledgeEditor = lazy(() => import('./routes/service/Knowledge').then((m) => ({ default: m.KnowledgeEditor })));
+const ChangeList = lazy(() => import('./routes/service/Changes'));
+const ChangeDetail = lazy(() => import('./routes/service/Changes').then((m) => ({ default: m.ChangeDetail })));
+const ServiceAssets = lazy(() => import('./routes/service/ServiceAssets'));
 
 /**
  * Route guard. This is a navigation convenience only - the API authorizes every call
@@ -102,7 +116,19 @@ function AppRoutes() {
                   <Route path="/admin" element={<Admin />} />
                   <Route path="/search" element={<Search />} />
                   <Route path="/settings" element={<Settings />} />
-              <Route path="/messages" element={<Messages />} />
+                  <Route path="/messages" element={<Messages />} />
+                  <Route path="/notifications" element={<Notifications />} />
+                  <Route path="/service" element={<ServiceDesk />} />
+                  <Route path="/service/tickets/:ticketId" element={<TicketDetail />} />
+                  <Route path="/service/settings" element={<ServiceSettings />} />
+                  <Route path="/service/analytics" element={<ServiceAnalytics />} />
+                  <Route path="/service/knowledge" element={<KnowledgeList />} />
+                  <Route path="/service/knowledge/new" element={<KnowledgeEditor />} />
+                  <Route path="/service/knowledge/:articleId" element={<KnowledgeArticle />} />
+                  <Route path="/service/knowledge/:articleId/edit" element={<KnowledgeEditor />} />
+                  <Route path="/service/changes" element={<ChangeList />} />
+                  <Route path="/service/changes/:changeId" element={<ChangeDetail />} />
+                  <Route path="/service/assets" element={<ServiceAssets />} />
                   <Route path="*" element={<UnknownRoute />} />
                 </Routes>
               </Suspense>

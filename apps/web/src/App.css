@@ -96,50 +96,6 @@ code, pre { font-family: var(--font-mono); font-size: 0.92em; }
 }
 *::-webkit-scrollbar-thumb:hover { background: var(--n-400); background-clip: content-box; }
 
-/* ==========================================================================
-   Application shell
-   ========================================================================== */
-
-.workspace-shell {
-  min-height: 100vh;
-  display: grid;
-  grid-template-columns: var(--nav-width) minmax(0, 1fr);
-  background:
-    radial-gradient(circle at 86% -12%, rgba(143, 195, 228, 0.28), transparent 31rem),
-    var(--bg-app);
-}
-
-/*
- * The sidebar is exactly the window's height, and its list scrolls inside it.
- *
- * It used to be 100vh with no overflow handling, which is fine until the modules
- * outgrow the window — and they have. On a 700px-tall window the content stood 900px
- * tall, so the last few items and the whole footer sat below the fold with no way to
- * reach them: not scrolled off, simply gone.
- *
- * `dvh` rather than `vh` because the two differ wherever browser chrome appears and
- * retracts, and being a hundred pixels too tall is the same bug again.
- */
-.sidebar {
-  position: sticky;
-  top: 0;
-  height: 100dvh;
-  /* Clips rather than spills; the scrolling belongs to the list, not to this. */
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-5);
-  padding: var(--sp-5) var(--sp-3) var(--sp-4);
-  /* A vertical fall from the accent to the deep ground: the plane reads as lit from
-     above, which separates it from the content beside it without a heavy border. */
-  background:
-    radial-gradient(circle at 18% -8%, rgba(91, 163, 206, 0.34), transparent 18rem),
-    linear-gradient(180deg, var(--nav-bg) 0%, var(--nav-bg-accent) 100%);
-  color: var(--nav-fg);
-  border-right: 1px solid var(--nav-border);
-  box-shadow: 10px 0 28px rgba(6, 31, 46, 0.08);
-}
-
 .brand-lockup {
   flex: 0 0 auto;
   display: flex;
@@ -172,123 +128,6 @@ code, pre { font-family: var(--font-mono); font-size: 0.92em; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/*
- * The only part that scrolls, so the brand stays at the top and the account stays at
- * the bottom however long the list gets.
- *
- * `min-height: 0` is what makes it work: a flex item will not shrink below its content
- * height without it, so the list simply grew and pushed the footer out of the window
- * instead of gaining a scrollbar.
- */
-.nav-list {
-  display: grid;
-  gap: 2px;
-  flex: 1;
-  align-content: start;
-  min-height: 0;
-  overflow-y: auto;
-  /* Reaching the end of the modules should not start scrolling the page behind it. */
-  overscroll-behavior: contain;
-}
-
-/* The global scrollbar is tuned for light surfaces and disappears on the dark nav. */
-.nav-list::-webkit-scrollbar { width: 10px; }
-.nav-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.16);
-  border: 3px solid transparent;
-  background-clip: content-box;
-  border-radius: var(--r-full);
-}
-.nav-list:hover::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.28); background-clip: content-box; }
-.nav-list::-webkit-scrollbar-track { background: transparent; }
-.nav-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
-  margin-inline: var(--sp-1);
-  border-radius: var(--r-md);
-  color: var(--nav-fg);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-snug);
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-}
-
-/* The marker, not the fill, is what carries "you are here" at a glance. It is drawn
-   collapsed and scales up, so switching sections reads as movement rather than a jump. */
-.nav-item::before {
-  content: '';
-  position: absolute;
-  left: calc(var(--sp-1) * -1);
-  top: 50%;
-  width: 3px;
-  height: 18px;
-  border-radius: 0 3px 3px 0;
-  background: var(--nav-marker);
-  transform: translateY(-50%) scaleY(0);
-  transition: transform var(--dur-base) var(--ease-out);
-}
-.nav-item-active::before { transform: translateY(-50%) scaleY(1); }
-.nav-item svg { flex-shrink: 0; opacity: 0.85; }
-.nav-item:hover { background: var(--nav-hover); color: var(--nav-fg-strong); }
-.nav-item-active { background: var(--nav-active); color: var(--nav-fg-strong); font-weight: var(--weight-semi); }
-.nav-item-active svg { opacity: 1; }
-/* A left marker reads as "you are here" faster than a background alone. */
-.nav-item-active::before {
-  content: '';
-  position: absolute;
-  left: -10px;
-  top: 50%; transform: translateY(-50%);
-  width: 3px; height: 18px;
-  border-radius: var(--r-full);
-  background: var(--a-400);
-}
-
-.sidebar-footer {
-  display: grid;
-  gap: var(--sp-3);
-  padding-top: var(--sp-4);
-  border-top: 1px solid var(--nav-border);
-  /* Neither end gives way when the list is long; only the list scrolls. */
-  flex: 0 0 auto;
-}
-.security-panel {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--r-sm);
-  background: rgba(255, 255, 255, 0.04);
-  min-width: 0;
-}
-.security-panel svg { flex-shrink: 0; opacity: 0.7; }
-.security-panel > div { min-width: 0; }
-.security-panel strong {
-  display: block;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semi);
-  color: var(--nav-fg-strong);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.security-panel span {
-  display: block;
-  font-size: var(--text-2xs);
-  color: var(--nav-fg);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-
-.connection-pill {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: 0 var(--sp-3);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-medium);
-  color: var(--nav-fg);
-  letter-spacing: var(--tracking-wide);
-}
 .connection-dot { width: 6px; height: 6px; border-radius: var(--r-full); background: var(--n-500); flex-shrink: 0; }
 .connection-open .connection-dot { background: #34d399; box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.16); }
 .connection-reconnecting .connection-dot { background: #fbbf24; animation: pulse 1.4s var(--ease) infinite; }
@@ -1770,17 +1609,7 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 }
 
 @media (max-width: 860px) {
-  .workspace-shell { grid-template-columns: minmax(0, 1fr); }
-  .sidebar {
-    position: fixed;
-    inset: 0 auto 0 0;
-    width: 272px;
-    z-index: var(--z-nav);
-    transform: translateX(-100%);
-    transition: transform var(--dur-slow) var(--ease);
-    box-shadow: var(--shadow-xl);
-  }
-  .sidebar-open { transform: none; }
+
   .nav-scrim {
     display: block;
     position: fixed; inset: 0;
@@ -2647,7 +2476,6 @@ fieldset.field { border: none; padding: 0; margin-inline: 0; }
 .toast-critical { border-left-color: var(--dan-600); }
 .toast-critical .toast-icon { background: var(--dan-600); }
 
-
 /* ============================================================== surfaces pass
    Density and hierarchy across the screens that predate the redesign. These are
    the shared classes every route already uses, so the changes reach all of them
@@ -2806,7 +2634,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
-.nav-item-active .nav-badge { background: #fff; color: var(--brand-800); }
 
 /* Message receipts. Read is the only state that takes the accent: sent and delivered
    are the resting cases and should not compete with the message text. */
@@ -3564,71 +3391,13 @@ body {
     linear-gradient(180deg, #f7f9fb 0%, var(--bg-app) 42%, #f1f5f8 100%);
 }
 
-.workspace-shell { min-height: 100dvh; }
-
-.sidebar {
-  gap: var(--sp-4);
-  padding: var(--sp-5) var(--sp-3) var(--sp-4);
-  background:
-    radial-gradient(circle at 12% -2%, rgba(88, 175, 211, 0.35), transparent 20rem),
-    radial-gradient(circle at 90% 104%, rgba(37, 143, 193, 0.13), transparent 18rem),
-    linear-gradient(175deg, var(--nav-bg) 0%, var(--nav-bg-accent) 72%);
-  border-right-color: rgba(255, 255, 255, 0.10);
-  box-shadow: 18px 0 50px rgba(6, 27, 42, 0.10);
-}
-
 .brand-lockup {
   gap: var(--sp-3);
   min-height: 48px;
   padding: 0 var(--sp-3) var(--sp-2);
 }
-.sidebar .product-icon {
-  width: 38px;
-  height: 38px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 12px;
-  box-shadow: 0 8px 22px rgba(1, 12, 20, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.20);
-}
-.sidebar .brand-lockup strong { font-size: 0.89rem; letter-spacing: -0.012em; }
-.sidebar .brand-lockup span { margin-top: 2px; color: rgba(210, 229, 239, 0.68); }
 
-.nav-list { gap: 3px; padding: var(--sp-2) 0; }
-.nav-item {
-  min-height: 40px;
-  margin-inline: var(--sp-1);
-  padding: 0 var(--sp-3);
-  border: 1px solid transparent;
-  border-radius: 11px;
-  transition: transform var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease),
-              border-color var(--dur-base) var(--ease), color var(--dur-base) var(--ease),
-              box-shadow var(--dur-base) var(--ease);
-}
-.nav-item:hover {
-  transform: translateX(2px);
-  border-color: rgba(255, 255, 255, 0.07);
-  background: rgba(255, 255, 255, 0.085);
-}
-.nav-item-active {
-  border-color: rgba(155, 208, 231, 0.18);
-  background: linear-gradient(100deg, rgba(88, 175, 211, 0.24), rgba(255, 255, 255, 0.07));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 8px 18px rgba(2, 16, 25, 0.14);
-}
-.nav-item-active::before {
-  left: -5px;
-  width: 3px;
-  height: 22px;
-  background: #8dd7f5;
-  box-shadow: 0 0 12px rgba(141, 215, 245, 0.55);
-}
 .nav-badge { box-shadow: 0 0 0 2px rgba(6, 27, 42, 0.7); }
-
-.sidebar-footer {
-  padding: var(--sp-3);
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  border-radius: var(--r-lg);
-  background: rgba(255, 255, 255, 0.055);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-}
 
 .top-bar {
   height: var(--topbar-height);
@@ -3929,10 +3698,18 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .workspace-content, .auth-card, .notification-panel { animation: none; }
-  .nav-item:hover, .thread-row:hover, .person-row:hover, .request-row:hover,
-  .announcement-row:hover, .room-button:hover, .agenda-item:hover, .folder-button:hover,
-  .metric-card:hover, .primary-button:hover:not(:disabled), .ghost-button:hover:not(:disabled),
-  .chip:hover, .icon-button:hover:not(:disabled) { transform: none; }
+  .thread-row:hover,
+.person-row:hover,
+.request-row:hover,
+.announcement-row:hover,
+.room-button:hover,
+.agenda-item:hover,
+.folder-button:hover,
+.metric-card:hover,
+.primary-button:hover:not(:disabled),
+.ghost-button:hover:not(:disabled),
+.chip:hover,
+.icon-button:hover:not(:disabled) { transform: none; }
 }
 
 /* ==========================================================================

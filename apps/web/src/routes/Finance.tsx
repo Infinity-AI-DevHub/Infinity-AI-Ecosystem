@@ -598,7 +598,7 @@ function BudgetDialog({ onClose }: { onClose: () => void }) {
 
 // ------------------------------------------------------------------ assets
 
-function Assets() {
+export function Assets() {
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const { can } = useSession();
   const [search, setSearch] = useState('');
@@ -845,7 +845,7 @@ function AssignDialog({ asset, onClose }: { asset: Asset; onClose: () => void })
 
 // ------------------------------------------------------------------ vendors
 
-function Vendors() {
+export function Vendors() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Vendor | null>(null);
   const vendors = useQuery<{ items: Vendor[] }>('/vendors', (signal) => api.get('/vendors', signal));

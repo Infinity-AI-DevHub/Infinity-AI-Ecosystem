@@ -11,7 +11,7 @@
  * accounts.
  */
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { CreditCard, FileText, FolderOpen, LayoutDashboard, LogOut, Receipt, CheckSquare, Upload } from 'lucide-react';
+import { BookOpen, CreditCard, FileText, FolderOpen, LayoutDashboard, LifeBuoy, LogOut, Receipt, CheckSquare, Upload } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useSession } from '../../lib/session';
 
@@ -23,6 +23,8 @@ const LINKS = [
   { to: '/portal/documents', label: 'Documents', icon: FolderOpen },
   { to: '/portal/send', label: 'Send documents', icon: Upload },
   { to: '/portal/tasks', label: 'Work', icon: CheckSquare },
+  { to: '/portal/tickets', label: 'Support', icon: LifeBuoy },
+  { to: '/portal/knowledge', label: 'Help articles', icon: BookOpen },
 ];
 
 export function PortalShell() {

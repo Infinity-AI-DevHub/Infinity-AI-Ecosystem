@@ -9,7 +9,22 @@ import { jsonArrayOverlaps, many, newId, pool, type Queryable } from '../core/db
 import { escapeHtml } from '../core/validation.js';
 import type { Actor } from '../core/authz.js';
 
-export type DocType = 'chat' | 'file' | 'person' | 'task' | 'meeting' | 'announcement' | 'doc';
+export type DocType = 'chat' | 'file' | 'person' | 'task' | 'meeting' | 'announcement' | 'doc' | 'client' | 'ticket' | 'article' | 'change' | 'service' | 'incident';
+
+/**
+ * Result types that also need a role capability, not just a place on the record's ACL.
+ *
+ * A client organisation is indexed company-wide because everyone who may read clients
+ * may read all of them - but not everyone may read clients. Without this gate a staff
+ * member's search would list client names that the Clients page refuses them.
+ */
+const CAPABILITY_GATED: Partial<Record<DocType, string>> = {
+  client: 'external_org.read',
+  ticket: 'ticket.read',
+  change: 'change.create',
+  service: 'reliability.read',
+  incident: 'reliability.read',
+};
 
 export type IndexInput = {
   companyId: string;
@@ -117,6 +132,12 @@ export async function search(
   if (terms.length === 0) return { hits: [], facets: {}, total: 0 };
   const booleanQuery = terms.map((term) => `+${term}*`).join(' ');
 
+  // Built only from the constant map above, never from input, so it is safe to inline.
+  const hiddenTypes = Object.entries(CAPABILITY_GATED)
+    .filter(([, capability]) => !actor.capabilities.has(capability!))
+    .map(([type]) => `'${type}'`);
+  const typeGate = hiddenTypes.length > 0 ? `AND doc_type NOT IN (${hiddenTypes.join(',')})` : '';
+
   // Placeholders 1-6 are fixed; the group ids occupy 7 onwards.
   const groupClause = jsonArrayOverlaps('acl_group_ids', actor.groupIds, 7);
   const rows = await many<{
@@ -136,6 +157,7 @@ export async function search(
         AND MATCH(title, body) AGAINST ($2 IN BOOLEAN MODE)
         AND ($3 IS NULL OR JSON_CONTAINS($3, JSON_QUOTE(doc_type)))
         AND ($5 OR classification <> 'restricted')
+        ${typeGate}
         AND (
           acl_company_wide = 1
           OR JSON_CONTAINS(acl_user_ids, JSON_QUOTE($4))

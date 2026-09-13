@@ -31,6 +31,7 @@ const bridge: DesktopBridge = {
   },
 
   openExternal: (url: string) => ipcRenderer.invoke(CHANNELS.openExternal, url),
+  openMail: () => ipcRenderer.invoke(CHANNELS.openMail),
 
   saveFile: (input) => ipcRenderer.invoke(CHANNELS.saveFile, input),
   pickFiles: (input) => ipcRenderer.invoke(CHANNELS.pickFiles, input),

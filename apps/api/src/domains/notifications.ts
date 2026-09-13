@@ -23,6 +23,8 @@ export type Severity = 'info' | 'success' | 'warning' | 'critical';
 const SEVERITY: Record<string, Severity> = {
   // Malware found in something an employee uploaded, and it may already be shared.
   'file.quarantined': 'critical',
+  // A production incident is paging this person.
+  'incident.paged': 'critical',
   // Someone is blocked until this person acts.
   'approval.awaiting': 'warning',
   'signature.requested': 'warning',

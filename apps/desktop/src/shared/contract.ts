@@ -38,6 +38,7 @@ export const CHANNELS = {
   sessionSet: 'session:set',
   sessionClear: 'session:clear',
   openExternal: 'shell:open-external',
+  openMail: 'shell:open-mail',
   saveFile: 'dialog:save-file',
   pickFiles: 'dialog:pick-files',
   notify: 'os:notify',
@@ -56,6 +57,8 @@ export type DesktopBridge = {
     clear: () => Promise<void>;
   };
   openExternal: (url: string) => Promise<boolean>;
+  /** Launches the separately installed Infinity Mail application. */
+  openMail: () => Promise<'opened' | 'not_installed'>;
   saveFile: (input: { suggestedName: string; data: ArrayBuffer }) => Promise<string | null>;
   pickFiles: (input?: { accept?: string[]; multiple?: boolean }) => Promise<
     { name: string; path: string; size: number }[]

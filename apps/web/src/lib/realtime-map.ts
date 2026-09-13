@@ -31,6 +31,8 @@ export const INVALIDATION_MAP: { match: (type: string) => boolean; keys: string[
     match: (t) => t.startsWith('user.'),
     keys: ['/users', '/people', '/admin'],
   },
+  // A ticket change moves it between views, and can change the SLA state on its page.
+  { match: (t) => t.startsWith('ticket.'), keys: ['/service/tickets', '/portal/tickets'] },
   { match: (t) => t === 'notification.created', keys: ['/me/notifications', '/me/activity'] },
 ];
 

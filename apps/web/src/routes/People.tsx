@@ -10,7 +10,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Copy, Mail, Plus, ShieldOff, ShieldCheck, UserMinus, UserPlus } from 'lucide-react';
 import { api, idempotencyKey, type Paged, type User } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
-import { AsyncSection, Empty, FormError } from '../components/States';
+import { AsyncSection, Empty, FormError, Loading } from '../components/States';
 import { formatCurrency, formatDate, initials, relativeTime, titleCase } from '../lib/format';
 import { useSession } from '../lib/session';
 import { useTextPrompt } from '../components/Prompt';
@@ -46,7 +46,19 @@ export default function People() {
     api.get('/departments', signal),
   );
 
-  const selected = people.data?.items.find((person) => person.id === userId) ?? null;
+  /*
+   * A deep link can name someone outside the loaded page - beyond the first hundred, or
+   * hidden by the current filter - so the record is fetched on its own when the list
+   * does not have it. Without this a link from search or a notification opened a page
+   * that said "Select someone".
+   */
+  const listed = people.data?.items.find((person) => person.id === userId) ?? null;
+  const directKey = userId && people.data && !listed ? `/users/${userId}` : null;
+  const direct = useQuery<User>(directKey, (signal) => api.get(directKey!, signal));
+  const fetched = direct.data?.id === userId ? direct.data : null;
+  // Client contacts are managed from Clients; staff controls do not apply to them.
+  const clientContact = fetched?.accessLevel === 'guest' ? fetched : null;
+  const selected = listed ?? (clientContact ? null : fetched);
 
   const suspend = useMutation(
     async ({ id, reason }: { id: string; reason: string }) =>
@@ -178,7 +190,17 @@ export default function People() {
         </section>
 
         <section className="panel" aria-label="Person detail">
-          {!selected ? (
+          {!selected && directKey && direct.loading ? (
+            <Loading label="Loading profile" rows={3} />
+          ) : !selected && directKey && direct.error ? (
+            <Empty title="That person could not be found" description="The link may be out of date, or the account belongs to another workspace." />
+          ) : clientContact ? (
+            <div className="state-block state-empty">
+              <h3>{clientContact.displayName} is a client contact</h3>
+              <p>Client contacts are not part of the directory. Open their organisation from Clients.</p>
+              <button type="button" className="ghost-button" onClick={() => navigate('/clients')}>Open Clients</button>
+            </div>
+          ) : !selected ? (
             <Empty title="Select someone" description="Choose a colleague to see their profile." />
           ) : (
             <article className="person-detail">

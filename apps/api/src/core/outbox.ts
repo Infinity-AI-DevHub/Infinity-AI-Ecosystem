@@ -47,6 +47,8 @@ export type DomainEventType =
   | 'reminder.due'
   | 'attendance.flagged'
   | 'attendance.reviewed'
+  | 'ticket.replied'
+  | 'incident.paged'
   | 'notification.created';
 
 export type OutboxEvent = {

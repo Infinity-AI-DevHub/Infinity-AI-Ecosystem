@@ -811,7 +811,7 @@ export async function searchRoutes(app: FastifyInstance): Promise<void> {
     const types = query.types
       ?.split(',')
       .filter((t): t is search.DocType =>
-        ['mail', 'chat', 'file', 'person', 'task', 'meeting', 'announcement', 'doc'].includes(t),
+        ['mail', 'chat', 'file', 'person', 'task', 'meeting', 'announcement', 'doc', 'client', 'ticket', 'article', 'change', 'service', 'incident'].includes(t),
       );
     return search.search(actor, query.q, { types, limit: query.limit });
   });

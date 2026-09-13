@@ -146,7 +146,19 @@ const onApprovalSettled: Handler = async (event) => {
     'SELECT id FROM expense_claims WHERE approval_request_id = $1',
     [requestId],
   );
-  if (claim) await finance.settleClaimDecision(claim.id, status);
+  if (claim) {
+    await finance.settleClaimDecision(claim.id, status);
+    return;
+  }
+
+  const change = await one<{ id: string }>(
+    'SELECT id FROM change_requests WHERE approval_request_id = $1',
+    [requestId],
+  );
+  if (change) {
+    const { settleDecision } = await import('../domains/changes.js');
+    await settleDecision(change.id, status);
+  }
 };
 
 const onUserInvited: Handler = async (event) => {
@@ -212,6 +224,18 @@ const onUserInvited: Handler = async (event) => {
     });
   }
 
+  /*
+   * A client contact is not in the People directory, so a result pointing there opened
+   * an empty page. It points at the organisation they belong to instead.
+   */
+  const membership = await one<{ organization_id: string }>(
+    `SELECT m.organization_id FROM external_memberships m
+       JOIN users u ON u.id = m.user_id AND u.access_level = 'guest'
+      WHERE m.user_id = $1 AND m.company_id = $2
+      ORDER BY m.created_at LIMIT 1`,
+    [userId, event.company_id],
+  );
+
   await searchIndex.index({
     companyId: event.company_id,
     docType: 'person',
@@ -219,7 +243,7 @@ const onUserInvited: Handler = async (event) => {
     title: displayName,
     body: `${displayName} ${email}`,
     aclCompanyWide: true,
-    link: `/people/${userId}`,
+    link: membership ? `/clients/${membership.organization_id}` : `/people/${userId}`,
   });
 };
 
@@ -1487,10 +1511,39 @@ const onAnnouncementPublished: Handler = async (event) => {
   );
 };
 
+// ----------------------------------------------------------------- service desk
+
+/**
+ * A client learns of a reply by email, because they are not sitting in the workspace.
+ * Employees are already notified in the app and on the desktop, so they are not emailed
+ * as well. Only public replies emit this event; an internal note never leaves.
+ */
+const onTicketReplied: Handler = async (event) => {
+  const { ticketId, commentId } = event.payload as { ticketId: string; commentId: string };
+  const { replyForEmail, ticketRef } = await import('../domains/service.js');
+  const reply = await replyForEmail(ticketId, commentId);
+  if (!reply || reply.visibility !== 'public' || !reply.requester_is_guest) return;
+  await notifier.send({
+    from: { address: systemSender(), name: 'Infinity AI Support' },
+    to: [reply.requester_email],
+    subject: `Re: [${ticketRef(reply.number)}] ${reply.subject}`,
+    text: [
+      `Hello ${reply.requester_name},`,
+      '',
+      `${reply.author_name} replied to your support request ${ticketRef(reply.number)}:`,
+      '',
+      reply.body.slice(0, 5000),
+      '',
+      `View the conversation or reply: ${publicUrl}/portal/tickets/${ticketId}`,
+    ].join('\n'),
+  });
+};
+
 // ----------------------------------------------------------------- registry
 
 export const handlers: Record<string, Handler> = {
   'user.invited': onUserInvited,
+  'ticket.replied': onTicketReplied,
   'user.activated': onUserActivated,
   'user.updated': onAccessChanged,
   'user.suspended': onAccessChanged,

@@ -255,6 +255,14 @@ const jobs: Job[] = [
     const { notified } = await reminders.notifyDue();
     if (notified > 0) logger.info({ notified }, 'reminders sent');
   } },
+  { name: 'service-sla', intervalMs: 60_000, lockKey: 'iw_service_sla', run: async () => {
+    const { checkSla } = await import('../domains/service.js');
+    await checkSla();
+  } },
+  { name: 'itam-expiry', intervalMs: 3_600_000, lockKey: 'iw_itam_expiry', run: async () => {
+    const { sendExpiryReminders } = await import('../domains/itam.js');
+    await sendExpiryReminders();
+  } },
   { name: 'attendance-auto-clockout', intervalMs: 60_000, lockKey: 'iw_attendance_stale', run: async () => {
     const { closed } = await attendance.closeStaleSessions();
     if (closed > 0) logger.info({ closed }, 'closed attendance sessions with no heartbeat');
