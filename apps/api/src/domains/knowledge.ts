@@ -310,3 +310,14 @@ export async function articlesForTicket(actor: Actor, ticketId: string) {
     [ticketId],
   );
 }
+
+/** Drafts and archived articles can be deleted; a published one is archived first, so nobody loses a link mid-read. */
+export async function deleteArticle(actor: Actor, id: string) {
+  await requireWriter(actor);
+  const article = await one<ArticleRow>('SELECT * FROM kb_articles WHERE id = $1 AND company_id = $2', [id, actor.companyId]);
+  if (!article) throw notFound('Article not found');
+  if (article.status === 'published') throw conflict('Archive this article before deleting it');
+  await pool.query('DELETE FROM kb_articles WHERE id = $1', [id]);
+  await searchIndex.remove('article', id);
+  await auditFromActor(actor, 'kb.article.delete', { resourceType: 'kb_article', resourceId: id, metadata: { title: article.title } });
+}

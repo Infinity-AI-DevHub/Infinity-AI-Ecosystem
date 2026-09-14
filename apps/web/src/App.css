@@ -3991,3 +3991,16 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .message-stream li { animation: none; }
 }
+
+/* Chat message tools: reactions, edit and delete. Tools appear on hover or keyboard focus. */
+.message-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.reaction { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 7px; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-surface); font: inherit; font-size: 12px; cursor: pointer; }
+.reaction-mine { border-color: var(--brand-400, #5b8def); background: var(--bg-selected); }
+.message-tools { display: inline-flex; align-items: center; gap: 4px; opacity: 0; transition: opacity .12s; }
+.message-stream li:hover .message-tools, .message-stream li:focus-within .message-tools { opacity: 1; }
+.chat-edit { display: grid; gap: 6px; margin-top: 4px; }
+.chat-edit textarea { width: 100%; font: inherit; }
+.chat-channel-actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+.guest-grant-form { display: grid; gap: 8px; margin: 12px 0; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
+.share-existing { margin: 8px 0 12px; }
+.share-existing h4 { margin: 0 0 6px; font-size: 13px; }

@@ -1,0 +1,51 @@
+/*
+ * Engineering catalogue. Builds on cc-* panels, sd-* tables and forms, rl-* status.
+ */
+
+.eg-score { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 5px; font-size: 11.5px; font-weight: 700; white-space: nowrap; background: var(--bg-sunken); color: var(--fg-secondary); }
+.eg-score-pct { font-weight: 600; font-variant-numeric: tabular-nums; opacity: .8; }
+.eg-score-gold { background: #fdf3d3; color: #8a5a00; }
+.eg-score-silver { background: var(--n-100, #eef0f3); color: var(--fg-secondary); }
+.eg-score-bronze { background: #f8e6d8; color: #8a4b1c; }
+.eg-score-needs_work { background: var(--dan-50); color: var(--dan-700); }
+
+.eg-deploy { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 650; white-space: nowrap; }
+.eg-deploy-succeeded { color: var(--ok-600); }
+.eg-deploy-failed { color: var(--dan-600); }
+.eg-deploy-rolled_back { color: var(--warn-700); }
+.eg-deploy-in_progress { color: var(--info-600); }
+
+.eg-life-experimental { background: var(--info-50); color: var(--info-600); }
+.eg-life-production { background: var(--ok-50); color: var(--ok-700); }
+.eg-life-deprecated { background: var(--warn-50); color: var(--warn-700); }
+
+.eg-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.eg-rules { margin: 0; padding: 0; list-style: none; }
+.eg-rules li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; padding: 8px 14px; border-top: 1px solid var(--border-subtle); font-size: 13px; }
+.eg-rules li.is-na { color: var(--fg-muted); }
+.eg-rules .eg-pass { color: var(--ok-600); }
+.eg-rules .eg-fail { color: var(--dan-600); }
+.eg-rules .field-hint { display: block; margin-top: 2px; }
+
+.eg-envs { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; padding: 12px 14px; }
+.eg-env { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--border-default); border-radius: 8px; font-size: 12.5px; }
+.eg-env header { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.eg-env strong { font-size: 13.5px; }
+
+.eg-check { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--border-subtle); font-size: 13px; }
+.eg-check input { width: 16px; height: 16px; }
+.eg-check.is-done span { color: var(--fg-tertiary); text-decoration: line-through; }
+.eg-check .sd-link-button { margin-left: auto; }
+
+.eg-matrix td.eg-cell { text-align: center; }
+.eg-matrix th.eg-rule { width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
+.eg-matrix th.eg-rule abbr { text-decoration: none; cursor: help; }
+.eg-matrix { min-width: 0; }
+
+.eg-secret { display: grid; gap: 6px; padding: 12px 14px; border-top: 1px solid var(--border-subtle); background: var(--warn-50); }
+.eg-secret code { word-break: break-all; }
+.eg-steps { margin: 0; padding: 0 14px 12px 32px; font-size: 13px; color: var(--fg-secondary); }
+.eg-steps li { margin-top: 4px; }
+.sd-filters input[type='search'] { height: 34px; min-width: 260px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface); color: var(--fg-primary); font: inherit; font-size: 13px; }
+form.eg-env input, form.eg-env select { height: 32px; padding: 0 8px; border: 1px solid var(--border-default); border-radius: 7px; background: var(--bg-surface); color: var(--fg-primary); font: inherit; font-size: 13px; }
+.sd-side .sd-editor > input, .sd-side .sd-inline input { height: 34px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface); color: var(--fg-primary); font: inherit; font-size: 13px; }

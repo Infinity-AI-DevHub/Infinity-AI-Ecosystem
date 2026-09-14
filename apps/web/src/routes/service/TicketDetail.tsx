@@ -7,7 +7,7 @@
  * if somebody else changed the ticket first the server refuses and the page reloads it.
  */
 import { useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, CheckCircle2, Link2, Lock, Paperclip, RotateCcw, Send, Star, X, XCircle,
 } from 'lucide-react';
@@ -56,6 +56,8 @@ export default function TicketDetail({ apiBase = '/service' }: { apiBase?: '/ser
   const ticket = useQuery<Ticket>(ticketId ? key : null, (signal) => api.get(key, signal));
   const [actionError, setActionError] = useState<string | null>(null);
   const portal = apiBase === '/portal';
+  const navigate = useNavigate();
+  const { can } = useSession();
 
   if (ticket.loading && !ticket.data) return <Loading label="Loading ticket" rows={6} />;
   if (ticket.error && !ticket.data) {
@@ -108,6 +110,12 @@ export default function TicketDetail({ apiBase = '/service' }: { apiBase?: '/ser
             <button type="button" className="ghost-button" onClick={() => void setStatus('closed')}>
               <XCircle size={15} aria-hidden="true" /> Close
             </button>
+          ) : null}
+          {!portal && can('service.manage') ? (
+            <button type="button" className="ghost-button" onClick={() => {
+              if (!window.confirm(`Delete ${t.ref} permanently? Use this for spam or duplicates; real requests should be closed instead.`)) return;
+              void run(async () => { await api.delete(`/service/tickets/${t.id}`); navigate('/service'); });
+            }}>Delete</button>
           ) : null}
         </div>
       </header>

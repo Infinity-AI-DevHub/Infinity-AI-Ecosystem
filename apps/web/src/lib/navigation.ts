@@ -6,7 +6,7 @@
  * entries a role cannot use - the API authorizes every call independently.
  *
  * An area appears only when it contains at least one module the person can open. Areas
- * the product does not have modules for yet (Engineering, Security) are not
+ * the product does not have modules for yet (Security) are not
  * listed: an entry that leads to an empty page is worse than no entry.
  */
 import {
@@ -40,6 +40,25 @@ import {
   Ticket,
   Settings2,
   Building2,
+  Activity,
+  CalendarClock,
+  PhoneCall,
+  Server,
+  Siren,
+  Boxes,
+  GraduationCap,
+  ScrollText,
+  Award,
+  Sparkles,
+  KeyRound,
+  ListChecks,
+  ClipboardCheck,
+  UserMinus,
+  Plug,
+  Rocket,
+  GitBranch,
+  Gauge,
+  LayoutTemplate,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -112,6 +131,49 @@ export const NAV_AREAS: NavArea[] = [
       { to: '/service/assets', label: 'Assets & licences', icon: HardDrive, capability: ['asset.read', 'licence.read'], keywords: 'equipment laptops licences software contracts vendors warranty' },
       { to: '/service/analytics', label: 'Support analytics', icon: BarChart3, capability: ['ticket.work', 'ticket.read'], keywords: 'sla csat satisfaction metrics' },
       { to: '/service/settings', label: 'Desk settings', icon: Settings2, capability: 'service.manage', keywords: 'queues sla categories escalation' },
+    ],
+  },
+  {
+    id: 'engineering',
+    label: 'Engineering', short: 'Eng',
+    icon: Activity,
+    modules: [
+      { to: '/engineering', label: 'Software catalogue', icon: Boxes, capability: 'engineering.read', keywords: 'services catalog ownership owners dependencies runbooks' },
+      { to: '/engineering/apis', label: 'APIs', icon: Plug, capability: 'engineering.read', keywords: 'api catalogue openapi spec graphql grpc endpoints' },
+      { to: '/engineering/deployments', label: 'Deployments', icon: Rocket, capability: 'engineering.read', keywords: 'releases deploys ship change failure rate' },
+      { to: '/engineering/repositories', label: 'Repositories', icon: GitBranch, capability: 'engineering.read', keywords: 'github gitlab git code pull requests merge webhooks' },
+      { to: '/engineering/scorecards', label: 'Scorecards', icon: Gauge, capability: 'engineering.read', keywords: 'standards maturity readiness quality' },
+      { to: '/engineering/templates', label: 'Service templates', icon: LayoutTemplate, capability: 'engineering.read', keywords: 'scaffold onboarding checklist new service' },
+      { to: '/reliability', label: 'Service status', icon: Activity, capability: 'reliability.read', keywords: 'reliability uptime status page health' },
+      { to: '/reliability/incidents', label: 'Incidents', icon: Siren, capability: 'reliability.read', keywords: 'outage incident sev postmortem war room' },
+      { to: '/reliability/services', label: 'Services', icon: Server, capability: 'reliability.read', keywords: 'catalogue systems monitoring integrations heartbeat' },
+      { to: '/reliability/oncall', label: 'On-call', icon: PhoneCall, capability: 'reliability.read', keywords: 'rotation schedule escalation pager' },
+      { to: '/reliability/alerts', label: 'Alerts', icon: BellRing, capability: 'reliability.read', keywords: 'monitoring webhook firing' },
+      { to: '/reliability/maintenance', label: 'Maintenance', icon: CalendarClock, capability: 'reliability.read', keywords: 'planned downtime window' },
+      { to: '/reliability/reports', label: 'Reliability report', icon: BarChart3, capability: 'reliability.read', keywords: 'mttr mtta availability sla' },
+    ],
+  },
+  {
+    id: 'academy',
+    label: 'Academy', short: 'Learn',
+    icon: GraduationCap,
+    modules: [
+      { to: '/academy', label: 'My learning', icon: GraduationCap, capability: 'academy.learn', keywords: 'training courses lms assigned learning' },
+      { to: '/academy/policies', label: 'Policies', icon: ScrollText, capability: 'academy.learn', keywords: 'policy acknowledge handbook compliance read' },
+      { to: '/academy/certifications', label: 'Certifications', icon: Award, capability: 'academy.learn', keywords: 'certificate certified expiry credential' },
+      { to: '/academy/skills', label: 'Skills', icon: Sparkles, capability: 'academy.learn', keywords: 'skills matrix competency expertise who knows' },
+    ],
+  },
+  {
+    id: 'access',
+    label: 'Access', short: 'Access',
+    icon: KeyRound,
+    modules: [
+      { to: '/access', label: 'My access', icon: KeyRound, capability: 'access.request', keywords: 'request access permission system account' },
+      { to: '/access/grants', label: 'Grants', icon: ListChecks, capability: ['access.request', 'access.audit'], keywords: 'provision deprovision set up remove access owner' },
+      { to: '/access/reviews', label: 'Access reviews', icon: ClipboardCheck, capability: ['access.request', 'access.audit'], keywords: 'certification recertify review attest' },
+      { to: '/access/systems', label: 'Systems', icon: Server, capability: ['access.request', 'access.audit'], keywords: 'applications entitlements catalogue owners' },
+      { to: '/access/offboarding', label: 'Offboarding', icon: UserMinus, capability: ['access.request', 'access.audit'], keywords: 'leaver departure exit revoke collect equipment' },
     ],
   },
   {

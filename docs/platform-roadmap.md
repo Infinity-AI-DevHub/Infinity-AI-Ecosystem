@@ -109,11 +109,158 @@ Migration `0037_service_management.sql`; domains `knowledge.ts`, `changes.ts`, `
 
 **Known limitations / not built:** SLA business-hours calendars and pausing while waiting on the requester; article view counts include the reader's own refreshes; no bulk ticket actions; the ticket side column is long on problem/device-heavy tickets; Infinity Mail itself still needs to call the webhook and expose a URL scheme for deep links.
 
+## 2c. Phase 3 — reliability (delivered)
+
+Migration `0039_reliability`. Capabilities: `reliability.read` (all employees), `incident.declare` (staff and up), `incident.manage` (managers and up), `reliability.manage` (admins).
+
+- **Services** with tier, owner, escalation policy and support queue. Status is derived, never typed: worst open incident impact, else maintenance, else operational; every change is kept in `service_status_history`, which availability is computed from (partial and major outages count as down).
+- **On-call** (`core/oncall.ts`): daily or weekly rotations in a named timezone, cover overrides (rotation members may cover themselves; managers may assign anyone).
+- **Escalation policies**: up to six levels of schedules or people, delays, repeats; the `incident-escalation` job pages the next level until someone acknowledges, then tells incident managers.
+- **Incidents**: declare or open from an alert, page (notification + email + realtime), acknowledge, join, commander, severity, impact per service, internal notes and public updates (commander only), linked tickets, problem ticket, postmortem with a required root cause and action items created as tasks.
+- **Alert integrations** — no probes, no outbound calls. Signed webhooks (`X-Infinity-Timestamp`, `X-Infinity-Signature: sha256=HMAC(secret, "ts.body")`, 5-minute window); the secret is shown once. Heartbeats, where the unguessable URL is the credential; the `heartbeat-check` job raises an alert when one is missed. Alerts dedupe by fingerprint; critical opens SEV2, warning opens SEV3 (configurable per integration).
+- **Maintenance windows**, optionally linked to a change, public, and silencing paging (alerts are still recorded as suppressed).
+- **Public status page** at `/status/:slug`, anonymous and rate-limited; shows only public services, public incidents and public updates, with no severity or internal ids.
+- **Reports**: MTTA, MTTR, severity mix, alert volume and suppression, SEV1/2 postmortem coverage, availability per service.
+- Command centre: reliability widget, and a "Needs you now" entry for incidents you are paged for and have not acknowledged. Navigation area **Engineering**.
+
+### Phase 3 verification
+
+- API: 9 e2e tests in "reliability" (permissions, paging, commander-only controls, escalation, public page, postmortem, signed alerts and suppression, heartbeats, overrides and tenant isolation); rotation unit tests. Full e2e run: 75 pass, the same 5 unrelated pre-existing failures.
+- Electron, as admin against local data: schedule and edit, escalation policy, service, webhook integration; a bad signature is rejected; a signed critical alert opened INC-1 and paged the on-call admin (notification + command centre); acknowledge, commander, public update; public page viewed signed out; alert resolve; incident resolve; postmortem published with task ROLL-1; maintenance window suppressed a critical alert and showed on the page, then cancelled; cover added and removed; heartbeat integration received a beat, and an unknown key is refused; a backdated heartbeat was caught by the running scheduler within a minute (INC-2 opened, admin paged) and the next beat resolved the alert; report figures matched.
+- Not verified: the paging email actually arriving (no mail delivery locally) and paging a second real person (single admin account by agreement).
+
+## 2d. Phase 4 — engineering (delivered; teams and projects added in 0041)
+
+Migration `0040_engineering`. Capabilities: `engineering.read` (all employees), `engineering.manage` (managers and up), `deployment.record` (staff and up), `scm.manage` (admins; connections hold webhook secrets). A service's owner may maintain its own catalogue entry.
+
+- **Software catalogue** extends the Phase 3 `services` table (kind, lifecycle, language) — one list for health and for ownership. Entries carry owner, description, dependencies (cycles refused), runbooks and docs (a web link or a knowledge base article), environments, APIs, repositories, deployments and an onboarding checklist.
+- **API catalogue**: protocol, version, audience, lifecycle, spec and docs links; searchable (`api` search type).
+- **Source control by webhook, not OAuth**: a GitHub connection verifies `X-Hub-Signature-256`; GitLab compares `X-Gitlab-Token`. Delivery ids (or a body hash) make redeliveries no-ops. Repositories appear from their first event and are linked to a service by a manager or the service owner. Push, pull/merge request and deployment status events are recorded. No provider token is stored and no outbound call is made. OAuth apps were not built: they need a registered app per provider and add nothing the webhooks do not already give.
+- **Deployments** from GitHub/GitLab (one row per provider deployment, updated as its status changes, environment created on first sight) or recorded by hand, optionally against a change. Change failure rate and deploys per week; production releases of critical/high services with no change record are flagged; a failed production release notifies the service owner; incidents list deployments to affected services in the preceding day.
+- **Scorecards** computed from facts on every read (`core/scorecard.ts`): 11 rules, non-applicable rules left out of the score, gold/silver/bronze/needs work.
+- **Templates** set kind, tier, environments and the onboarding checklist for new services.
+- Command centre: "Services I own" widget and a "Needs you now" entry for a failed production release in the last day.
+
+### Phase 4 verification
+
+- API: 9 unit tests (payload mapping incl. unsafe links, environment kinds, scorecard scoring) and 6 e2e tests in "engineering" (template to checklist and environments, owner vs manager edits, cycles, link validation, API conflicts, signed GitHub events with replay and secret rotation, GitLab token and pause, deployment status updates, owner notification, change failure rate, incident correlation, tenant isolation, guests). Full e2e: 81 pass, the same 5 unrelated pre-existing failures.
+- Electron, as admin against local data: template created; Payments API created from it (checklist and environments seeded); knowledge base article linked as runbook; dependency on Customer portal; checklist ticked; API v1 added; GitHub connection created in the UI with setup instructions; signed ping, push, duplicate delivery (ignored), pull request opened and merged, deployment ignored until linked, repository linked in the UI, failed and successful production deployments recorded and the owner notified; a manual deployment recorded; incident declared showing the deployments before it; scorecards, API catalogue, deployments feed, search and command centre checked.
+- Not verified: a real GitHub or GitLab instance sending to this machine (payloads were built to the providers' documented formats and signed the same way), the GitLab flow in the desktop app (covered by e2e only), and a non-admin owner using the UI (single admin account by agreement; owner rules are covered by e2e).
+
+## 2e. Phase 5 — academy and access governance (delivered)
+
+Migrations `0041_service_teams_and_projects` (closes the Phase 4 gap: services belong to a team and a project) and `0042_academy_and_access`. Capabilities: `academy.learn` (employees), `academy.manage` (managers and up), `policy.manage`, `access.manage` (admins), `access.request` (employees), `access.audit` (admins and auditors, read only). System owners approve and carry out access for their own systems without `access.manage`.
+
+**Academy**
+- Courses with lessons and an optional quiz. Answers are marked on the server and never sent to learners. A course completes only when every lesson is done and the quiz is passed.
+- Completing a certifying course issues the certification, with an expiry counted in calendar months, and confirms the skills the course develops. It never lowers a level someone already has. Someone can retake a course within 60 days of their certification expiring.
+- Assigning a course to people or a group with a due date; per-course progress report; reminders for training due soon and overdue, and for certifications expiring within 30 days.
+- Outside certifications, verified by an academy manager who is not the holder.
+- Skills register: people assess themselves, and their manager (or an academy manager) confirms it. Changing a level clears the earlier confirmation.
+- Policies are versioned. An acknowledgement is of one exact published text, and a new version asks the audience (everyone, or one group) again. Coverage report and weekly reminders once overdue.
+
+**Access governance**
+- Systems catalogue: roles, risk, owner, linked service, longest allowed grant, and an optional required course that must be complete and not expired.
+- Requests go through the existing approvals system. The route is the requester's manager, then the system owner, then an administrator for high-risk systems (falling back to a super administrator when no admin exists).
+  - The approvals system gained a `request_user` approver type, which takes the approver from the request itself. That is how a request reaches the right owner.
+  - Owners without `decision.make` may decide access requests only, and only when a step names them. No other request type's permissions changed.
+- Grants record what was done, not only what was approved:
+  - pending_grant → active only when the owner confirms it is set up (a temporary grant's clock starts then);
+  - active → pending_removal when it expires, is revoked, is revoked in review, or the person is offboarded;
+  - pending_removal → removed only when the owner confirms.
+  - Existing access can be recorded so it can be reviewed.
+- Access reviews: each grant goes to the system owner, or to the person's manager when the owner holds it. Nobody reviews their own access, revoking needs a reason, and a review closes only when every grant has a decision.
+- Offboarding (the existing flow in People) now also, through the outbox:
+  - turns the person's access into removal tasks for each system owner, and their assigned equipment into collection tasks;
+  - moves ownership of services, systems, courses and policies to the successor;
+  - reassigns their open review items and cancels their pending access requests.
+  Custom tasks can be added.
+- Command centre: training and policies widget; "Needs you now" for overdue training, policies, access to carry out, reviews and offboarding tasks.
+
+**Secrets management** is not built. `docs/secrets-vault-threat-model.md` is the threat model and go/no-go for a separate, security-reviewed milestone. It recommends starting by integrating an existing vault rather than storing secret values.
+
+### Phase 5 verification
+
+- API: 4 unit tests (quiz marking, certification expiry across short months and leap years, temporary grant end, reviewer choice) and 9 end-to-end tests in "academy and access governance". They cover:
+  - drafts and answers hidden from learners, group assignment, earned completion with certification and skill;
+  - outside certifications and skills verified by someone else, policy versions;
+  - manager-then-owner approval with the training gate, high-risk third step, temporary expiry and owner-confirmed removal;
+  - review rules, offboarding tasks and ownership transfer through the real outbox handler;
+  - tenant isolation, guests, and services linked to teams and projects.
+  Full end-to-end run: 90 pass, the same 5 unrelated pre-existing failures.
+- Electron, as admin against local data:
+  - skill added; certifying course built with lessons and a quiz, then published; taken with one failed and one passed attempt; completed with the certification and skill issued;
+  - policy written, published, acknowledged, and a second version asked everyone again;
+  - outside certification added; skill self-assessed;
+  - two systems added; an access request with too long a duration was refused; a valid one was routed to the admin's manager, then the owner;
+  - existing access recorded, revoked and confirmed removed; review revoked a grant with a reason and closed;
+  - a test employee was offboarded in People, the running dispatcher created the removal and collection tasks and moved service ownership, and all tasks were completed;
+  - command centre items and 1000px layout checked.
+- Found and fixed while verifying:
+  - the quiz result disappeared because a data reload remounted the player;
+  - skills confirmed by a course showed as self-assessed;
+  - the request confirmation wording.
+- Not verified: approving or deciding as a non-admin owner or manager in the desktop app (single admin account by agreement; covered by end-to-end tests).
+
+### Closing pass
+
+- The 5 end-to-end failures that predated this work are fixed; they were stale tests, not product faults:
+  - group membership now uses PATCH with `addUserIds`;
+  - the suspension test signs the shared staff account back in;
+  - per-IP activation counters are reset before activation-heavy tests;
+  - guests are deliberately denied `/tasks` (clients reach work through the portal).
+  Full run: 95 pass, 0 fail.
+- Reminders on the real scheduler: back-dated data in the local database, restarted the API, and within 30 seconds the running jobs sent the training-due, certification-expiring and policy-overdue reminders, and expired a temporary grant.
+- That run exposed a flaw, now fixed and tested: an owner holding access to their own system was asked to confirm its removal. That work now goes to administrators, and nobody can confirm removal of their own access.
+- Email: the configured relay (`mail.iinfinityai.com:587`) accepts STARTTLS, authentication, the sender and the recipient. The check stops at RSET, so nothing was sent. Paging outbox events for unacknowledged incidents were processed without error, so those emails were submitted. Arrival in an inbox was not observed.
+- Keyboard: six dialogs did not move focus into themselves, so Escape could not close them. Fixed and re-checked in Electron.
+- Dark mode: the desktop visual system is light only, but with macOS in dark mode the shared tokens turned dark under a light canvas and headings became unreadable on every page. The desktop surface now pins the light theme; checked in Electron with dark mode emulated.
+
+
 ## 3. Later phases — required shape
 
 Each new domain gets: its own migration(s), `src/domains/<domain>/` service, a route file registered independently (a failing domain must not stop core routes from registering), new capabilities seeded per role, audit events on sensitive writes, search indexing, lazy-loaded renderer routes, an entry in `navigation.ts`, and e2e tests covering tenant isolation and the role matrix.
 
 - **Phase 2 Service** — tickets, queues, request types, SLA policies (worker-driven breach detection via scheduler), knowledge base, extending assets/vendors; email-to-ticket requires an inbound-mail decision (Infinity Mail webhook vs. dedicated mailbox).
-- **Phase 3 Reliability** — integrate external monitors (webhook ingestion with signed payloads) rather than building probes; incidents, on-call, status pages, postmortems.
-- **Phase 4 Engineering** — service catalogue; GitHub/GitLab via OAuth app / webhooks, tokens encrypted with `core/crypto.ts`.
-- **Phase 5 Academy and access governance** — access requests on the approvals engine; secrets vault only after a written threat model.
+- **Phase 3 Reliability** — delivered, see 2c.
+- **Phase 4 Engineering** — delivered, see 2d.
+- **Phase 5 Academy and access governance** — delivered, see 2e. Secrets vault: threat model only (`docs/secrets-vault-threat-model.md`).
+
+## Verification pass (2026-09-14)
+
+Every module across the five phases was exercised in the running Electron app, signed in as the local admin, through create, read, update and delete where the record allows it.
+
+Delete was added wherever it was missing. Records with history still refuse deletion, and the error names the alternative (archive, cancel or retire).
+
+### Bugs found and fixed
+
+**Shared query cache**
+- Screens remounted mid-refresh and lost confirmations and quiz results.
+- A page title stayed stale after saving.
+
+**Edits that failed or were ignored**
+- A group rename with an empty description was rejected.
+- Expense category edits were rejected: yes/no values were sent as text.
+- Cleared vendor, asset and category fields were ignored.
+
+**Lists that didn't refresh**
+- Share links didn't refresh after one was created.
+- A new access request didn't appear under My requests.
+
+**Other fixes**
+- Deactivated expense categories disappeared from settings, so they could never be turned back on. Budget managers now see them.
+- Organisation status "Upcoming" and "Completed" failed with 422. The page swallowed the error and deleted organisations without asking.
+- The organisation edit dialog stayed open after leaving the organisation.
+- The Docs page stuck on "Loading" when there were no spaces.
+- Guest grants accepted any capability or resource.
+- An attendance session closed automatically could end before it started.
+
+### Results
+- **Tests:** API unit and e2e suites 213/213, plus regression tests for the fixes above.
+- **Builds:** web and public builds pass.
+- **Route sweep:** clean apart from the intentional not-found checks.
+
+### Not verified in the UI
+- **Other roles:** only the admin account was used. Staff, manager, auditor and guest behaviour, including the client portal, is covered by e2e tests only.
+- **Actions that would contact someone:** invitations and account suspension were left untested so no real email was sent.
+- **Approvals needing a second person:** access requests route to someone other than the requester, so that step is covered by e2e only.

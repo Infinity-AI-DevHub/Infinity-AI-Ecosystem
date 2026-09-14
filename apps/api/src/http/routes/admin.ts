@@ -42,7 +42,8 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     return admin.updateGroup(actor, id, parse(
       z.object({
         name: z.string().min(1).max(120).optional(),
-        description: z.string().max(1000).optional(),
+        // The editor sends null for a cleared description; it means "no description".
+        description: z.string().max(1000).nullable().optional(),
       }).strict(), request.body));
   });
 

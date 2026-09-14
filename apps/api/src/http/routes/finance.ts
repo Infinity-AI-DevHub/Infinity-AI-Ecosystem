@@ -21,7 +21,8 @@ const amount = z.number().nonnegative().max(1e9);
 export async function financeRoutes(app: FastifyInstance): Promise<void> {
   app.get('/expenses/categories', async (request) => {
     const actor = requireActor(request);
-    return { items: await finance.listCategories(actor) };
+    const q = parse(z.object({ includeInactive: z.enum(['true', 'false']).optional() }), request.query);
+    return { items: await finance.listCategories(actor, { includeInactive: q.includeInactive === 'true' }) };
   });
 
   app.post('/expenses/categories', async (request, reply) => {
@@ -87,6 +88,16 @@ export async function financeRoutes(app: FastifyInstance): Promise<void> {
     const actor = requireActor(request);
     const { id } = parse(idParam, request.params);
     return finance.claimWithItems(actor, id);
+  });
+
+  app.delete('/expenses/claims/:id', async (request, reply) => {
+    await finance.deleteClaim(requireActor(request), parse(idParam, request.params).id);
+    return reply.code(204).send();
+  });
+
+  app.delete('/quotations/:id', async (request, reply) => {
+    await quotations.deleteQuotation(requireActor(request), parse(idParam, request.params).id);
+    return reply.code(204).send();
   });
 
   app.post('/expenses/claims/:id/submit', async (request, reply) => {
@@ -350,7 +361,7 @@ export async function financeRoutes(app: FastifyInstance): Promise<void> {
       z.object({
         name: z.string().min(1).max(120).optional(),
         limitAmount: z.number().min(0).nullable().optional(),
-        requiresReceiptAbove: z.number().min(0).optional(),
+        requiresReceiptAbove: z.number().min(0).nullable().optional(),
         active: z.boolean().optional(),
       }).strict(), request.body));
   });
@@ -361,7 +372,7 @@ export async function financeRoutes(app: FastifyInstance): Promise<void> {
     return finance.updateAsset(actor, id, parse(
       z.object({
         name: z.string().min(1).max(200).optional(),
-        category: z.string().max(60).optional(),
+        category: z.string().max(60).nullable().optional(),
         serialNumber: z.string().max(120).nullable().optional(),
         vendorId: z.string().uuid().nullable().optional(),
         purchasedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),

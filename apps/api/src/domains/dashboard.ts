@@ -248,5 +248,23 @@ export async function build(actor: Actor) {
       })
     : undefined;
 
-  return { meetings, tasks, approvals, notifications, announcements, storage, work, attendance, clients, service };
+  // Open incidents and service health, for anyone who can see reliability.
+  const reliability = hasCapability(actor, 'reliability.read')
+    ? await widget('reliability', async () => (await import('./incidents.js')).openForDashboard(actor))
+    : undefined;
+
+  // Services this person owns: their scorecards and any failed production release today.
+  const engineering = hasCapability(actor, 'engineering.read')
+    ? await widget('engineering', async () => (await import('./engineering.js')).forDashboard(actor))
+    : undefined;
+
+  // Training, policies and access work waiting on this person.
+  const learning = hasCapability(actor, 'academy.learn')
+    ? await widget('learning', async () => (await import('./academy.js')).myLearning(actor))
+    : undefined;
+  const access = hasCapability(actor, 'access.request')
+    ? await widget('access', async () => (await import('./access.js')).myAccessSummary(actor))
+    : undefined;
+
+  return { meetings, tasks, approvals, notifications, announcements, storage, work, attendance, clients, service, reliability, engineering, learning, access };
 }

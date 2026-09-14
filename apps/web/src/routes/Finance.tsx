@@ -357,6 +357,10 @@ function ClaimDetail({ claimId, onClose }: { claimId: string; onClose: () => voi
     async () => api.post(`/expenses/claims/${claimId}/submit`, {}, { idempotencyKey: idempotencyKey() }),
     { invalidates: ['/expenses/claims', '/approvals'], onSuccess: onClose },
   );
+  const discard = useMutation(
+    async () => api.delete(`/expenses/claims/${claimId}`),
+    { invalidates: ['/expenses/claims'], onSuccess: onClose },
+  );
   const reimburse = useMutation(
     async () =>
       api.post(`/expenses/claims/${claimId}/reimburse`, { paymentReference }, { idempotencyKey: idempotencyKey() }),
@@ -403,11 +407,16 @@ function ClaimDetail({ claimId, onClose }: { claimId: string; onClose: () => voi
               </div>
 
               <FormError error={submit.error} />
+              <FormError error={discard.error} />
               <FormError error={reimburse.error} />
 
               {data.status === 'draft' && data.claimant_id === session?.user?.id ? (
                 <div className="dialog-actions">
                   <button type="button" className="ghost-button" onClick={onClose}>Close</button>
+                  <button type="button" className="ghost-button" disabled={discard.pending}
+                    onClick={() => { if (window.confirm('Delete this draft claim?')) void discard.mutate(); }}>
+                    Delete draft
+                  </button>
                   <button type="button" className="primary-button" disabled={submit.pending}
                     onClick={() => void submit.mutate()}>
                     {submit.pending ? 'Submitting…' : 'Submit for approval'}
@@ -1037,15 +1046,18 @@ function ReceiptControl({
  */
 function ExpenseCategories() {
   const [editing, setEditing] = useState<Category | null>(null);
-  const categories = useQuery<{ items: Category[] }>('/expenses/categories', (signal) =>
-    api.get('/expenses/categories', signal),
+  const [adding, setAdding] = useState(false);
+  const categories = useQuery<{ items: Category[] }>('/expenses/categories?includeInactive=true', (signal) =>
+    api.get('/expenses/categories?includeInactive=true', signal),
   );
 
   return (
     <section className="panel" aria-labelledby="categories-heading">
       <header className="panel-header">
         <span className="panel-title" id="categories-heading">Expense categories</span>
+        <button type="button" className="ghost-button" onClick={() => setAdding(true)}><Plus size={14} aria-hidden="true" /> Add category</button>
       </header>
+      {adding ? <NewExpenseCategory onClose={() => { setAdding(false); invalidate('/expenses/categories'); categories.reload(); }} /> : null}
       <AsyncSection query={categories}>
         {(data) =>
           data.items.length === 0 ? (
@@ -1104,5 +1116,35 @@ function ExpenseCategories() {
         />
       ) : null}
     </section>
+  );
+}
+
+function NewExpenseCategory({ onClose }: { onClose: () => void }) {
+  const [name, setName] = useState('');
+  const [key, setKey] = useState('');
+  const [limit, setLimit] = useState('');
+  const [receiptAbove, setReceiptAbove] = useState('0');
+  const create = useMutation(
+    async () => api.post('/expenses/categories', {
+      key: (key || name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40),
+      name: name.trim(), limitAmount: limit === '' ? null : Number(limit), requiresReceiptAbove: Number(receiptAbove || 0),
+    }),
+    { onSuccess: () => onClose() },
+  );
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <form className="dialog" role="dialog" aria-modal="true" aria-labelledby="new-cat-title" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+        onSubmit={(e) => { e.preventDefault(); void create.mutate(); }}>
+        <h3 id="new-cat-title">Add expense category</h3>
+        <FormError error={create.error} />
+        <div className="field"><label htmlFor="nc-name">Name</label><input id="nc-name" autoFocus required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder="Client entertainment" /></div>
+        <div className="field"><label htmlFor="nc-key">Key</label><input id="nc-key" maxLength={40} value={key} onChange={(e) => setKey(e.target.value)} placeholder="Made from the name if empty" /></div>
+        <div className="field-row">
+          <div className="field"><label htmlFor="nc-limit">Per-claim limit</label><input id="nc-limit" type="number" min={0} step="0.01" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="No limit" /></div>
+          <div className="field"><label htmlFor="nc-receipt">Receipt required above</label><input id="nc-receipt" type="number" min={0} step="0.01" value={receiptAbove} onChange={(e) => setReceiptAbove(e.target.value)} /></div>
+        </div>
+        <div className="dialog-actions"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button" disabled={create.pending}>{create.pending ? 'Adding…' : 'Add'}</button></div>
+      </form>
+    </div>
   );
 }

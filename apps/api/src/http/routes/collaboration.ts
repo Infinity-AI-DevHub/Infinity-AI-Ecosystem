@@ -474,6 +474,22 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
     return task;
   });
 
+  app.delete('/tasks/:id', async (request, reply) => {
+    await tasks.deleteTask(requireActor(request), parse(idParam, request.params).id);
+    return reply.code(204).send();
+  });
+
+  app.patch('/chat/rooms/:id', async (request) => {
+    const input = parse(z.object({ name: z.string().min(2).max(60).optional(), topic: z.string().max(300).nullable().optional() }), request.body);
+    await chat.updateChannel(requireActor(request), parse(idParam, request.params).id, input);
+    return { ok: true };
+  });
+
+  app.delete('/chat/rooms/:id', async (request, reply) => {
+    await chat.archiveChannel(requireActor(request), parse(idParam, request.params).id);
+    return reply.code(204).send();
+  });
+
   app.patch('/tasks/:id', async (request, reply) => {
     const actor = requireActor(request);
     const { id } = parse(idParam, request.params);
@@ -811,7 +827,7 @@ export async function searchRoutes(app: FastifyInstance): Promise<void> {
     const types = query.types
       ?.split(',')
       .filter((t): t is search.DocType =>
-        ['mail', 'chat', 'file', 'person', 'task', 'meeting', 'announcement', 'doc', 'client', 'ticket', 'article', 'change', 'service', 'incident'].includes(t),
+        ['mail', 'chat', 'file', 'person', 'task', 'meeting', 'announcement', 'doc', 'client', 'ticket', 'article', 'change', 'service', 'incident', 'api', 'course', 'policy'].includes(t),
       );
     return search.search(actor, query.q, { types, limit: query.limit });
   });

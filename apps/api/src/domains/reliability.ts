@@ -92,7 +92,9 @@ async function assertServiceRefs(companyId: string, input: Partial<ServiceInput>
 }
 
 export async function saveService(actor: Actor, id: string | null, input: ServiceInput) {
-  await requireManage(actor);
+  // Engineering managers add services to the catalogue; changing how an existing service is
+  // paged or supported stays with reliability managers.
+  if (id || !hasCapability(actor, 'engineering.manage')) await requireManage(actor);
   await assertServiceRefs(actor.companyId, input);
   const name = input.name.trim();
   if (await one('SELECT 1 FROM services WHERE company_id = $1 AND name = $2 AND id <> $3', [actor.companyId, name, id ?? ''])) {
@@ -122,7 +124,7 @@ export async function saveService(actor: Actor, id: string | null, input: Servic
   await auditFromActor(actor, id ? 'reliability.service.update' : 'reliability.service.create', { resourceType: 'service', resourceId: serviceId, metadata: { name } });
   await searchIndex.index({
     companyId: actor.companyId, docType: 'service', resourceId: serviceId, title: name,
-    body: `${name} ${input.description ?? ''}`, aclCompanyWide: true, link: `/reliability/services/${serviceId}`,
+    body: `${name} ${input.description ?? ''}`, aclCompanyWide: true, link: `/engineering/services/${serviceId}`,
   });
   return { id: serviceId };
 }
@@ -572,4 +574,59 @@ export async function report(actor: Actor, days: number) {
     postmortems: { due: Number(postmortems?.due ?? 0), published: Number(postmortems?.published ?? 0) },
     services: services.map((s) => ({ id: s.id, name: s.name, tier: s.tier, availability: uptime.get(s.id) ?? 100, incidents: Number(byService.find((b) => b.service_id === s.id)?.n ?? 0) })),
   };
+}
+
+/* ------------------------------------------------------------------ deletion */
+
+/**
+ * Deletes a service that has never been part of an incident or shipped a deployment. One
+ * with history is retired instead (isActive: false), so reports and postmortems still name it.
+ */
+export async function deleteService(actor: Actor, id: string) {
+  if (!hasCapability(actor, 'reliability.manage') && !hasCapability(actor, 'engineering.manage')) throw forbidden();
+  const svc = await one<{ name: string }>('SELECT name FROM services WHERE id = $1 AND company_id = $2', [id, actor.companyId]);
+  if (!svc) throw notFound('Service not found');
+  const history = await one<{ incidents: number; deployments: number }>(
+    'SELECT (SELECT COUNT(*) FROM incident_services WHERE service_id = $1) AS incidents, (SELECT COUNT(*) FROM deployments WHERE service_id = $1) AS deployments', [id]);
+  if (Number(history?.incidents) || Number(history?.deployments)) {
+    throw conflict('This service has incident or deployment history. Retire it instead so that history keeps its name.');
+  }
+  await pool.query('DELETE FROM services WHERE id = $1', [id]);
+  await searchIndex.remove('service', id);
+  await auditFromActor(actor, 'reliability.service.delete', { resourceType: 'service', resourceId: id, metadata: { name: svc.name } });
+}
+
+/** Removing a schedule an escalation policy still pages would leave that level paging nobody. */
+export async function deleteSchedule(actor: Actor, id: string) {
+  await requireManage(actor);
+  const s = await one<{ name: string }>('SELECT name FROM oncall_schedules WHERE id = $1 AND company_id = $2', [id, actor.companyId]);
+  if (!s) throw notFound('Schedule not found');
+  const policies = await many<{ name: string; levels: unknown }>('SELECT name, levels FROM escalation_policies WHERE company_id = $1', [actor.companyId]);
+  const using = policies.filter((p) => parseJson<EscalationLevel[]>(p.levels, []).some((l) => l.targets.some((t) => t.type === 'schedule' && t.id === id))).map((p) => p.name);
+  if (using.length) throw conflict(`Remove this schedule from ${using.join(', ')} first`);
+  await pool.query('DELETE FROM oncall_schedules WHERE id = $1', [id]);
+  await auditFromActor(actor, 'oncall.schedule.delete', { resourceType: 'oncall_schedule', resourceId: id, metadata: { name: s.name } });
+}
+
+export async function deletePolicy(actor: Actor, id: string) {
+  await requireManage(actor);
+  const p = await one<{ name: string }>('SELECT name FROM escalation_policies WHERE id = $1 AND company_id = $2', [id, actor.companyId]);
+  if (!p) throw notFound('Policy not found');
+  const services = await many<{ name: string }>('SELECT name FROM services WHERE escalation_policy_id = $1', [id]);
+  if (services.length) throw conflict(`${services.map((x) => x.name).join(', ')} ${services.length === 1 ? 'uses' : 'use'} this policy. Choose another policy for ${services.length === 1 ? 'it' : 'them'} first.`);
+  if (await one("SELECT 1 FROM incidents WHERE escalation_policy_id = $1 AND status <> 'resolved'", [id])) throw conflict('An open incident is still escalating through this policy');
+  await pool.query('DELETE FROM escalation_policies WHERE id = $1', [id]);
+  await auditFromActor(actor, 'escalation.policy.delete', { resourceType: 'escalation_policy', resourceId: id, metadata: { name: p.name } });
+}
+
+/** An upcoming or cancelled window can be deleted; one that ran is part of the service's history. */
+export async function deleteMaintenance(actor: Actor, id: string) {
+  await requireManage(actor);
+  const w = await one<{ title: string; status: string; starts_at: Date }>('SELECT title, status, starts_at FROM maintenance_windows WHERE id = $1 AND company_id = $2', [id, actor.companyId]);
+  if (!w) throw notFound('Maintenance window not found');
+  if (w.status !== 'cancelled' && new Date(w.starts_at).getTime() <= Date.now()) throw conflict('This window has already started. Cancel it instead.');
+  const services = await many<{ service_id: string }>('SELECT service_id FROM maintenance_services WHERE window_id = $1', [id]);
+  await pool.query('DELETE FROM maintenance_windows WHERE id = $1', [id]);
+  for (const s of services) await recomputeServiceStatus(s.service_id);
+  await auditFromActor(actor, 'maintenance.delete', { resourceType: 'maintenance_window', resourceId: id, metadata: { title: w.title } });
 }

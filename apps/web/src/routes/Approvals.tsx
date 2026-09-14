@@ -30,6 +30,7 @@ type Request = {
 };
 
 type RequestDetail = Request & {
+  requester_id: string;
   data: Record<string, unknown>;
   steps: { step_number: number; state: string; approver_id: string; approver_name: string }[];
   decisions: {
@@ -178,6 +179,11 @@ function RequestDetailView({ detail }: { detail: ReturnType<typeof useQuery<Requ
   // One key per mounted request, so a retried click is recognised as the same decision.
   const key = useMemo(() => idempotencyKey(), [request.id]);
 
+  const withdraw = useMutation(
+    async () => api.post(`/approvals/${request.id}/cancel`, {}),
+    { invalidates: ['/approvals', '/me/dashboard'], onSuccess: () => detail.reload() },
+  );
+
   const decide = useMutation(
     async (decision: 'approved' | 'rejected' | 'returned') =>
       api.post(
@@ -266,6 +272,17 @@ function RequestDetailView({ detail }: { detail: ReturnType<typeof useQuery<Requ
 
       {previewing ? (
         <FilePreview target={previewing} onClose={() => setPreviewing(null)} />
+      ) : null}
+
+      {request.status === 'pending' && request.requester_id === session?.user?.id ? (
+        <section className="decision-block">
+          <h4>Your request</h4>
+          <p className="field-hint">Withdraw it if it is no longer needed. Approvers are no longer asked.</p>
+          <FormError error={withdraw.error} />
+          <button type="button" className="ghost-button" disabled={withdraw.pending} onClick={() => { if (window.confirm('Withdraw this request?')) void withdraw.mutate(); }}>
+            {withdraw.pending ? 'Withdrawing…' : 'Withdraw request'}
+          </button>
+        </section>
       ) : null}
 
       {request.status === 'pending' && awaitingMe ? (

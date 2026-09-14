@@ -143,6 +143,10 @@ function QueueEditor({ queue, people }: { queue: Queue; people: Person[] }) {
           onClick={() => void act(() => api.patch(`/service/queues/${queue.id}`, { isActive: !queue.isActive }), queue.isActive ? 'Queue deactivated. Existing tickets stay open.' : 'Queue reactivated.')}>
           {queue.isActive ? 'Deactivate' : 'Reactivate'}
         </button>
+        <button type="button" className="sd-link-button" disabled={saving}
+          onClick={() => { if (window.confirm(`Delete the ${queue.name} queue? Only a queue that never had tickets can be deleted.`)) void act(() => api.delete(`/service/queues/${queue.id}`), 'Queue deleted.'); }}>
+          Delete
+        </button>
       </header>
       <div className="sd-panel-pad sd-editor">
         <div className="sd-form-grid">
@@ -193,6 +197,14 @@ function QueueEditor({ queue, people }: { queue: Queue; people: Person[] }) {
               <button type="button" className="sd-link-button" disabled={saving}
                 onClick={() => void act(() => api.patch(`/service/categories/${c.id}`, { isActive: !c.isActive }), c.isActive ? `${c.name} retired.` : `${c.name} restored.`)}>
                 {c.isActive ? 'Retire' : 'Restore'}
+              </button>
+              <button type="button" className="sd-link-button" disabled={saving}
+                onClick={() => { const next = window.prompt('Rename category', c.name)?.trim(); if (next && next !== c.name) void act(() => api.patch(`/service/categories/${c.id}`, { name: next }), `Renamed to ${next}.`); }}>
+                Rename
+              </button>
+              <button type="button" className="sd-link-button" disabled={saving}
+                onClick={() => { if (window.confirm(`Delete ${c.name}? Only a category no ticket uses can be deleted.`)) void act(() => api.delete(`/service/categories/${c.id}`), `${c.name} deleted.`); }}>
+                Delete
               </button>
             </li>
           ))}

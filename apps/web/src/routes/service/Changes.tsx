@@ -167,6 +167,7 @@ export function ChangeDetail() {
   const change = useQuery<Change>(changeId ? key : null, (signal) => api.get(key, signal));
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
   const [completing, setCompleting] = useState(false);
   const [outcome, setOutcome] = useState<'successful' | 'failed' | 'rolled_back'>('successful');
   const [notes, setNotes] = useState('');
@@ -205,6 +206,7 @@ export function ChangeDetail() {
           {c.permissions.canComplete ? <button type="button" className="primary-button" onClick={() => setCompleting(true)}>Record outcome</button> : null}
           {c.permissions.canClose ? <button type="button" className="ghost-button" onClick={() => void transition('close')}>Close</button> : null}
           {c.permissions.canCancel ? <button type="button" className="ghost-button" onClick={() => void transition('cancel')}>Cancel change</button> : null}
+          {c.permissions.canEdit && (c.status === 'draft' || c.status === 'cancelled') ? <button type="button" className="ghost-button" onClick={() => { if (window.confirm(`Delete ${c.ref}? This cannot be undone.`)) void act(async () => { await api.delete(`/service/changes/${c.id}`); navigate('/service/changes'); }); }}>Delete</button> : null}
         </div>
       </header>
       {error ? <p className="field-error" role="alert">{error}</p> : null}

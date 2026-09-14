@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CalendarPlus, Check, Video, X } from 'lucide-react';
-import { api, idempotencyKey } from '../lib/api';
+import { api, ApiError, idempotencyKey } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, DegradedNotice, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { durationBetween, formatDate, formatTime, titleCase } from '../lib/format';
@@ -66,6 +66,7 @@ export default function Meetings() {
   const navigate = useNavigate();
   const { session } = useSession();
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<EventDetail | null>(null);
   const [ticket, setTicket] = useState<JoinTicket | null>(null);
   const [optimisticRsvp, setOptimisticRsvp] = useState<Event['myRsvp']>(null);
   const [view, setView] = useState<'calendar' | 'list'>('calendar');
@@ -173,6 +174,22 @@ export default function Meetings() {
                 <span className="meeting-zone"> (organised in {detail.data.timezone})</span>
               </p>
 
+              {detail.data.organizerId === session?.user?.id ? (
+                <div className="sd-inline">
+                  <button type="button" className="ghost-button" onClick={() => setEditing(detail.data!)}>Edit</button>
+                  <button type="button" className="ghost-button" onClick={async () => {
+                    if (!window.confirm(`Cancel "${detail.data!.title}"${detail.data!.recurrenceRule ? ' and every occurrence of it' : ''}? Attendees are told.`)) return;
+                    try {
+                      await api.delete(`/calendar/events/${detail.data!.id}`);
+                      notify({ severity: 'success', title: 'Meeting cancelled' });
+                      invalidate('/calendar');
+                      navigate('/meetings');
+                    } catch (err) {
+                      notify({ severity: 'warning', title: err instanceof ApiError ? err.message : 'The meeting was not cancelled' });
+                    }
+                  }}>Cancel meeting</button>
+                </div>
+              ) : null}
               {detail.data.location ? <p>{detail.data.location}</p> : null}
               {detail.data.recurrenceRule ? (
                 <p className="field-hint">
@@ -388,6 +405,7 @@ export default function Meetings() {
       </div>
       )}
 
+      {editing ? <EditMeetingDialog meeting={editing} onClose={() => { setEditing(null); invalidate('/calendar'); }} /> : null}
       {creating ? (
         <ScheduleDialog
           onClose={() => setCreating(false)}
@@ -656,6 +674,49 @@ function ScheduleDialog({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+function EditMeetingDialog({ meeting, onClose }: { meeting: EventDetail; onClose: () => void }) {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const start = new Date(meeting.startsAt);
+  const [title, setTitle] = useState(meeting.title);
+  const [date, setDate] = useState(`${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`);
+  const [startTime, setStartTime] = useState(`${pad(start.getHours())}:${pad(start.getMinutes())}`);
+  const [durationMinutes, setDurationMinutes] = useState(Math.max(5, Math.round((new Date(meeting.endsAt).getTime() - start.getTime()) / 60_000)));
+  const [location, setLocation] = useState(meeting.location ?? '');
+  const [onlineUrl, setOnlineUrl] = useState(meeting.onlineUrl ?? '');
+  const [agenda, setAgenda] = useState(meeting.agenda ?? '');
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <form className="dialog" role="dialog" aria-modal="true" aria-labelledby="edit-meeting-title" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+        onSubmit={async (e) => {
+          e.preventDefault(); setError(null);
+          const startsAt = new Date(`${date}T${startTime}`);
+          try {
+            await api.patch(`/calendar/events/${meeting.id}`, {
+              title, startsAt: startsAt.toISOString(), endsAt: new Date(startsAt.getTime() + durationMinutes * 60_000).toISOString(),
+              location: location.trim() || null, onlineUrl: onlineUrl.trim() || null, agenda,
+            }, { ifMatch: meeting.version });
+            onClose();
+          } catch (err) { setError(err instanceof ApiError ? err.message : 'The meeting was not saved.'); }
+        }}>
+        <h3 id="edit-meeting-title">Edit meeting</h3>
+        <div className="field"><label htmlFor="em-title">Title</label><input id="em-title" autoFocus required maxLength={300} value={title} onChange={(e) => setTitle(e.target.value)} /></div>
+        <div className="field-row">
+          <div className="field"><label htmlFor="em-date">Date</label><input id="em-date" type="date" required value={date} onChange={(e) => setDate(e.target.value)} /></div>
+          <div className="field"><label htmlFor="em-time">Start</label><input id="em-time" type="time" required value={startTime} onChange={(e) => setStartTime(e.target.value)} /></div>
+          <div className="field"><label htmlFor="em-length">Length (minutes)</label><input id="em-length" type="number" min={5} max={1440} value={durationMinutes} onChange={(e) => setDurationMinutes(Number(e.target.value))} /></div>
+        </div>
+        <div className="field"><label htmlFor="em-location">Location</label><input id="em-location" maxLength={300} value={location} onChange={(e) => setLocation(e.target.value)} /></div>
+        <div className="field"><label htmlFor="em-url">Online meeting link</label><input id="em-url" type="url" value={onlineUrl} onChange={(e) => setOnlineUrl(e.target.value)} placeholder="https://" /></div>
+        <div className="field"><label htmlFor="em-agenda">Agenda</label><textarea id="em-agenda" rows={4} maxLength={20000} value={agenda} onChange={(e) => setAgenda(e.target.value)} /></div>
+        {meeting.recurrenceRule ? <p className="field-hint">Changes apply to the whole series.</p> : null}
+        {error ? <p className="field-error" role="alert">{error}</p> : null}
+        <div className="dialog-actions"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button">Save</button></div>
+      </form>
     </div>
   );
 }

@@ -521,6 +521,13 @@ export async function reissueGuestInvitation(
  * single place where the company boundary actually opens, and it always names both the
  * resource and an expiry inherited from the guest's own access window.
  */
+export const GUEST_GRANT_CAPABILITIES: Record<'project' | 'folder' | 'file' | 'chat_room', string[]> = {
+  project: ['task.read', 'task.progress'],
+  folder: ['file.read', 'file.create', 'file.update'],
+  file: ['file.read', 'file.update'],
+  chat_room: ['message.send'],
+};
+
 export async function grantGuestAccess(
   actor: Actor,
   input: {
@@ -538,6 +545,18 @@ export async function grantGuestAccess(
     [input.guestId, actor.companyId],
   );
   if (!membership) throw notFound('Guest not found');
+
+  // Only capabilities that mean something for the resource, and only the company's own
+  // resources: this is the one place the company boundary opens, so nothing is taken on trust.
+  const allowed = GUEST_GRANT_CAPABILITIES[input.resourceType];
+  const invalid = input.capabilities.filter((c) => !allowed.includes(c));
+  if (invalid.length) {
+    throw unprocessable(`Not a capability for a ${input.resourceType.replace('_', ' ')}: ${invalid.join(', ')}`, [{ field: 'capabilities', message: `Choose from ${allowed.join(', ')}` }]);
+  }
+  const table = { project: 'projects', folder: 'folders', file: 'files', chat_room: 'chat_rooms' }[input.resourceType];
+  if (!(await one(`SELECT 1 FROM ${table} WHERE id = $1 AND company_id = $2`, [input.resourceId, actor.companyId]))) {
+    throw unprocessable('That resource was not found', [{ field: 'resourceId', message: 'Choose one from this company' }]);
+  }
 
   // A grant may not outlive the guest's own access. Otherwise revoking someone at the
   // end of an engagement would leave individually granted resources still reachable.
@@ -562,6 +581,10 @@ export async function grantGuestAccess(
         expiresAt,
       ],
     );
+    // A conversation is reached through membership, not a grant alone.
+    if (input.resourceType === 'chat_room') {
+      await tx.query('INSERT IGNORE INTO chat_members (room_id, user_id) VALUES ($1,$2)', [input.resourceId, input.guestId]);
+    }
     await auditFromActor(
       actor,
       'guest.grant',

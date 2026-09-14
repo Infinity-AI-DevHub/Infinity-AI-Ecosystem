@@ -6,7 +6,7 @@
  * than drag-only interaction.
  */
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { FolderPlus, Plus } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
@@ -69,7 +69,9 @@ const STATUS_TAG: Record<string, string> = {
 export default function Tasks() {
   const { taskId } = useParams();
   const navigate = useNavigate();
-  const [projectId, setProjectId] = useState<string | null>(null);
+  // A link from elsewhere (a service in the catalogue) can open a specific project.
+  const [search] = useSearchParams();
+  const [projectId, setProjectId] = useState<string | null>(search.get('projectId'));
   const [creating, setCreating] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
 
@@ -261,6 +263,7 @@ function TaskDialog({
 }) {
   const [editing, setEditing] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [comment, setComment] = useState('');
 
   const addComment = useMutation(
@@ -301,9 +304,18 @@ function TaskDialog({
                 <button type="button" className="ghost-button" onClick={() => setEditing(true)}>
                   Edit
                 </button>
+                <button type="button" className="ghost-button" onClick={async () => {
+                  if (!window.confirm(`Delete ${detail.data!.reference} "${detail.data!.title}"? Its comments go with it.`)) return;
+                  setDeleteError(null);
+                  try { await api.delete(`/tasks/${detail.data!.id}`); invalidate('/tasks'); invalidate('/projects'); onClose(); }
+                  catch (err) { setDeleteError(err instanceof ApiError ? err.message : 'The task was not deleted.'); }
+                }}>
+                  Delete
+                </button>
                 <button type="button" className="ghost-button" onClick={onClose}>Close</button>
               </div>
             </header>
+            {deleteError ? <p className="field-error" role="alert">{deleteError}</p> : null}
 
             <div className="task-detail-body">
               <div className="task-detail-main">

@@ -55,6 +55,36 @@ const KnowledgeEditor = lazy(() => import('./routes/service/Knowledge').then((m)
 const ChangeList = lazy(() => import('./routes/service/Changes'));
 const ChangeDetail = lazy(() => import('./routes/service/Changes').then((m) => ({ default: m.ChangeDetail })));
 const ServiceAssets = lazy(() => import('./routes/service/ServiceAssets'));
+const Catalogue = lazy(() => import('./routes/engineering/Catalogue'));
+const EngineeringService = lazy(() => import('./routes/engineering/ServicePage'));
+const ApiCatalogue = lazy(() => import('./routes/engineering/Apis'));
+const Deployments = lazy(() => import('./routes/engineering/Deployments'));
+const Repositories = lazy(() => import('./routes/engineering/Repositories'));
+const Scorecards = lazy(() => import('./routes/engineering/Standards'));
+const ServiceTemplates = lazy(() => import('./routes/engineering/Standards').then((m) => ({ default: m.Templates })));
+const Learning = lazy(() => import('./routes/academy/Learning'));
+const CoursePage = lazy(() => import('./routes/academy/Course'));
+const Certifications = lazy(() => import('./routes/academy/Learning').then((m) => ({ default: m.Certifications })));
+const Skills = lazy(() => import('./routes/academy/Learning').then((m) => ({ default: m.Skills })));
+const Policies = lazy(() => import('./routes/academy/Policies'));
+const PolicyPage = lazy(() => import('./routes/academy/Policies').then((m) => ({ default: m.PolicyPage })));
+const MyAccess = lazy(() => import('./routes/access/MyAccess'));
+const AccessGrants = lazy(() => import('./routes/access/Governance').then((m) => ({ default: m.Grants })));
+const AccessSystems = lazy(() => import('./routes/access/Governance').then((m) => ({ default: m.Systems })));
+const AccessReviews = lazy(() => import('./routes/access/Governance').then((m) => ({ default: m.Reviews })));
+const AccessReview = lazy(() => import('./routes/access/Governance').then((m) => ({ default: m.ReviewPage })));
+const Offboarding = lazy(() => import('./routes/access/Governance').then((m) => ({ default: m.OffboardingPage })));
+const PublicStatus = lazy(() => import('./routes/PublicStatus'));
+const ReliabilityOverview = lazy(() => import('./routes/reliability/Overview'));
+const IncidentList = lazy(() => import('./routes/reliability/Incidents'));
+const IncidentDetail = lazy(() => import('./routes/reliability/Incidents').then((m) => ({ default: m.IncidentDetail })));
+const PostmortemPage = lazy(() => import('./routes/reliability/Incidents').then((m) => ({ default: m.PostmortemPage })));
+const ReliabilityServices = lazy(() => import('./routes/reliability/Services'));
+const ReliabilityServiceDetail = lazy(() => import('./routes/reliability/Services').then((m) => ({ default: m.ServiceDetailPage })));
+const OnCall = lazy(() => import('./routes/reliability/OnCall'));
+const Maintenance = lazy(() => import('./routes/reliability/Maintenance'));
+const AlertsPage = lazy(() => import('./routes/reliability/Maintenance').then((m) => ({ default: m.AlertsPage })));
+const ReliabilityReport = lazy(() => import('./routes/reliability/Maintenance').then((m) => ({ default: m.ReliabilityReport })));
 
 /**
  * Route guard. This is a navigation convenience only - the API authorizes every call
@@ -80,6 +110,7 @@ function AppRoutes() {
       <Route path="/reset" element={<ResetPassword />} />
       {/* Outside the authenticated shell: whoever opens this does not work here. */}
       <Route path="/shared/:token" element={<SharedResource />} />
+      <Route path="/status/:slug" element={<Suspense fallback={null}><PublicStatus /></Suspense>} />
       <Route
         path="/*"
         element={
@@ -129,6 +160,35 @@ function AppRoutes() {
                   <Route path="/service/changes" element={<ChangeList />} />
                   <Route path="/service/changes/:changeId" element={<ChangeDetail />} />
                   <Route path="/service/assets" element={<ServiceAssets />} />
+                  <Route path="/academy" element={<Learning />} />
+                  <Route path="/academy/courses/:courseId" element={<CoursePage />} />
+                  <Route path="/academy/certifications" element={<Certifications />} />
+                  <Route path="/academy/skills" element={<Skills />} />
+                  <Route path="/academy/policies" element={<Policies />} />
+                  <Route path="/academy/policies/:policyId" element={<PolicyPage />} />
+                  <Route path="/access" element={<MyAccess />} />
+                  <Route path="/access/grants" element={<AccessGrants />} />
+                  <Route path="/access/systems" element={<AccessSystems />} />
+                  <Route path="/access/reviews" element={<AccessReviews />} />
+                  <Route path="/access/reviews/:reviewId" element={<AccessReview />} />
+                  <Route path="/access/offboarding" element={<Offboarding />} />
+                  <Route path="/engineering" element={<Catalogue />} />
+                  <Route path="/engineering/services/:serviceId" element={<EngineeringService />} />
+                  <Route path="/engineering/apis" element={<ApiCatalogue />} />
+                  <Route path="/engineering/deployments" element={<Deployments />} />
+                  <Route path="/engineering/repositories" element={<Repositories />} />
+                  <Route path="/engineering/scorecards" element={<Scorecards />} />
+                  <Route path="/engineering/templates" element={<ServiceTemplates />} />
+                  <Route path="/reliability" element={<ReliabilityOverview />} />
+                  <Route path="/reliability/incidents" element={<IncidentList />} />
+                  <Route path="/reliability/incidents/:incidentId" element={<IncidentDetail />} />
+                  <Route path="/reliability/incidents/:incidentId/postmortem" element={<PostmortemPage />} />
+                  <Route path="/reliability/services" element={<ReliabilityServices />} />
+                  <Route path="/reliability/services/:serviceId" element={<ReliabilityServiceDetail />} />
+                  <Route path="/reliability/oncall" element={<OnCall />} />
+                  <Route path="/reliability/maintenance" element={<Maintenance />} />
+                  <Route path="/reliability/alerts" element={<AlertsPage />} />
+                  <Route path="/reliability/reports" element={<ReliabilityReport />} />
                   <Route path="*" element={<UnknownRoute />} />
                 </Routes>
               </Suspense>

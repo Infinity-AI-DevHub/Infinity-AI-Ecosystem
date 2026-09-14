@@ -13,7 +13,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlarmClock, ArrowDown, LifeBuoy, ArrowUp, CalendarDays, CheckSquare, Clock, Handshake, HardDrive,
-  Megaphone, ReceiptText, RotateCcw, ShieldCheck, SlidersHorizontal, X,
+  Megaphone, ReceiptText, Siren, Boxes, GraduationCap, KeyRound, RotateCcw, ShieldCheck, SlidersHorizontal, X,
 } from 'lucide-react';
 import { DateTimeCard } from './Attendance';
 import { api, ApiError, type Widget } from '../lib/api';
@@ -48,13 +48,30 @@ type Dashboard = {
     assigned: number; unassigned: number; breached: number; mineBreached: number;
     tickets: { id: string; ref: string; subject: string; priority: string; status: string; breached: boolean; mine: boolean }[];
   }>;
+  reliability?: Widget<{
+    incidents: { id: string; ref: string; title: string; severity: string; status: string; acknowledged: boolean; mine: boolean }[];
+    services: { total: number; notOperational: { id: string; name: string; status: string }[] };
+  } | null> | null;
+  learning?: Widget<{
+    courses: { courseId: string; title: string; status: string; dueAt: string | null; lessons: number; lessonsDone: number; overdue: boolean }[];
+    policiesToAcknowledge: { id: string; title: string; dueAt: string | null; overdue: boolean }[];
+    certificationsNeedingAttention: { id: string; name: string; expiresAt: string | null; state: string; courseId: string | null }[];
+  }>;
+  access?: Widget<{ toProvision: number; toRemove: number; toReview: number; myPending: number; expiringSoon: number; offboardingTasks: number } | null>;
+  engineering?: Widget<{
+    services: { id: string; name: string; percent: number | null; level: string; failing: string[] }[];
+    failedDeployments: { id: string; serviceId: string; service: string; environment: string; version: string | null; status: string; at: string }[];
+  } | null>;
 };
 
-type WidgetId = 'schedule' | 'tasks' | 'service' | 'approvals' | 'attendance' | 'clients' | 'announcements' | 'storage';
+type WidgetId = 'schedule' | 'tasks' | 'learning' | 'reliability' | 'engineering' | 'service' | 'approvals' | 'attendance' | 'clients' | 'announcements' | 'storage';
 
 const WIDGET_LABELS: Record<WidgetId, string> = {
   schedule: 'Schedule',
   tasks: 'My work',
+  reliability: 'Incidents and service health',
+  engineering: 'Services I own',
+  learning: 'Training and policies',
   service: 'Support tickets',
   approvals: 'Approvals',
   attendance: 'Attendance',
@@ -62,7 +79,7 @@ const WIDGET_LABELS: Record<WidgetId, string> = {
   announcements: 'Announcements',
   storage: 'Storage',
 };
-const DEFAULT_ORDER: WidgetId[] = ['schedule', 'tasks', 'service', 'approvals', 'attendance', 'clients', 'announcements', 'storage'];
+const DEFAULT_ORDER: WidgetId[] = ['schedule', 'tasks', 'learning', 'reliability', 'engineering', 'service', 'approvals', 'attendance', 'clients', 'announcements', 'storage'];
 
 type Layout = { order: WidgetId[]; hidden: WidgetId[] };
 
@@ -113,9 +130,13 @@ export default function Command() {
     if (can('attendance.record')) set.add('attendance');
     if (data?.clients) set.add('clients');
     if (data?.service) set.add('service');
+    if (data?.reliability) set.add('reliability');
+    if (data?.learning) set.add('learning');
+    // Only for people who own something; an empty 'services I own' panel is noise.
+    if (data?.engineering?.state === 'ok' && (data.engineering.data?.services.length ?? 0) > 0) set.add('engineering');
     if (can('settings.read')) set.add('storage');
     return set;
-  }, [can, data?.clients, data?.service]);
+  }, [can, data?.clients, data?.service, data?.reliability, data?.engineering, data?.learning]);
 
   const priorities = useMemo<Priority[]>(() => {
     if (!data) return [];
@@ -125,6 +146,36 @@ export default function Command() {
       const n = data.approvals.data.awaiting;
       out.push({ id: 'approvals', tone: 'critical', icon: <ShieldCheck size={16} />, to: '/approvals',
         title: `${n} ${n === 1 ? 'request is' : 'requests are'} waiting for your decision` });
+    }
+    if (data.reliability?.state === 'ok' && data.reliability.data) {
+      for (const i of data.reliability.data.incidents.filter((x) => x.mine && !x.acknowledged)) {
+        out.push({ id: `incident:${i.id}`, tone: 'critical', icon: <Siren size={16} />, to: `/reliability/incidents/${i.id}`,
+          title: `You are paged for ${i.ref} · ${i.title}`, detail: `${i.severity.toUpperCase()} · not acknowledged yet` });
+      }
+    }
+    if (data.access?.state === 'ok' && data.access.data) {
+      const a = data.access.data;
+      const setUp = a.toProvision + a.toRemove;
+      if (setUp > 0) out.push({ id: 'access-work', tone: 'warning', icon: <KeyRound size={16} />, to: '/access/grants?view=todo',
+        title: `${setUp} access ${setUp === 1 ? 'change is' : 'changes are'} waiting for you to carry out`, detail: `${a.toProvision} to set up · ${a.toRemove} to remove` });
+      if (a.toReview > 0) out.push({ id: 'access-review', tone: 'warning', icon: <KeyRound size={16} />, to: '/access/reviews',
+        title: `Review ${a.toReview} ${a.toReview === 1 ? 'person\'s' : 'people\'s'} access` });
+      if (a.offboardingTasks > 0) out.push({ id: 'offboarding', tone: 'warning', icon: <KeyRound size={16} />, to: '/access/offboarding',
+        title: `${a.offboardingTasks} offboarding ${a.offboardingTasks === 1 ? 'task' : 'tasks'} assigned to you` });
+      if (a.expiringSoon > 0) out.push({ id: 'access-expiring', tone: 'info', icon: <KeyRound size={16} />, to: '/access',
+        title: `${a.expiringSoon} of your temporary access ${a.expiringSoon === 1 ? 'grant ends' : 'grants end'} within a week` });
+    }
+    if (data.learning?.state === 'ok') {
+      const l = data.learning.data;
+      const overdue = l.courses.filter((c) => c.overdue).length + l.policiesToAcknowledge.filter((p) => p.overdue).length;
+      if (overdue > 0) out.push({ id: 'learning-overdue', tone: 'critical', icon: <GraduationCap size={16} />, to: '/academy', title: `${overdue} overdue ${overdue === 1 ? 'training item' : 'training items'}`, detail: 'Assigned courses or policies past their due date' });
+      else if (l.policiesToAcknowledge.length > 0) out.push({ id: 'policies', tone: 'info', icon: <GraduationCap size={16} />, to: `/academy/policies/${l.policiesToAcknowledge[0]!.id}`, title: `${l.policiesToAcknowledge.length} ${l.policiesToAcknowledge.length === 1 ? 'policy' : 'policies'} to acknowledge` });
+    }
+    if (data.engineering?.state === 'ok' && data.engineering.data) {
+      for (const d of data.engineering.data.failedDeployments) {
+        out.push({ id: `deploy:${d.id}`, tone: 'critical', icon: <Boxes size={16} />, to: `/engineering/services/${d.serviceId}`,
+          title: `${d.service}: production release ${d.status === 'failed' ? 'failed' : 'was rolled back'}`, detail: `${d.version ?? 'Unversioned'} to ${d.environment} · ${relativeTime(d.at)}` });
+      }
     }
     if (data.service?.state === 'ok' && data.service.data.mineBreached > 0) {
       const n = data.service.data.mineBreached;
@@ -256,6 +307,73 @@ export default function Command() {
         </WidgetBody>
       </CcPanel>
     ),
+    reliability: () => data.reliability ? (
+      <CcPanel id="reliability" icon={<Siren size={15} />} title="Incidents and service health" link={{ to: '/reliability', label: 'Status' }}>
+        <WidgetBody widget={data.reliability}>
+          {(rl) => !rl ? null : (
+            <>
+              <dl className="cc-stats cc-stats-3">
+                <div className={rl.incidents.length > 0 ? 'is-critical' : ''}><dt>Open incidents</dt><dd>{rl.incidents.length}</dd></div>
+                <div className={rl.services.notOperational.length > 0 ? 'is-critical' : ''}><dt>Services affected</dt><dd>{rl.services.notOperational.length}</dd></div>
+                <div><dt>Services</dt><dd>{rl.services.total}</dd></div>
+              </dl>
+              {rl.incidents.length === 0 ? <p className="cc-empty">No open incidents. {rl.services.total > 0 && rl.services.notOperational.length === 0 ? 'All services operational.' : ''}</p> : (
+                <ul className="cc-rows">
+                  {rl.incidents.map((i) => (
+                    <li key={i.id}>
+                      <Link to={`/reliability/incidents/${i.id}`} className="cc-row">
+                        <span className="cc-row-main">
+                          <strong>{i.ref} · {i.title}</strong>
+                          <span>{i.severity.toUpperCase()} · {titleCase(i.status)}{i.mine ? ' · you are responding' : ''}</span>
+                        </span>
+                        {!i.acknowledged ? <span className="cc-tag cc-tag-critical">Unacknowledged</span> : null}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </WidgetBody>
+      </CcPanel>
+    ) : null,
+    learning: () => data.learning ? (
+      <CcPanel id="learning" icon={<GraduationCap size={15} />} title="Training and policies" link={{ to: '/academy', label: 'Academy' }}>
+        <WidgetBody widget={data.learning}>
+          {(l) => {
+            const open = l.courses.filter((c) => c.status !== 'completed');
+            return open.length === 0 && l.policiesToAcknowledge.length === 0 && l.certificationsNeedingAttention.length === 0 ? <p className="cc-empty">Nothing to do. Training and policies are up to date.</p> : (
+              <ul className="cc-rows">
+                {open.map((c) => <li key={c.courseId}><Link to={`/academy/courses/${c.courseId}`} className="cc-row"><span className="cc-row-main"><strong>{c.title}</strong><span>{c.lessonsDone}/{c.lessons} lessons{c.dueAt ? ` · due ${relativeTime(c.dueAt)}` : ''}</span></span>{c.overdue ? <span className="cc-tag cc-tag-critical">Overdue</span> : null}</Link></li>)}
+                {l.policiesToAcknowledge.map((p) => <li key={p.id}><Link to={`/academy/policies/${p.id}`} className="cc-row"><span className="cc-row-main"><strong>{p.title}</strong><span>Policy to acknowledge</span></span>{p.overdue ? <span className="cc-tag cc-tag-critical">Overdue</span> : null}</Link></li>)}
+                {l.certificationsNeedingAttention.map((c) => <li key={c.id}><Link to={c.courseId ? `/academy/courses/${c.courseId}` : '/academy/certifications'} className="cc-row"><span className="cc-row-main"><strong>{c.name}</strong><span>Certification {c.state}</span></span></Link></li>)}
+              </ul>
+            );
+          }}
+        </WidgetBody>
+      </CcPanel>
+    ) : null,
+    engineering: () => data.engineering ? (
+      <CcPanel id="engineering" icon={<Boxes size={15} />} title="Services I own" link={{ to: '/engineering/scorecards', label: 'Scorecards' }}>
+        <WidgetBody widget={data.engineering}>
+          {(eg) => !eg || eg.services.length === 0 ? null : (
+            <ul className="cc-rows">
+              {eg.services.map((s) => (
+                <li key={s.id}>
+                  <Link to={`/engineering/services/${s.id}`} className="cc-row">
+                    <span className="cc-row-main">
+                      <strong>{s.name}</strong>
+                      <span>{s.failing.length === 0 ? 'Meets every applicable standard' : `Missing: ${s.failing.slice(0, 2).join(', ')}${s.failing.length > 2 ? ` and ${s.failing.length - 2} more` : ''}`}</span>
+                    </span>
+                    <span className={`cc-tag ${s.level === 'needs_work' ? 'cc-tag-critical' : s.level === 'gold' ? 'cc-tag-info' : ''}`}>{s.percent === null ? 'Not scored' : `${s.percent}%`}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </WidgetBody>
+      </CcPanel>
+    ) : null,
     service: () => data.service ? (
       <CcPanel id="service" icon={<LifeBuoy size={15} />} title="Support tickets" link={{ to: '/service', label: 'Service desk' }}>
         <WidgetBody widget={data.service}>

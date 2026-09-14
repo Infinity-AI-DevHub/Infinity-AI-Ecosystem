@@ -86,6 +86,19 @@ export async function serviceRoutes(app: FastifyInstance): Promise<void> {
     return service.updateCategory(requireActor(request), id, input);
   });
 
+  app.delete('/service/queues/:id', async (request, reply) => {
+    await service.deleteQueue(requireActor(request), parse(idParam, request.params).id);
+    reply.code(204);
+  });
+  app.delete('/service/categories/:id', async (request, reply) => {
+    await service.deleteCategory(requireActor(request), parse(idParam, request.params).id);
+    reply.code(204);
+  });
+  app.delete('/service/tickets/:id', async (request, reply) => {
+    await service.deleteTicket(requireActor(request), parse(idParam, request.params).id);
+    reply.code(204);
+  });
+
   app.get('/service/sla-policies', async (request) => ({ items: await service.listSlaPolicies(requireActor(request)) }));
 
   app.get('/service/calendar', async (request) => service.getCalendar(requireActor(request)));

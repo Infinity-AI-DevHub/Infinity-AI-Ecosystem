@@ -6,7 +6,7 @@
  * guest's grants are shown alongside them rather than buried a level down, and access
  * expiry is displayed as prominently as their name.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Building2, ShieldOff, UserPlus } from 'lucide-react';
 import { api, ApiError, idempotencyKey } from '../lib/api';
@@ -81,6 +81,8 @@ export default function Clients() {
   );
 
   const selected = organizations.data?.items.find((o) => o.id === organizationId) ?? null;
+  // Dialogs belong to the organisation they were opened on; moving to another one closes them.
+  useEffect(() => { setEditingOrgId(null); setInviting(false); }, [organizationId]);
 
   const guestKey = organizationId ? `/external/guests?organizationId=${organizationId}` : null;
   const guests = useQuery<{ items: Guest[] }>(guestKey, (signal) => api.get(guestKey!, signal));
@@ -175,9 +177,13 @@ export default function Clients() {
                         <select
                           value={selected.status}
                           onChange={async (event) => {
-                            await api.patch(`/external/organizations/${selected.id}`, {
-                              status: event.target.value,
-                            });
+                            try {
+                              await api.patch(`/external/organizations/${selected.id}`, {
+                                status: event.target.value,
+                              });
+                            } catch (err) {
+                              window.alert(err instanceof ApiError ? err.message : 'The status was not changed');
+                            }
                             invalidate('/external/organizations');
                           }}
                         >
@@ -194,6 +200,7 @@ export default function Clients() {
                         type="button"
                         className="danger-button"
                         onClick={async () => {
+                          if (!window.confirm(`Delete ${selected.name}? This cannot be undone.`)) return;
                           try {
                             await api.delete(`/external/organizations/${selected.id}`);
                             invalidate('/external/organizations');
@@ -285,7 +292,7 @@ export default function Clients() {
         </section>
       </div>
 
-      {editingOrgId ? (
+      {editingOrgId && editingOrgId === selected?.id ? (
         <EditOrganisation
           organizationId={editingOrgId}
           onClose={() => setEditingOrgId(null)}
@@ -423,6 +430,8 @@ function GuestRow({ guest, canManage }: { guest: Guest; canManage: boolean }) {
               <FormError error={resend.error} />
             </div>
           ) : null}
+
+          {canManage && guest.status !== 'suspended' ? <GrantGuestForm guestId={guest.id} onGranted={() => grants.reload()} /> : null}
 
           {canManage && guest.status === 'active' ? (
             <>
@@ -896,6 +905,62 @@ function EditOrganisationForm({
             {saving ? 'Saving…' : 'Save changes'}
           </button>
         </div>
+    </form>
+  );
+}
+
+const GRANT_OPTIONS: Record<'project' | 'folder' | 'file' | 'chat_room', { label: string; levels: { label: string; capabilities: string[] }[] }> = {
+  project: { label: 'Project', levels: [{ label: 'See tasks', capabilities: ['task.read'] }, { label: 'See tasks and update progress', capabilities: ['task.read', 'task.progress'] }] },
+  folder: { label: 'Folder', levels: [{ label: 'View files', capabilities: ['file.read'] }, { label: 'View and upload', capabilities: ['file.read', 'file.create', 'file.update'] }] },
+  file: { label: 'File', levels: [{ label: 'View', capabilities: ['file.read'] }, { label: 'View and edit', capabilities: ['file.read', 'file.update'] }] },
+  chat_room: { label: 'Channel', levels: [{ label: 'Take part', capabilities: ['message.send'] }] },
+};
+
+/** Opens one project, folder, file or channel to a guest, for no longer than their own access. */
+function GrantGuestForm({ guestId, onGranted }: { guestId: string; onGranted: () => void }) {
+  const [type, setType] = useState<keyof typeof GRANT_OPTIONS>('folder');
+  const [resourceId, setResourceId] = useState('');
+  const [level, setLevel] = useState(0);
+  const [expires, setExpires] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const sourceKey = { project: '/projects', folder: '/files/folders', file: '/files?limit=100', chat_room: '/chat/rooms' }[type];
+  const source = useQuery<{ items: { id: string; name?: string | null; key?: string; title?: string; type?: string }[] }>(sourceKey, (signal) => api.get(sourceKey, signal));
+  const options = (source.data?.items ?? []).filter((r) => type !== 'chat_room' || r.type !== 'direct');
+  return (
+    <form className="guest-grant-form" aria-label="Give access" onSubmit={async (e) => {
+      e.preventDefault(); setError(null); setDone(false);
+      try {
+        await api.post(`/external/guests/${guestId}/grants`, { resourceType: type, resourceId, capabilities: GRANT_OPTIONS[type].levels[level]!.capabilities, expiresAt: expires ? new Date(`${expires}T23:59`).toISOString() : null });
+        setDone(true); setResourceId(''); onGranted();
+      } catch (err) { setError(err instanceof ApiError ? err.message : 'Access was not given.'); }
+    }}>
+      <h5>Give access</h5>
+      <div className="field-row">
+        <div className="field"><label htmlFor={`gg-type-${guestId}`}>To a</label>
+          <select id={`gg-type-${guestId}`} value={type} onChange={(e) => { setType(e.target.value as keyof typeof GRANT_OPTIONS); setResourceId(''); setLevel(0); }}>
+            {Object.entries(GRANT_OPTIONS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+        </div>
+        <div className="field"><label htmlFor={`gg-res-${guestId}`}>Which</label>
+          <select id={`gg-res-${guestId}`} required value={resourceId} onChange={(e) => setResourceId(e.target.value)}>
+            <option value="">Choose…</option>
+            {options.map((r) => <option key={r.id} value={r.id}>{r.key ? `${r.key} · ` : ''}{r.name ?? r.title ?? r.id.slice(0, 8)}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="field-row">
+        <div className="field"><label htmlFor={`gg-level-${guestId}`}>Access</label>
+          <select id={`gg-level-${guestId}`} value={level} onChange={(e) => setLevel(Number(e.target.value))}>
+            {GRANT_OPTIONS[type].levels.map((l, i) => <option key={l.label} value={i}>{l.label}</option>)}
+          </select>
+        </div>
+        <div className="field"><label htmlFor={`gg-exp-${guestId}`}>Until (optional)</label><input id={`gg-exp-${guestId}`} type="date" value={expires} onChange={(e) => setExpires(e.target.value)} /></div>
+      </div>
+      <p className="field-hint">Access never lasts longer than the guest's own access window.</p>
+      {error ? <p className="field-error" role="alert">{error}</p> : null}
+      {done ? <p className="field-hint" role="status">Access given.</p> : null}
+      <button type="submit" className="ghost-button" disabled={!resourceId}>Give access</button>
     </form>
   );
 }

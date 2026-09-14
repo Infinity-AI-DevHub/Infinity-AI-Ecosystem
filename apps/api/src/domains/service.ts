@@ -1427,3 +1427,40 @@ export async function replyForEmail(ticketId: string, commentId: string) {
     [ticketId, commentId],
   );
 }
+
+/* ------------------------------------------------------------------ deletion */
+
+/** A queue with tickets keeps them (deactivate it instead); an unused one can go. */
+export async function deleteQueue(actor: Actor, id: string) {
+  await authorize({ actor, capability: 'service.manage', resourceless: true });
+  const queue = await one<{ name: string }>('SELECT name FROM service_queues WHERE id = $1 AND company_id = $2', [id, actor.companyId]);
+  if (!queue) throw notFound('Queue not found');
+  const used = await one<{ n: number }>('SELECT COUNT(*) AS n FROM tickets WHERE queue_id = $1', [id]);
+  if (Number(used?.n)) throw conflict(`This queue has ${used!.n} ${Number(used!.n) === 1 ? 'ticket' : 'tickets'}. Deactivate it instead so their history stays.`);
+  await pool.query('DELETE FROM service_queues WHERE id = $1', [id]);
+  await auditFromActor(actor, 'service.queue.delete', { resourceType: 'service_queue', resourceId: id, metadata: { name: queue.name } });
+}
+
+export async function deleteCategory(actor: Actor, id: string) {
+  await authorize({ actor, capability: 'service.manage', resourceless: true });
+  const cat = await one<{ name: string }>('SELECT name FROM service_categories WHERE id = $1 AND company_id = $2', [id, actor.companyId]);
+  if (!cat) throw notFound('Category not found');
+  const used = await one<{ n: number }>('SELECT COUNT(*) AS n FROM tickets WHERE category_id = $1', [id]);
+  if (Number(used?.n)) throw conflict(`${used!.n} ${Number(used!.n) === 1 ? 'ticket uses' : 'tickets use'} this category. Deactivate it instead.`);
+  await pool.query('DELETE FROM service_categories WHERE id = $1', [id]);
+  await auditFromActor(actor, 'service.category.delete', { resourceType: 'service_category', resourceId: id, metadata: { name: cat.name } });
+}
+
+/**
+ * Removes a ticket entirely - for spam and duplicates raised by mistake. Real requests are
+ * closed, not deleted; the audit entry keeps the reference and subject.
+ */
+export async function deleteTicket(actor: Actor, id: string) {
+  await authorize({ actor, capability: 'service.manage', resourceless: true });
+  const t = await one<{ number: number; subject: string }>('SELECT number, subject FROM tickets WHERE id = $1 AND company_id = $2', [id, actor.companyId]);
+  if (!t) throw notFound('Ticket not found');
+  if (await one('SELECT 1 FROM incidents WHERE problem_ticket_id = $1', [id])) throw conflict('This ticket is the problem record for an incident and cannot be deleted');
+  await pool.query('DELETE FROM tickets WHERE id = $1', [id]);
+  await searchIndex.remove('ticket', id);
+  await auditFromActor(actor, 'ticket.delete', { resourceType: 'ticket', resourceId: id, metadata: { ref: `SD-${t.number}`, subject: t.subject } });
+}

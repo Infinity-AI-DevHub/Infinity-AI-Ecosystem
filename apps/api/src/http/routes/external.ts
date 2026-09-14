@@ -73,7 +73,7 @@ export async function externalRoutes(app: FastifyInstance): Promise<void> {
     const actor = requireActor(request);
     const { id } = parse(z.object({ id: z.string().uuid() }), request.params);
     const input = parse(
-      organizationInput.partial().extend({ status: z.enum(['active', 'archived']).optional() }),
+      organizationInput.partial().extend({ status: z.enum(['upcoming', 'active', 'completed', 'archived']).optional() }),
       request.body,
     );
     return external.updateOrganization(actor, id, input);

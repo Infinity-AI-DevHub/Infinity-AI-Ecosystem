@@ -29,6 +29,10 @@ import { portalRoutes } from './portal.js';
 import { reminderRoutes } from './reminders.js';
 import { serviceRoutes } from './service.js';
 import { serviceManagementRoutes } from './service-management.js';
+import { reliabilityRoutes } from './reliability.js';
+import { engineeringRoutes } from './engineering.js';
+import { academyRoutes } from './academy.js';
+import { accessRoutes } from './access.js';
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   /** Liveness: the process is up. Never touches the database. */
@@ -91,6 +95,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       await reminderRoutes(api);
       await serviceRoutes(api);
       await serviceManagementRoutes(api);
+      await reliabilityRoutes(api);
+      await engineeringRoutes(api);
+      await academyRoutes(api);
+      await accessRoutes(api);
       // Anonymous by design: the token in the URL is the whole credential. Registered
       // last and named separately so the authenticated surface above stays obvious.
       await publicShareRoutes(api);

@@ -376,3 +376,13 @@ export async function linkTicket(actor: Actor, id: string, ticketId: string, rem
   await auditFromActor(actor, remove ? 'change.ticket.unlink' : 'change.ticket.link', { resourceType: 'change_request', resourceId: id, metadata: { ticketId } });
   return getChange(actor, id);
 }
+
+/** A draft or cancelled change can be deleted by whoever steers it; anything that went further is history. */
+export async function deleteChange(actor: Actor, id: string) {
+  const c = await load(actor, id);
+  if (!canSteer(actor, c)) throw forbidden('Only the requester, the owner or a change manager can delete this change');
+  if (c.status !== 'draft' && c.status !== 'cancelled') throw conflict('Only draft or cancelled changes can be deleted');
+  await pool.query('DELETE FROM change_requests WHERE id = $1', [id]);
+  await searchIndex.remove('change', id);
+  await auditFromActor(actor, 'change.delete', { resourceType: 'change_request', resourceId: id, metadata: { ref: changeRef(c.number), title: c.title } });
+}

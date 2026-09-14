@@ -461,6 +461,12 @@ function QuotationDetail({
               >
                 Download PDF
               </button>
+              {can('quotation.manage') && quotation.status === 'draft' && internalCount === 0 ? (
+                <button type="button" className="ghost-button" disabled={busy}
+                  onClick={() => { if (window.confirm('Delete this draft quotation?')) void act(async () => { await api.delete(`/quotations/${quotationId}`); onClose(); }, 'Draft quotation deleted'); }}>
+                  Delete draft
+                </button>
+              ) : null}
 
               {can('quotation.manage') && internalCount >= 2 && quotation.status !== 'sent'
                 && !['accepted', 'declined', 'superseded'].includes(quotation.status) ? (

@@ -19,6 +19,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import Activate from './routes/Activate';
 import ResetPassword from './routes/ResetPassword';
 import SharedResource from './routes/SharedResource';
+import PublicStatus from './routes/PublicStatus';
 import { SessionProvider } from './lib/session';
 import { NotifyProvider } from './lib/notify';
 import { PortalShell } from './routes/portal/PortalShell';
@@ -59,6 +60,7 @@ export default function PublicApp() {
       <SessionProvider>
       <Routes>
         <Route path="/shared/:token" element={<SharedResource />} />
+        <Route path="/status/:slug" element={<PublicStatus />} />
 
         {/* The portal. Everything below the guard requires a signed-in guest. */}
         <Route path="/portal/sign-in" element={<PortalSignIn />} />

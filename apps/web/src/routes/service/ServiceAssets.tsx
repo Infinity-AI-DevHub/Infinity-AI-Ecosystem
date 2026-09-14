@@ -174,7 +174,14 @@ function LicenceDialog({ licence, onClose }: { licence: Licence | null; onClose:
           <label className="field sd-span-2"><span>Notes</span><textarea rows={2} value={form.notes} onChange={set('notes')} maxLength={5000} /></label>
         </div>
         {error ? <p className="field-error" role="alert">{error}</p> : null}
-        <div className="dialog-actions"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button">Save</button></div>
+        <div className="dialog-actions">
+          {licence ? <button type="button" className="ghost-button" onClick={async () => {
+            if (!window.confirm(`Delete ${licence.name}? Release any assigned seats first.`)) return;
+            try { await api.delete(`/service/licences/${licence.id}`); invalidate('/service/licences'); invalidate('/service/expiring'); onClose(); }
+            catch (err) { setError(err instanceof ApiError ? err.message : 'The licence was not deleted.'); }
+          }}>Delete</button> : null}
+          <button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button">Save</button>
+        </div>
       </form>
     </div>
   );
@@ -338,7 +345,14 @@ function ContractDialog({ contract, onClose }: { contract: Contract | null; onCl
           <label className="field sd-span-2"><span>Notes</span><textarea rows={2} value={form.notes} onChange={set('notes')} maxLength={5000} /></label>
         </div>
         {error ? <p className="field-error" role="alert">{error}</p> : null}
-        <div className="dialog-actions"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button" disabled={uploading}>Save</button></div>
+        <div className="dialog-actions">
+          {contract ? <button type="button" className="ghost-button" onClick={async () => {
+            if (!window.confirm(`Delete the contract "${contract.title}"?`)) return;
+            try { await api.delete(`/service/contracts/${contract.id}`); invalidate('/service/contracts'); invalidate('/service/expiring'); onClose(); }
+            catch (err) { setError(err instanceof ApiError ? err.message : 'The contract was not deleted.'); }
+          }}>Delete</button> : null}
+          <button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button" disabled={uploading}>Save</button>
+        </div>
       </form>
     </div>
   );

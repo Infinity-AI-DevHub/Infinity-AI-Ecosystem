@@ -16,7 +16,7 @@
  */
 import { many, newId, one, pool, reload, transaction } from '../core/db.js';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../core/errors.js';
-import { authorize, assertSeparationOfDuties, type Actor } from '../core/authz.js';
+import { authorize, assertSeparationOfDuties, hasCapability, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
 import * as approvals from './approvals.js';
 
@@ -49,9 +49,12 @@ const money = (value: string | number) => Number(Number(value).toFixed(2));
 
 // ------------------------------------------------------------------ categories
 
-export async function listCategories(actor: Actor) {
+export async function listCategories(actor: Actor, options: { includeInactive?: boolean } = {}) {
+  // Inactive categories stay hidden from claimants, but whoever manages budgets must still
+  // see them — otherwise a deactivated category could never be switched back on.
+  const all = options.includeInactive === true && hasCapability(actor, 'budget.manage');
   return many(
-    'SELECT * FROM expense_categories WHERE company_id = $1 AND active ORDER BY name',
+    `SELECT * FROM expense_categories WHERE company_id = $1 ${all ? '' : 'AND active'} ORDER BY active DESC, name`,
     [actor.companyId],
   );
 }
@@ -522,20 +525,22 @@ export async function updateVendor(
   await pool.query(
     `UPDATE vendors
         SET name = COALESCE($3, name),
-            contact_email = COALESCE($4, contact_email),
-            contact_phone = COALESCE($5, contact_phone),
-            tax_id = COALESCE($6, tax_id),
-            notes = COALESCE($7, notes),
+            contact_email = CASE WHEN $9 THEN $4 ELSE contact_email END,
+            contact_phone = CASE WHEN $10 THEN $5 ELSE contact_phone END,
+            tax_id = CASE WHEN $11 THEN $6 ELSE tax_id END,
+            notes = CASE WHEN $12 THEN $7 ELSE notes END,
             status = COALESCE($8, status)
       WHERE id = $1 AND company_id = $2`,
     [
       vendorId, actor.companyId,
       input.name?.trim() ?? null,
-      input.contactEmail?.trim().toLowerCase() ?? null,
-      input.contactPhone?.trim() ?? null,
-      input.taxId?.trim() ?? null,
+      input.contactEmail?.trim().toLowerCase() || null,
+      input.contactPhone?.trim() || null,
+      input.taxId?.trim() || null,
       input.notes ?? null,
       input.status ?? null,
+    
+      input.contactEmail !== undefined, input.contactPhone !== undefined, input.taxId !== undefined, input.notes !== undefined,
     ],
   );
   await auditFromActor(actor, 'vendor.update', {
@@ -631,7 +636,7 @@ export async function updateCategory(
   input: Partial<{
     name: string;
     limitAmount: number | null;
-    requiresReceiptAbove: number;
+    requiresReceiptAbove: number | null;
     active: boolean;
   }>,
 ) {
@@ -646,12 +651,12 @@ export async function updateCategory(
   await pool.query(
     `UPDATE expense_categories
         SET name = COALESCE($3, name),
-            limit_amount = COALESCE($4, limit_amount),
+            limit_amount = CASE WHEN $7 THEN $4 ELSE limit_amount END,
             requires_receipt_above = COALESCE($5, requires_receipt_above),
             active = COALESCE($6, active)
       WHERE id = $1 AND company_id = $2`,
     [categoryId, actor.companyId, input.name?.trim() ?? null, input.limitAmount ?? null,
-     input.requiresReceiptAbove ?? null, input.active ?? null],
+     input.requiresReceiptAbove ?? null, input.active ?? null, input.limitAmount !== undefined],
   );
   await auditFromActor(actor, 'expense_category.update', {
     resourceType: 'expense_category', resourceId: categoryId, metadata: { changed: Object.keys(input) },
@@ -670,7 +675,7 @@ export async function updateAsset(
   assetId: string,
   input: Partial<{
     name: string;
-    category: string;
+    category: string | null;
     serialNumber: string | null;
     vendorId: string | null;
     purchasedOn: string | null;
@@ -695,19 +700,22 @@ export async function updateAsset(
     `UPDATE assets
         SET name = COALESCE($3, name),
             category = COALESCE($4, category),
-            serial_number = COALESCE($5, serial_number),
-            vendor_id = COALESCE($6, vendor_id),
-            purchased_on = COALESCE($7, purchased_on),
-            purchase_cost = COALESCE($8, purchase_cost),
-            warranty_until = COALESCE($9, warranty_until),
-            location = COALESCE($10, location),
-            notes = COALESCE($11, notes),
+            serial_number = CASE WHEN $13 THEN $5 ELSE serial_number END,
+            vendor_id = CASE WHEN $14 THEN $6 ELSE vendor_id END,
+            purchased_on = CASE WHEN $15 THEN $7 ELSE purchased_on END,
+            purchase_cost = CASE WHEN $16 THEN $8 ELSE purchase_cost END,
+            warranty_until = CASE WHEN $17 THEN $9 ELSE warranty_until END,
+            location = CASE WHEN $18 THEN $10 ELSE location END,
+            notes = CASE WHEN $19 THEN $11 ELSE notes END,
             status = COALESCE($12, status)
       WHERE id = $1 AND company_id = $2`,
     [assetId, actor.companyId, input.name?.trim() ?? null, input.category ?? null,
      input.serialNumber ?? null, input.vendorId ?? null, input.purchasedOn ?? null,
      input.purchaseCost ?? null, input.warrantyUntil ?? null, input.location ?? null,
-     input.notes ?? null, input.status ?? null],
+     input.notes ?? null, input.status ?? null,
+     // Sent as null means "clear it"; left out means "leave it".
+     input.serialNumber !== undefined, input.vendorId !== undefined, input.purchasedOn !== undefined, input.purchaseCost !== undefined,
+     input.warrantyUntil !== undefined, input.location !== undefined, input.notes !== undefined],
   );
   await auditFromActor(actor, 'asset.update', {
     resourceType: 'asset', resourceId: assetId, metadata: { changed: Object.keys(input) },
@@ -878,4 +886,15 @@ export async function assetsHeldBy(actor: Actor, userId: string) {
       ORDER BY asset_tag`,
     [actor.companyId, userId],
   );
+}
+
+/** A claim that was never submitted can be thrown away by the person who started it. */
+export async function deleteClaim(actor: Actor, claimId: string): Promise<void> {
+  const claim = await getClaim(actor, claimId);
+  if (claim.claimant_id !== actor.userId) throw forbidden('Only the claimant can delete their own draft');
+  if (claim.status !== 'draft') throw conflict('Only a draft claim can be deleted');
+  await transaction(async (tx) => {
+    await tx.query('DELETE FROM expense_claims WHERE id = $1', [claimId]);
+    await auditFromActor(actor, 'expense.claim_delete', { resourceType: 'expense_claim', resourceId: claimId }, tx);
+  });
 }

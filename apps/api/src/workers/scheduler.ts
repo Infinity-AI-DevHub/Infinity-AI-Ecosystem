@@ -142,6 +142,7 @@ async function enforceRetention(): Promise<void> {
 
 /** Expired sessions, used invitations, stale upload sessions and rate counters. */
 async function housekeeping(): Promise<void> {
+  await (await import('../domains/engineering.js')).pruneDeliveries();
   await pool.query(`DELETE FROM sessions WHERE expires_at < DATE_SUB(NOW(3), INTERVAL 7 DAY)`);
   await pool.query(`DELETE FROM invitations WHERE expires_at < DATE_SUB(NOW(3), INTERVAL 30 DAY)`);
   await pool.query(
@@ -262,6 +263,26 @@ const jobs: Job[] = [
   { name: 'itam-expiry', intervalMs: 3_600_000, lockKey: 'iw_itam_expiry', run: async () => {
     const { sendExpiryReminders } = await import('../domains/itam.js');
     await sendExpiryReminders();
+  } },
+  { name: 'incident-escalation', intervalMs: 60_000, lockKey: 'iw_incident_escalation', run: async () => {
+    const { escalate } = await import('../domains/incidents.js');
+    await escalate();
+  } },
+  { name: 'heartbeat-check', intervalMs: 60_000, lockKey: 'iw_heartbeat_check', run: async () => {
+    const { checkHeartbeats } = await import('../domains/alerts.js');
+    await checkHeartbeats();
+  } },
+  { name: 'maintenance-status', intervalMs: 60_000, lockKey: 'iw_maintenance_status', run: async () => {
+    const { syncMaintenanceStatuses } = await import('../domains/reliability.js');
+    await syncMaintenanceStatuses();
+  } },
+  { name: 'access-expiry', intervalMs: 300_000, lockKey: 'iw_access_expiry', run: async () => {
+    const { expireGrants } = await import('../domains/access.js');
+    await expireGrants();
+  } },
+  { name: 'academy-reminders', intervalMs: 3_600_000, lockKey: 'iw_academy_reminders', run: async () => {
+    const { sendReminders } = await import('../domains/academy.js');
+    await sendReminders();
   } },
   { name: 'attendance-auto-clockout', intervalMs: 60_000, lockKey: 'iw_attendance_stale', run: async () => {
     const { closed } = await attendance.closeStaleSessions();

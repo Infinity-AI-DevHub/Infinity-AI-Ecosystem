@@ -9,7 +9,7 @@ import { jsonArrayOverlaps, many, newId, pool, type Queryable } from '../core/db
 import { escapeHtml } from '../core/validation.js';
 import type { Actor } from '../core/authz.js';
 
-export type DocType = 'chat' | 'file' | 'person' | 'task' | 'meeting' | 'announcement' | 'doc' | 'client' | 'ticket' | 'article' | 'change' | 'service' | 'incident';
+export type DocType = 'chat' | 'file' | 'person' | 'task' | 'meeting' | 'announcement' | 'doc' | 'client' | 'ticket' | 'article' | 'change' | 'service' | 'incident' | 'api' | 'course' | 'policy';
 
 /**
  * Result types that also need a role capability, not just a place on the record's ACL.
@@ -24,6 +24,9 @@ const CAPABILITY_GATED: Partial<Record<DocType, string>> = {
   change: 'change.create',
   service: 'reliability.read',
   incident: 'reliability.read',
+  api: 'engineering.read',
+  course: 'academy.learn',
+  policy: 'academy.learn',
 };
 
 export type IndexInput = {

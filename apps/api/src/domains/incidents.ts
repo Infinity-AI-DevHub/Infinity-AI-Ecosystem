@@ -240,6 +240,10 @@ export async function getIncident(actor: Actor, id: string) {
     tickets: tickets.map((t) => ({ id: t.id, ref: `SD-${t.number}`, subject: t.subject, status: t.status, type: t.type })),
     problem: problem ? { id: problem.id, ref: `SD-${problem.number}`, subject: problem.subject, status: problem.status } : null,
     postmortemStatus: postmortem?.status ?? null,
+    // A deployment just before an incident is the first thing a responder checks.
+    recentDeployments: hasCapability(actor, 'engineering.read')
+      ? await (await import('./engineering.js')).deploymentsNear(i.company_id, services.map((s) => s.id), new Date(i.detected_at))
+      : [],
     version: i.version,
     permissions: {
       isResponder: responder,

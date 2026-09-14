@@ -48,12 +48,20 @@ function bumpInvalidation(key: string): void {
   invalidations.set(key, (invalidations.get(key) ?? 0) + 1);
 }
 
-/** Drops cached entries whose key starts with `prefix`, then refetches live consumers. */
+/**
+ * Marks entries whose key starts with `prefix` as stale, then refetches live consumers.
+ *
+ * Stale, not deleted. Deleting the data made every screen fall back to its loading state
+ * for the length of the refetch, which unmounted whatever was on it: a confirmation just
+ * shown, a quiz result, the lesson someone was reading. The data stays on screen until the
+ * fresh copy replaces it; a record that no longer exists is dropped when its refetch 404s.
+ */
 export function invalidate(prefix: string): void {
   const keys = new Set([...cache.keys(), ...subscribers.keys()]);
   for (const key of keys) {
     if (!key.startsWith(prefix)) continue;
-    cache.delete(key);
+    const entry = cache.get(key);
+    if (entry) cache.set(key, { data: entry.data, at: 0 });
     failures.delete(key);
     bumpInvalidation(key);
     notify(key);
@@ -102,6 +110,9 @@ export function useQuery<T>(
 
   const cached = active ? cache.get(key) : undefined;
   const isFresh = cached !== undefined && Date.now() - cached.at < ttlMs;
+  // What this render showed, so a result that lands before the subscription exists is not missed.
+  const renderedEntry = useRef<Entry | undefined>(cached);
+  renderedEntry.current = cached;
 
   const run = useCallback(
     async (force: boolean) => {
@@ -132,6 +143,8 @@ export function useQuery<T>(
         setError(null);
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
+        // Gone (deleted, or never visible to this person): stale data must not stand in for it.
+        if (err instanceof ApiError && err.status === 404) cache.delete(key);
         failures.set(key, (failures.get(key) ?? 0) + 1);
         setError(err instanceof ApiError || err instanceof NetworkError ? err : new NetworkError());
       } finally {
@@ -169,7 +182,10 @@ export function useQuery<T>(
       subscribers.set(key, set);
     }
     set.add(handler);
-    void run(false);
+    // A request already in flight (started by another screen) may have settled between this
+    // render and now; re-render if the cache moved on without us.
+    if (cache.get(key) !== renderedEntry.current) forceRender((n) => n + 1);
+    void run(false).then(() => { if (cache.get(key) !== renderedEntry.current) forceRender((n) => n + 1); });
     return () => {
       set!.delete(handler);
       if (set!.size === 0) subscribers.delete(key);

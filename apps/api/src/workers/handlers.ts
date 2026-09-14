@@ -158,7 +158,23 @@ const onApprovalSettled: Handler = async (event) => {
   if (change) {
     const { settleDecision } = await import('../domains/changes.js');
     await settleDecision(change.id, status);
+    return;
   }
+
+  const accessRequest = await one<{ id: string }>(
+    'SELECT id FROM access_requests WHERE approval_request_id = $1',
+    [requestId],
+  );
+  if (accessRequest) {
+    const { settleDecision } = await import('../domains/access.js');
+    await settleDecision(accessRequest.id, status);
+  }
+};
+
+/** Access to take away, equipment to collect and ownership to move when someone leaves. */
+const onUserOffboarded: Handler = async (event) => {
+  const { onOffboarded } = await import('../domains/access.js');
+  await onOffboarded(event.payload as { userId: string; successorId: string | null });
 };
 
 const onUserInvited: Handler = async (event) => {
@@ -1539,11 +1555,36 @@ const onTicketReplied: Handler = async (event) => {
   });
 };
 
+// ----------------------------------------------------------------- reliability
+
+/**
+ * A page has to reach someone who is not looking at the app, so it is also emailed. The
+ * in-app notification and desktop banner were already created when the page was sent.
+ */
+const onIncidentPaged: Handler = async (event) => {
+  const { incidentId, userIds, level } = event.payload as { incidentId: string; userIds: string[]; level: number };
+  if (!userIds?.length) return;
+  const incident = await one<{ number: number; title: string; severity: string; acknowledged_at: Date | null; status: string }>(
+    'SELECT number, title, severity, acknowledged_at, status FROM incidents WHERE id = $1', [incidentId]);
+  // Acknowledged or resolved before the email went out: do not wake anyone up for nothing.
+  if (!incident || incident.acknowledged_at || incident.status === 'resolved') return;
+  await emailUsers(userIds, {
+    subject: `[${incident.severity.toUpperCase()}] INC-${incident.number}: ${incident.title}`,
+    lines: [
+      `You are being paged (escalation level ${level}) for INC-${incident.number}: ${incident.title}.`,
+      '',
+      'Open the incident and acknowledge it to stop escalation:',
+      appLink(`/reliability/incidents/${incidentId}`),
+    ],
+  });
+};
+
 // ----------------------------------------------------------------- registry
 
 export const handlers: Record<string, Handler> = {
   'user.invited': onUserInvited,
   'ticket.replied': onTicketReplied,
+  'incident.paged': onIncidentPaged,
   'user.activated': onUserActivated,
   'user.updated': onAccessChanged,
   'user.suspended': onAccessChanged,
@@ -1578,6 +1619,7 @@ export const handlers: Record<string, Handler> = {
     await onApprovalProgressed(event);
     await onApprovalSettled(event);
   },
+  'user.offboarded': onUserOffboarded,
   'portal.upload': onPortalUpload,
   'reminder.due': onReminderDue,
   'attendance.flagged': onAttendanceFlagged,

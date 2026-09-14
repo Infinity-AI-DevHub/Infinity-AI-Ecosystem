@@ -251,6 +251,7 @@ function Goals() {
   const [title, setTitle] = useState('');
   const goals = useQuery<{ items: Goal[] }>('/hr/goals', (signal) => api.get('/hr/goals', signal));
 
+  const remove = useMutation(async (id: string) => api.delete(`/hr/goals/${id}`), { invalidates: ['/hr/goals'] });
   const create = useMutation(async () => api.post('/hr/goals', { title }), {
     invalidates: ['/hr/goals'],
     onSuccess: () => setTitle(''),
@@ -264,6 +265,7 @@ function Goals() {
   return (
     <section className="panel" aria-label="Goals">
       <FormError error={create.error} />
+      <FormError error={remove.error} />
       <form className="goal-form" onSubmit={(e) => { e.preventDefault(); void create.mutate(); }}>
         <div className="field">
           <label htmlFor="goal-title">New goal</label>
@@ -309,6 +311,7 @@ function Goals() {
                     </span>
                   </div>
                   {goal.due_on ? <span className="task-meta">Due {formatDate(goal.due_on)}</span> : null}
+                  <button type="button" className="link-button" onClick={() => { if (window.confirm(`Delete the goal "${goal.title}"?`)) void remove.mutate(goal.id); }}>Delete</button>
                 </li>
               ))}
             </ul>

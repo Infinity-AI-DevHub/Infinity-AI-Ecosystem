@@ -265,3 +265,21 @@ export async function sendExpiryReminders(): Promise<number> {
   }
   return sent;
 }
+
+export async function deleteLicence(actor: Actor, id: string) {
+  await authorize({ actor, capability: 'licence.manage', resourceless: true });
+  const l = await one<{ name: string }>('SELECT name FROM software_licences WHERE id = $1 AND company_id = $2', [id, actor.companyId]);
+  if (!l) throw notFound('Licence not found');
+  const held = await one<{ n: number }>('SELECT COUNT(*) AS n FROM licence_assignments WHERE licence_id = $1', [id]);
+  if (Number(held?.n)) throw conflict(`Release the ${held!.n} assigned ${Number(held!.n) === 1 ? 'seat' : 'seats'} before deleting this licence`);
+  await pool.query('DELETE FROM software_licences WHERE id = $1', [id]);
+  await auditFromActor(actor, 'licence.delete', { resourceType: 'software_licence', resourceId: id, metadata: { name: l.name } });
+}
+
+export async function deleteContract(actor: Actor, id: string) {
+  await authorize({ actor, capability: 'licence.manage', resourceless: true });
+  const c = await one<{ title: string }>('SELECT title FROM vendor_contracts WHERE id = $1 AND company_id = $2', [id, actor.companyId]);
+  if (!c) throw notFound('Contract not found');
+  await pool.query('DELETE FROM vendor_contracts WHERE id = $1', [id]);
+  await auditFromActor(actor, 'contract.delete', { resourceType: 'vendor_contract', resourceId: id, metadata: { title: c.title } });
+}

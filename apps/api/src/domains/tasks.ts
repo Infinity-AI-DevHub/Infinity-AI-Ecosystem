@@ -893,3 +893,16 @@ export function publicTask(
     updatedAt: row.updated_at,
   };
 }
+
+/** Deletes a task. Whoever may rewrite a task may remove it; the audit entry keeps what it was. */
+export async function deleteTask(actor: Actor, taskId: string): Promise<void> {
+  const existing = await one<TaskRow>('SELECT * FROM tasks WHERE id = $1 AND company_id = $2', [taskId, actor.companyId]);
+  if (!existing) throw notFound('Task not found');
+  await requireProject(actor, existing.project_id, 'task.update');
+  // A ticket or incident action linked to this task keeps working; it only loses the link.
+  await transaction(async (tx) => {
+    await tx.query('DELETE FROM tasks WHERE id = $1', [taskId]);
+    await auditFromActor(actor, 'task.delete', { resourceType: 'task', resourceId: taskId, metadata: { title: existing.title, projectId: existing.project_id } }, tx);
+  });
+  await searchIndex.remove('task', taskId);
+}

@@ -12,7 +12,7 @@
  * save keeps the version it replaced, because a wiki without history is one nobody edits
  * - there is no way back from a mistake, so people stop making changes at all.
  */
-import { many, newId, one, reload, transaction } from '../core/db.js';
+import { pool, many, newId, one, reload, transaction } from '../core/db.js';
 import { conflict, forbidden, notFound, preconditionFailed, unprocessable } from '../core/errors.js';
 import { authorize, decide, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
@@ -459,4 +459,22 @@ export async function archivePage(actor: Actor, pageId: string): Promise<void> {
       metadata: { title: page.title },
     }, tx);
   });
+}
+
+export async function updateSpace(actor: Actor, spaceId: string, input: { name?: string; description?: string | null }) {
+  await authorize({ actor, capability: 'doc.space_manage', resourceless: true });
+  const res = await pool.query(
+    'UPDATE doc_spaces SET name = COALESCE($3, name), description = CASE WHEN $4 THEN $5 ELSE description END WHERE id = $1 AND company_id = $2 AND archived_at IS NULL',
+    [spaceId, actor.companyId, input.name?.trim() || null, input.description !== undefined, input.description?.trim() || null]);
+  if (res.rowCount === 0) throw notFound('Space not found');
+  await auditFromActor(actor, 'doc.space_update', { resourceType: 'doc_space', resourceId: spaceId, metadata: { changes: Object.keys(input) } });
+}
+
+/** Archives a space: it and its pages leave the workspace and search, and page history is kept. */
+export async function archiveSpace(actor: Actor, spaceId: string) {
+  await authorize({ actor, capability: 'doc.space_manage', resourceless: true });
+  const res = await pool.query('UPDATE doc_spaces SET archived_at = NOW(3) WHERE id = $1 AND company_id = $2 AND archived_at IS NULL', [spaceId, actor.companyId]);
+  if (res.rowCount === 0) throw notFound('Space not found');
+  for (const page of await many<{ id: string }>('SELECT id FROM doc_pages WHERE space_id = $1', [spaceId])) await searchIndex.remove('doc', page.id);
+  await auditFromActor(actor, 'doc.space_archive', { resourceType: 'doc_space', resourceId: spaceId });
 }

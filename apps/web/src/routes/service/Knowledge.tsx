@@ -111,6 +111,7 @@ export function KnowledgeArticle({ portal = false }: { portal?: boolean }) {
   const key = `${base}/${articleId}`;
   const article = useQuery<Article>(articleId ? key : null, (signal) => api.get(key, signal));
   const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   if (article.loading && !article.data) return <Loading label="Loading article" rows={6} />;
   if (article.error && !article.data) {
@@ -148,6 +149,7 @@ export function KnowledgeArticle({ portal = false }: { portal?: boolean }) {
             {a.status !== 'published' ? <button type="button" className="primary-button" onClick={() => void act(() => api.post(`/service/knowledge/${a.id}/status`, { status: 'published' }))}>Publish</button> : null}
             {a.status === 'published' ? <button type="button" className="ghost-button" onClick={() => void act(() => api.post(`/service/knowledge/${a.id}/status`, { status: 'draft' }))}>Unpublish</button> : null}
             {a.status !== 'archived' ? <button type="button" className="ghost-button" onClick={() => void act(() => api.post(`/service/knowledge/${a.id}/status`, { status: 'archived' }))}>Archive</button> : null}
+            {a.status !== 'published' ? <button type="button" className="ghost-button" onClick={() => { if (window.confirm(`Delete "${a.title}"? This cannot be undone.`)) void act(async () => { await api.delete(`/service/knowledge/${a.id}`); navigate('/service/knowledge'); }); }}>Delete</button> : null}
           </div>
         ) : null}
       </header>

@@ -1,0 +1,45 @@
+/*
+ * Academy and access governance. Builds on cc-* panels, sd-* tables and forms.
+ */
+
+.ac-section-title { margin: 8px 0 0; font-size: 15px; font-weight: 700; color: var(--fg-primary); }
+.ac-courses { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.ac-course { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-surface); color: inherit; text-decoration: none; }
+.ac-course:hover { border-color: var(--border-strong, var(--brand-300)); box-shadow: var(--shadow-xs); }
+.ac-course strong { font-size: 14.5px; color: var(--fg-primary); }
+.ac-summary { font-size: 13px; color: var(--fg-secondary); }
+.ac-course-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: auto; padding-top: 6px; font-size: 12px; color: var(--fg-tertiary); }
+.ac-done { display: inline-flex; align-items: center; gap: 4px; color: var(--ok-600); font-weight: 600; }
+.ac-warn { display: inline-flex; align-items: center; gap: 4px; color: var(--warn-700); }
+.ac-bad { color: var(--dan-600); }
+
+.ac-player { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 1000px) { .ac-player { grid-template-columns: minmax(0, 1fr); } }
+.ac-lessons { margin: 0; padding: 0; list-style: none; }
+.ac-lessons li button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 14px; border: 0; border-top: 1px solid var(--border-subtle); background: none; font: inherit; font-size: 13px; text-align: left; color: var(--fg-primary); cursor: pointer; }
+.ac-lessons li button:hover { background: var(--bg-hover); }
+.ac-lessons li button[aria-current='true'] { background: var(--bg-selected); color: var(--fg-accent); font-weight: 600; }
+.ac-lessons .ac-tick { flex: 0 0 auto; color: var(--ok-600); }
+.ac-lessons .ac-dot { flex: 0 0 auto; width: 14px; height: 14px; border: 1.5px solid var(--n-300, #c7ccd3); border-radius: 50%; }
+.ac-lesson-body { padding: 16px 20px; font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg-primary); }
+.ac-lesson-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border-subtle); }
+
+.ac-quiz { display: grid; gap: 14px; padding: 16px 20px; }
+.ac-quiz fieldset { margin: 0; padding: 0; border: 0; display: grid; gap: 6px; }
+.ac-quiz legend { margin-bottom: 6px; font-weight: 650; font-size: 13.5px; }
+.ac-quiz label { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.ac-result { padding: 10px 20px; font-weight: 650; }
+.ac-result.is-pass { color: var(--ok-700); background: var(--ok-50); }
+.ac-result.is-fail { color: var(--dan-700); background: var(--dan-50); }
+
+.ac-policy { max-width: 820px; }
+.ac-policy-text { padding: 18px 22px; font-size: 14px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ac-ack { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 22px; border-top: 1px solid var(--border-subtle); background: var(--bg-sunken); }
+.ac-editor textarea { min-height: 260px; font-family: inherit; line-height: 1.55; }
+.ac-progress { height: 6px; border-radius: 3px; background: var(--bg-sunken); overflow: hidden; }
+.ac-progress span { display: block; height: 100%; background: var(--brand-500, #2f6fed); }
+tr.is-selected th, tr.is-selected td { background: var(--bg-selected); }
+.ac-row-button { width: 100%; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+.ac-row-button[aria-pressed='true'] { background: var(--bg-selected); }
+.ac-quiz legend input, .ac-quiz label input:not([type='radio']), .sd-inline input:not([type='checkbox']):not([type='radio']) { height: 32px; padding: 0 8px; border: 1px solid var(--border-default); border-radius: 7px; background: var(--bg-surface); color: var(--fg-primary); font: inherit; font-size: 13px; }
+.ac-quiz legend input { width: 100%; }

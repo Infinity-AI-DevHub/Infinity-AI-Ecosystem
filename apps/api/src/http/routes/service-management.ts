@@ -193,6 +193,23 @@ export async function serviceManagementRoutes(app: FastifyInstance): Promise<voi
 
   /* ---------------------------------------------------------------- changes */
 
+  app.delete('/service/knowledge/:id', async (request, reply) => {
+    await knowledge.deleteArticle(requireActor(request), parse(idParam, request.params).id);
+    reply.code(204);
+  });
+  app.delete('/service/changes/:id', async (request, reply) => {
+    await changes.deleteChange(requireActor(request), parse(idParam, request.params).id);
+    reply.code(204);
+  });
+  app.delete('/service/licences/:id', async (request, reply) => {
+    await itam.deleteLicence(requireActor(request), parse(idParam, request.params).id);
+    reply.code(204);
+  });
+  app.delete('/service/contracts/:id', async (request, reply) => {
+    await itam.deleteContract(requireActor(request), parse(idParam, request.params).id);
+    reply.code(204);
+  });
+
   app.get('/service/changes', async (request) => {
     const q = parse(z.object({
       status: z.enum(['draft', 'pending_approval', 'approved', 'rejected', 'scheduled', 'in_progress', 'implemented', 'failed', 'cancelled', 'closed', 'upcoming', 'open']).optional(),
