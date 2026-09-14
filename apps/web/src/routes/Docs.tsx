@@ -134,10 +134,24 @@ export default function Docs() {
 
         <section className="panel docs-index" aria-label="Pages">
           <h3 className="panel-title">{activeSpace?.name ?? 'Pages'}</h3>
+          {activeSpace && can('doc.space_manage') ? (
+            <div className="table-actions">
+              <button type="button" className="link-button" onClick={async () => {
+                const name = window.prompt('Rename space', activeSpace.name)?.trim();
+                if (!name || name === activeSpace.name) return;
+                try { await api.patch(`/docs/spaces/${activeSpace.id}`, { name }); } catch (err) { window.alert(err instanceof ApiError ? err.message : 'The space was not renamed.'); }
+                invalidate('/docs/spaces');
+              }}>Rename</button>
+              <button type="button" className="link-button" onClick={async () => {
+                if (!window.confirm(`Archive ${activeSpace.name}? Its pages leave the workspace and search; their history is kept.`)) return;
+                try { await api.delete(`/docs/spaces/${activeSpace.id}`); invalidate('/docs'); navigate('/docs'); } catch (err) { window.alert(err instanceof ApiError ? err.message : 'The space was not archived.'); }
+              }}>Archive</button>
+            </div>
+          ) : null}
           {activeSpace?.description ? (
             <p className="field-hint">{activeSpace.description}</p>
           ) : null}
-          <AsyncSection query={pages}>
+          {!activeSpaceId && spaces.data ? <Empty title="No pages yet" description="Create a space first, then add pages to it." /> : <AsyncSection query={pages}>
             {(data) =>
               data.items.length === 0 ? (
                 <Empty title="Nothing written yet" description="Create the first page in this space." />
@@ -161,7 +175,7 @@ export default function Docs() {
                 </ul>
               )
             }
-          </AsyncSection>
+          </AsyncSection>}
         </section>
 
         <section className="panel docs-reader" aria-label="Page">

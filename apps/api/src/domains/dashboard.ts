@@ -5,7 +5,7 @@
  * cannot blank the page. Every widget respects the caller's permissions.
  */
 import { one, many } from '../core/db.js';
-import type { Actor } from '../core/authz.js';
+import { hasCapability, type Actor } from '../core/authz.js';
 import { logger } from '../core/logger.js';
 
 export type Widget<T> = { state: 'ok'; data: T } | { state: 'unavailable'; reason: string };
@@ -168,5 +168,103 @@ export async function build(actor: Actor) {
     }),
   ]);
 
-  return { meetings, tasks, approvals, notifications, announcements, storage, work, attendance };
+  /**
+   * Client activity: what clients have sent recently and what they owe.
+   *
+   * Only for people whose role reads client organisations, and the invoice half only for
+   * those who also read invoices. A role without either gets no key at all rather than
+   * an empty widget, so the page does not offer a section it cannot fill.
+   */
+  const clients = hasCapability(actor, 'external_org.read')
+    ? await widget('clients', async () => {
+        const uploads = await many<{
+          id: string; org_id: string; org_name: string; file_name: string; kind: string; created_at: string;
+        }>(
+          `SELECT pu.id, pu.org_id, o.name AS org_name, f.name AS file_name, pu.kind, pu.created_at
+             FROM portal_uploads pu
+             JOIN external_organizations o ON o.id = pu.org_id AND o.company_id = pu.company_id
+             JOIN files f ON f.id = pu.file_id
+            WHERE pu.company_id = $1 AND pu.created_at >= DATE_SUB(NOW(3), INTERVAL 14 DAY)
+            ORDER BY pu.created_at DESC
+            LIMIT 5`,
+          [actor.companyId],
+        );
+        let invoices: { overdue: number; outstanding: number } | null = null;
+        if (hasCapability(actor, 'invoice.read')) {
+          const row = await one<{ overdue: number; outstanding: number }>(
+            `SELECT
+               SUM(status IN ('open','partially_paid') AND due_date < CURDATE() AND (total - amount_paid) > 0) AS overdue,
+               SUM(status IN ('open','partially_paid')) AS outstanding
+             FROM invoices WHERE company_id = $1`,
+            [actor.companyId],
+          );
+          invoices = { overdue: Number(row?.overdue ?? 0), outstanding: Number(row?.outstanding ?? 0) };
+        }
+        return { uploads, invoices };
+      })
+    : undefined;
+
+  /**
+   * Service desk work, for people who work a queue. Absent for everyone else, so the
+   * section never appears as an empty box for someone who only raises requests.
+   */
+  const queueRows = await many<{ queue_id: string }>(
+    'SELECT queue_id FROM service_queue_members WHERE user_id = $1 AND company_id = $2',
+    [actor.userId, actor.companyId],
+  ).catch(() => []);
+  const worksDesk = hasCapability(actor, 'ticket.work') || queueRows.length > 0;
+  const service = worksDesk
+    ? await widget('service', async () => {
+        const all = hasCapability(actor, 'ticket.work');
+        const ids = queueRows.map((r) => r.queue_id);
+        const scope = all ? '' : `AND t.queue_id IN (${ids.map((_, i) => `$${i + 3}`).join(',')})`;
+        const counts = await one<{ assigned: number; unassigned: number; breached: number; mine_breached: number }>(
+          `SELECT
+             SUM(t.assignee_id = $2) AS assigned,
+             SUM(t.assignee_id IS NULL) AS unassigned,
+             SUM(t.response_breached_at IS NOT NULL OR t.resolution_breached_at IS NOT NULL) AS breached,
+             SUM(t.assignee_id = $2 AND (t.response_breached_at IS NOT NULL OR t.resolution_breached_at IS NOT NULL)) AS mine_breached
+           FROM tickets t
+          WHERE t.company_id = $1 AND t.status IN ('new','open','pending') ${scope}`,
+          [actor.companyId, actor.userId, ...(all ? [] : ids)],
+        );
+        const urgent = await many<{ id: string; number: number; subject: string; priority: string; status: string; assignee_id: string | null; resolution_due_at: string | null; breached: number }>(
+          `SELECT t.id, t.number, t.subject, t.priority, t.status, t.assignee_id, t.resolution_due_at,
+                  (t.response_breached_at IS NOT NULL OR t.resolution_breached_at IS NOT NULL) AS breached
+             FROM tickets t
+            WHERE t.company_id = $1 AND t.status IN ('new','open','pending')
+              AND (t.assignee_id = $2 OR t.assignee_id IS NULL) ${scope}
+            ORDER BY breached DESC, FIELD(t.priority, 'urgent','high','normal','low'), t.resolution_due_at
+            LIMIT 6`,
+          [actor.companyId, actor.userId, ...(all ? [] : ids)],
+        );
+        return {
+          assigned: Number(counts?.assigned ?? 0),
+          unassigned: Number(counts?.unassigned ?? 0),
+          breached: Number(counts?.breached ?? 0),
+          mineBreached: Number(counts?.mine_breached ?? 0),
+          tickets: urgent.map((t) => ({ ...t, ref: `SD-${t.number}`, breached: Boolean(t.breached), mine: t.assignee_id === actor.userId })),
+        };
+      })
+    : undefined;
+
+  // Open incidents and service health, for anyone who can see reliability.
+  const reliability = hasCapability(actor, 'reliability.read')
+    ? await widget('reliability', async () => (await import('./incidents.js')).openForDashboard(actor))
+    : undefined;
+
+  // Services this person owns: their scorecards and any failed production release today.
+  const engineering = hasCapability(actor, 'engineering.read')
+    ? await widget('engineering', async () => (await import('./engineering.js')).forDashboard(actor))
+    : undefined;
+
+  // Training, policies and access work waiting on this person.
+  const learning = hasCapability(actor, 'academy.learn')
+    ? await widget('learning', async () => (await import('./academy.js')).myLearning(actor))
+    : undefined;
+  const access = hasCapability(actor, 'access.request')
+    ? await widget('access', async () => (await import('./access.js')).myAccessSummary(actor))
+    : undefined;
+
+  return { meetings, tasks, approvals, notifications, announcements, storage, work, attendance, clients, service, reliability, engineering, learning, access };
 }

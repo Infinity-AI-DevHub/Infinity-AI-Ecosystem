@@ -191,7 +191,17 @@ export async function history(
       LIMIT $4`,
     [roomId, opts.before ?? null, opts.after ?? null, opts.limit],
   );
-  return rows.reverse().map(publicMessage);
+  // Reactions are summarised per message: which emoji, how many, and whether one is yours.
+  const reactions = rows.length
+    ? await many<{ message_id: string; emoji: string; n: number; mine: number }>(
+      `SELECT message_id, emoji, COUNT(*) AS n, SUM(user_id = $1) AS mine FROM chat_reactions
+        WHERE message_id IN (${rows.map((_, i) => `$${i + 2}`).join(',')}) GROUP BY message_id, emoji ORDER BY emoji`,
+      [actor.userId, ...rows.map((r) => r.id)])
+    : [];
+  return rows.reverse().map((row) => ({
+    ...publicMessage(row),
+    reactions: reactions.filter((r) => r.message_id === row.id).map((r) => ({ emoji: r.emoji, count: Number(r.n), mine: Number(r.mine) > 0 })),
+  }));
 }
 
 export async function send(
@@ -449,4 +459,32 @@ export function publicMessage(row: MessageRow & { author_name?: string | null; a
     deleted: Boolean(row.deleted_at),
     createdAt: row.created_at,
   };
+}
+
+async function requireChannelOwner(actor: Actor, roomId: string) {
+  const room = await one<RoomRow>('SELECT * FROM chat_rooms WHERE id = $1 AND company_id = $2', [roomId, actor.companyId]);
+  if (!room || room.type !== 'channel') throw notFound('Channel not found');
+  const member = await membership(roomId, actor.userId);
+  if (member?.role !== 'owner' && !actor.capabilities.has('moderation.manage')) throw forbidden('Only the channel owner can change it');
+  return room;
+}
+
+export async function updateChannel(actor: Actor, roomId: string, input: { name?: string; topic?: string | null }) {
+  const room = await requireChannelOwner(actor, roomId);
+  if (room.archived_at) throw conflict('This channel is archived');
+  const name = input.name?.trim().toLowerCase().replace(/\s+/g, '-');
+  if (name !== undefined) {
+    if (!/^[a-z0-9][a-z0-9-_]{1,60}$/.test(name)) throw unprocessable('Channel name is not valid', [{ field: 'name', message: 'Use 2-60 letters, numbers, hyphens or underscores' }]);
+    if (await one('SELECT 1 FROM chat_rooms WHERE company_id = $1 AND lower(name) = $2 AND id <> $3', [actor.companyId, name, roomId])) throw conflict('A channel with that name already exists');
+  }
+  await pool.query('UPDATE chat_rooms SET name = COALESCE($2, name), topic = CASE WHEN $3 THEN $4 ELSE topic END WHERE id = $1', [roomId, name ?? null, input.topic !== undefined, input.topic?.trim() || null]);
+  await auditFromActor(actor, 'chat.room_update', { resourceType: 'chat_room', resourceId: roomId, metadata: { changes: Object.keys(input) } });
+}
+
+/** Archives a channel: history stays readable to members, nobody can post, and it leaves the room list. */
+export async function archiveChannel(actor: Actor, roomId: string) {
+  const room = await requireChannelOwner(actor, roomId);
+  if (room.archived_at) throw conflict('This channel is already archived');
+  await pool.query('UPDATE chat_rooms SET archived_at = NOW(3) WHERE id = $1', [roomId]);
+  await auditFromActor(actor, 'chat.room_archive', { resourceType: 'chat_room', resourceId: roomId });
 }

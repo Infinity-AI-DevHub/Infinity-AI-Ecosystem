@@ -13,7 +13,7 @@
  * an employment history without seeing what a colleague earns - it is the one thing here
  * that is sensitive between colleagues rather than only to outsiders.
  */
-import { many, newId, one, reload, transaction } from '../core/db.js';
+import { pool, many, newId, one, reload, transaction } from '../core/db.js';
 import { conflict, forbidden, notFound, unprocessable } from '../core/errors.js';
 import { authorize, decide, type Actor } from '../core/authz.js';
 import { auditFromActor } from '../core/audit.js';
@@ -430,4 +430,12 @@ export async function updateGoal(
       metadata: { goalId, progress: input.progress ?? null, status: input.status ?? null },
     }, tx);
   });
+}
+
+export async function deleteGoal(actor: Actor, goalId: string) {
+  const goal = await one<{ user_id: string; title: string }>('SELECT user_id, title FROM goals WHERE id = $1 AND company_id = $2', [goalId, actor.companyId]);
+  if (!goal) throw notFound('Goal not found');
+  if (goal.user_id !== actor.userId) await authorize({ actor, capability: 'hr.manage', resourceless: true });
+  await pool.query('DELETE FROM goals WHERE id = $1', [goalId]);
+  await auditFromActor(actor, 'goal.delete', { resourceType: 'user', resourceId: goal.user_id, metadata: { goalId, title: goal.title } });
 }

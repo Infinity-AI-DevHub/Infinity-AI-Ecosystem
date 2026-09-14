@@ -6,7 +6,7 @@
  * short-lived signed URLs requested at click time - never long-lived links in markup.
  */
 import { useMemo, useRef, useState } from 'react';
-import { Download, FolderPlus, GripVertical, History, Link2, Pencil, RotateCcw, Share2, ShieldAlert, Trash2, Upload } from 'lucide-react';
+import { Download, FolderPlus, GripVertical, History, Link2, Lock, Pencil, RotateCcw, Share2, ShieldAlert, Trash2, Upload, UserPlus } from 'lucide-react';
 import { api, ApiError, idempotencyKey, NetworkError } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { saveDownload } from '../lib/desktop';
@@ -43,6 +43,8 @@ export default function Files() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [versionsFor, setVersionsFor] = useState<FileRecord | null>(null);
   const [sharingFile, setSharingFile] = useState<FileRecord | null>(null);
+  const [sharingInternally, setSharingInternally] = useState<FileRecord | null>(null);
+  const [holdError, setHoldError] = useState<string | null>(null);
   const [showRecycled, setShowRecycled] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const { ask: askText, element: promptElement } = useTextPrompt();
@@ -381,6 +383,32 @@ export default function Files() {
                             >
                               <History size={15} />
                             </button>
+                            <button
+                              type="button"
+                              className="icon-button"
+                              aria-label={`Share ${file.name} with a colleague`}
+                              disabled={file.state !== 'active'}
+                              onClick={() => setSharingInternally(file)}
+                            >
+                              <UserPlus size={15} />
+                            </button>
+                            {can('legal_hold.manage') && (file.state === 'active' || file.state === 'legal_hold') ? (
+                              <button
+                                type="button"
+                                className="icon-button"
+                                aria-label={file.state === 'legal_hold' ? `Release the legal hold on ${file.name}` : `Place ${file.name} on legal hold`}
+                                aria-pressed={file.state === 'legal_hold'}
+                                onClick={async () => {
+                                  const held = file.state !== 'legal_hold';
+                                  if (held && !window.confirm(`Place ${file.name} on legal hold? It cannot be changed or deleted until the hold is released.`)) return;
+                                  setHoldError(null);
+                                  try { await api.post(`/files/${file.id}/legal-hold`, { held }); } catch (err) { setHoldError(describeError(err as ApiError)); }
+                                  invalidate('/files');
+                                }}
+                              >
+                                <Lock size={15} />
+                              </button>
+                            ) : null}
                             {can('file.share_external') ? (
                               <button
                                 type="button"
@@ -424,6 +452,7 @@ export default function Files() {
           {download.error ? (
             <p className="field-error" role="alert">{describeError(download.error)}</p>
           ) : null}
+          {holdError ? <p className="field-error" role="alert">{holdError}</p> : null}
           {recycle.error ? (
             <p className="field-error" role="alert">{describeError(recycle.error)}</p>
           ) : null}
@@ -436,6 +465,8 @@ export default function Files() {
 
       ) : null}
 
+
+      {sharingInternally ? <ColleagueShareDialog file={sharingInternally} onClose={() => setSharingInternally(null)} /> : null}
 
       {versionsFor ? (
         <VersionHistoryDialog file={versionsFor} onClose={() => setVersionsFor(null)} />
@@ -664,7 +695,8 @@ function ShareDialog({ file, onClose }: { file: FileRecord; onClose: () => void 
         },
         { idempotencyKey: key },
       ),
-    { onSuccess: (result) => setUrl(result.url) },
+    // The link list for this file is now out of date.
+    { invalidates: ['/share-links'], onSuccess: (result) => setUrl(result.url) },
   );
 
   return (
@@ -698,6 +730,7 @@ function ShareDialog({ file, onClose }: { file: FileRecord; onClose: () => void 
               This creates a link that works without an account. Anyone who has it has the
               access, so keep it short-lived and add a password for anything sensitive.
             </p>
+            <ExistingLinks fileId={file.id} />
             <FormError error={create.error} />
             <form
               onSubmit={(event) => {
@@ -762,6 +795,79 @@ function ShareDialog({ file, onClose }: { file: FileRecord; onClose: () => void 
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+type ShareLink = { id: string; recipient_email: string | null; expires_at: string; revoked_at: string | null; access_count: number; created_by_name: string | null; created_at: string; max_uses: number | null };
+
+/** Links already made for this file, so one sent to the wrong person can be switched off. */
+function ExistingLinks({ fileId }: { fileId: string }) {
+  const key = `/share-links?resourceId=${fileId}`;
+  const links = useQuery<{ items: ShareLink[] }>(key, (signal) => api.get(key, signal));
+  const [error, setError] = useState<string | null>(null);
+  if (!links.data || links.data.items.length === 0) return null;
+  const now = Date.now();
+  return (
+    <section aria-label="Existing links" className="share-existing">
+      <h4>Existing links</h4>
+      <ul className="attendee-list">
+        {links.data.items.map((l) => {
+          const live = !l.revoked_at && new Date(l.expires_at).getTime() > now;
+          return (
+            <li key={l.id}>
+              <span>{l.recipient_email ?? 'Anyone with the link'} · {l.access_count} {Number(l.access_count) === 1 ? 'open' : 'opens'} · {l.revoked_at ? 'revoked' : live ? `expires ${relativeTime(l.expires_at)}` : 'expired'}</span>
+              {live ? <button type="button" className="ghost-button" onClick={async () => {
+                if (!window.confirm('Revoke this link? Anyone who has it loses access immediately.')) return;
+                setError(null);
+                try { await api.delete(`/share-links/${l.id}`); } catch (err) { setError(err instanceof ApiError ? err.message : 'The link was not revoked.'); }
+                invalidate(key);
+              }}>Revoke</button> : null}
+            </li>
+          );
+        })}
+      </ul>
+      {error ? <p className="field-error" role="alert">{error}</p> : null}
+    </section>
+  );
+}
+
+/** Gives a colleague or a group direct access to one file. */
+function ColleagueShareDialog({ file, onClose }: { file: FileRecord; onClose: () => void }) {
+  const { notify } = useNotify();
+  const people = useQuery<{ items: { id: string; displayName: string }[] }>('/users?limit=100', (signal) => api.get('/users?limit=100', signal));
+  const [userId, setUserId] = useState('');
+  const [access, setAccess] = useState<'view' | 'edit'>('view');
+  const [expires, setExpires] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <form className="dialog" role="dialog" aria-modal="true" aria-labelledby="colleague-share-title" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+        onSubmit={async (e) => {
+          e.preventDefault(); setError(null);
+          try {
+            await api.post(`/files/${file.id}/share`, {
+              subjectType: 'user', subjectId: userId,
+              capabilities: access === 'view' ? ['file.read'] : ['file.read', 'file.update'],
+              expiresAt: expires ? new Date(`${expires}T23:59`).toISOString() : null,
+            });
+            notify({ severity: 'success', title: `${file.name} shared` });
+            onClose();
+          } catch (err) { setError(err instanceof ApiError ? err.message : 'The file was not shared.'); }
+        }}>
+        <h3 id="colleague-share-title">Share {file.name} with a colleague</h3>
+        <div className="field"><label htmlFor="cs-person">Person</label>
+          <select id="cs-person" autoFocus required value={userId} onChange={(e) => setUserId(e.target.value)}>
+            <option value="">Choose…</option>{people.data?.items.map((p) => <option key={p.id} value={p.id}>{p.displayName}</option>)}
+          </select>
+        </div>
+        <div className="field-row">
+          <div className="field"><label htmlFor="cs-access">Access</label><select id="cs-access" value={access} onChange={(e) => setAccess(e.target.value as 'view' | 'edit')}><option value="view">Can view</option><option value="edit">Can edit</option></select></div>
+          <div className="field"><label htmlFor="cs-expires">Until (optional)</label><input id="cs-expires" type="date" value={expires} onChange={(e) => setExpires(e.target.value)} /></div>
+        </div>
+        {error ? <p className="field-error" role="alert">{error}</p> : null}
+        <div className="dialog-actions"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button" disabled={!userId}>Share</button></div>
+      </form>
     </div>
   );
 }

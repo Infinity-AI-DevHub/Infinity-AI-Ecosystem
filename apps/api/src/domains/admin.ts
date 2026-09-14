@@ -128,7 +128,7 @@ export async function createGroup(actor: Actor, name: string, description?: stri
 export async function updateGroup(
   actor: Actor,
   groupId: string,
-  input: Partial<{ name: string; description: string }>,
+  input: Partial<{ name: string; description: string | null }>,
 ) {
   // Same capability as createGroup: editing a group should not demand a permission that
   // creating one does not.
@@ -140,9 +140,9 @@ export async function updateGroup(
   if (input.name !== undefined && !input.name.trim()) throw badRequest('A group needs a name');
 
   await pool.query(
-    'UPDATE `groups` SET name = COALESCE($3, name), description = COALESCE($4, description) '
+    'UPDATE `groups` SET name = COALESCE($3, name), description = CASE WHEN $4 THEN $5 ELSE description END '
       + 'WHERE id = $1 AND company_id = $2',
-    [groupId, actor.companyId, input.name?.trim() ?? null, input.description ?? null],
+    [groupId, actor.companyId, input.name?.trim() ?? null, input.description !== undefined, input.description?.trim() || null],
   );
   await auditFromActor(actor, 'group.update', {
     resourceType: 'group', resourceId: groupId, metadata: { changed: Object.keys(input) },

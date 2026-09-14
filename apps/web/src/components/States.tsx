@@ -68,6 +68,11 @@ export function ErrorState({
   if (error instanceof ApiError && error.isForbidden) {
     return <Forbidden message={error.message} />;
   }
+  // A record that does not exist (or was deleted, or belongs to someone else's company) will
+  // not appear by trying again, so say so plainly instead of offering a retry.
+  if (error instanceof ApiError && error.status === 404) {
+    return <Empty title={error.message || 'Not found'} description="It may have been deleted, or the link is wrong." />;
+  }
 
   const offline = error instanceof NetworkError;
   const rateLimited = error instanceof ApiError && error.isRateLimited;

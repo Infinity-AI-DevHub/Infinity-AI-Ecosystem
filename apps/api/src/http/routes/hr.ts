@@ -119,6 +119,11 @@ export async function hrRoutes(app: FastifyInstance): Promise<void> {
     return hr.createGoal(actor, input);
   });
 
+  app.delete('/hr/goals/:id', async (request, reply) => {
+    await hr.deleteGoal(requireActor(request), parse(idParam, request.params).id);
+    return reply.code(204).send();
+  });
+
   app.patch('/hr/goals/:id', async (request, reply) => {
     const actor = requireActor(request);
     const { id } = parse(idParam, request.params);

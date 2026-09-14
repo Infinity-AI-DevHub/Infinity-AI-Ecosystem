@@ -23,21 +23,9 @@ import { join } from 'node:path';
 const ACCEPTED = new Map<string, string>([
   ['POST /auth/token/refresh', 'called by the token layer, not by a screen'],
   ['POST /files/uploads/:id/content', 'raw multipart fetch, not through the api helper'],
+  ['POST /reliability/heartbeat/:key', 'called by cron jobs and monitors with the key in the URL, never by a screen'],
   ['PUT /objects/upload', 'signed upload URL is returned dynamically by the API'],
   ['POST /chat/rooms/:id/typing', 'sent over the realtime channel'],
-  ['PATCH /chat/rooms/:id/messages/:messageId', 'message editing UI not built'],
-  ['DELETE /chat/rooms/:id/messages/:messageId', 'message deletion UI not built'],
-  ['POST /chat/rooms/:id/messages/:messageId/reactions', 'reactions UI not built'],
-  ['POST /chat/rooms/:id/members', 'adding people to a channel not built'],
-  ['PATCH /calendar/events/:id', 'meeting editing not built'],
-  ['DELETE /calendar/events/:id', 'meeting cancellation not built'],
-  ['POST /approvals/:id/cancel', 'withdrawing your own request not built'],
-  ['POST /expenses/categories', 'expense category admin not built'],
-  ['POST /files/:id/share', 'file share dialog not built'],
-  ['POST /files/:id/legal-hold', 'legal hold not built'],
-  ['DELETE /share-links/:id', 'revoking a share link not built'],
-  ['POST /external/guests/:id/grants', 'guest resource grants not built'],
-  ['POST /users/:id/offboard', 'offboarding UI not built'],
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -169,7 +157,8 @@ describe('interface coverage', () => {
     const client = walk('../web/src').map((f) => readFileSync(f, 'utf8')).join('\n');
     const calls = new Map<string, Set<string>>();
     for (const m of client.matchAll(
-      /api\.(get|post|patch|put|delete)(?:<[^>]*>)?\(\s*[`'"]([^`'"]+)/g,
+      // One level of nested generics, e.g. api.post<{ transferred: Record<string, number> }>(
+      /api\.(get|post|patch|put|delete)(?:<(?:[^<>]|<[^<>]*>)*>)?\(\s*[`'"]([^`'"]+)/g,
     )) {
       const stem = m[2]!.replace(/\$\{[^}]*\}/g, ':x').split('?')[0]!.replace(/\/$/, '');
       if (!calls.has(stem)) calls.set(stem, new Set());

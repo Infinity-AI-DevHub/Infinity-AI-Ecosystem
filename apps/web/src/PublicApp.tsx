@@ -19,6 +19,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import Activate from './routes/Activate';
 import ResetPassword from './routes/ResetPassword';
 import SharedResource from './routes/SharedResource';
+import PublicStatus from './routes/PublicStatus';
 import { SessionProvider } from './lib/session';
 import { NotifyProvider } from './lib/notify';
 import { PortalShell } from './routes/portal/PortalShell';
@@ -30,6 +31,7 @@ import { PortalTasks } from './routes/portal/PortalTasks';
 import { PortalPayments, PortalSend } from './routes/portal/PortalBilling';
 import { PortalMeetings, PortalNotices } from './routes/portal/PortalMeetings';
 import { PortalGuard } from './routes/portal/PortalGuard';
+import { PortalKnowledge, PortalKnowledgeArticle, PortalTicket, PortalTickets } from './routes/portal/PortalTickets';
 import './App.css';
 import './styles/portal.css';
 import './styles/redesign.css';
@@ -58,6 +60,7 @@ export default function PublicApp() {
       <SessionProvider>
       <Routes>
         <Route path="/shared/:token" element={<SharedResource />} />
+        <Route path="/status/:slug" element={<PublicStatus />} />
 
         {/* The portal. Everything below the guard requires a signed-in guest. */}
         <Route path="/portal/sign-in" element={<PortalSignIn />} />
@@ -79,6 +82,10 @@ export default function PublicApp() {
           <Route path="meetings" element={<PortalMeetings />} />
           <Route path="tasks" element={<PortalTasks />} />
           <Route path="notices" element={<PortalNotices />} />
+          <Route path="tickets" element={<PortalTickets />} />
+          <Route path="tickets/:ticketId" element={<PortalTicket />} />
+          <Route path="knowledge" element={<PortalKnowledge />} />
+          <Route path="knowledge/:articleId" element={<PortalKnowledgeArticle />} />
         </Route>
 
         <Route path="/activate" element={<Activate />} />

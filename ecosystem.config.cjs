@@ -21,7 +21,9 @@ module.exports = {
       instances: 2,
       exec_mode: 'cluster',
       max_memory_restart: '500M',
-      env: { NODE_ENV: 'production' },
+      // The worker below owns the outbox and scheduled jobs. Left on here, each API
+      // instance would drain the outbox too, and the same email could go out three times.
+      env: { NODE_ENV: 'production', WORKERS_ENABLED: 'false' },
       error_file: '/www/wwwlogs/infinity-api.error.log',
       out_file: '/www/wwwlogs/infinity-api.log',
       merge_logs: true,

@@ -65,6 +65,11 @@ const GUEST_GET_ROUTES: RegExp[] = [
   /^\/api\/v1\/portal\/(invoices|quotations|tasks)\/[\w-]+$/,
   /^\/api\/v1\/portal\/projects\/[\w-]+\/tasks$/,
   /^\/api\/v1\/portal\/documents\/(invoice|quotation|receipt)\/[\w-]+\/pdf$/,
+  // Support tickets: the requester's own and their organisation's, scoped in the domain.
+  /^\/api\/v1\/portal\/tickets(\/[\w-]+)?$/,
+  /^\/api\/v1\/portal\/tickets\/[\w-]+\/attachments\/[\w-]+\/download$/,
+  // Public knowledge articles; the domain limits guests to published, public ones.
+  /^\/api\/v1\/portal\/knowledge(\/[\w-]+)?$/,
 
 ];
 
@@ -82,6 +87,9 @@ const GUEST_POST_ROUTES: RegExp[] = [
   /^\/api\/v1\/notifications\/[\w-]+\/read$/,
   /^\/api\/v1\/files\/uploads(\/.*)?$/,
   /^\/api\/v1\/portal\/uploads$/,
+  /^\/api\/v1\/portal\/tickets$/,
+  /^\/api\/v1\/portal\/tickets\/[\w-]+\/(comments|status|attachments|feedback)$/,
+  /^\/api\/v1\/portal\/knowledge\/[\w-]+\/vote$/,
 ];
 
 const GUEST_DELETE_ROUTES: RegExp[] = [

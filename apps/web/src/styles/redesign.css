@@ -76,85 +76,9 @@ body {
   letter-spacing: -.005em;
 }
 
-/* --- shell: floating planes replace the old edge-to-edge admin template --- */
-.workspace-shell {
-  min-height: 100dvh;
-  height: 100dvh;
-  grid-template-columns: var(--nav-width) minmax(0, 1fr);
-  gap: 12px;
-  padding: 12px;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at 95% 0, rgba(21,152,207,.11), transparent 32rem),
-    linear-gradient(145deg, #edf2f5, #e4eaee);
-}
-.sidebar {
-  position: relative;
-  height: calc(100dvh - 24px);
-  padding: 18px 11px 12px;
-  gap: 14px;
-  border: 1px solid rgba(255,255,255,.09);
-  border-radius: 21px;
-  background:
-    radial-gradient(circle at 12% -6%, rgba(85,183,221,.32), transparent 17rem),
-    radial-gradient(circle at 90% 106%, rgba(21,152,207,.16), transparent 18rem),
-    linear-gradient(170deg, #0b314b 0%, #071d2d 66%, #061725 100%);
-  box-shadow: 0 24px 60px rgba(5,24,38,.20), inset 0 1px 0 rgba(255,255,255,.07);
-}
 .brand-lockup { min-height: 54px; padding: 2px 10px 10px; gap: 11px; }
-.sidebar .product-icon {
-  width: 39px;
-  height: 39px;
-  border: 1px solid rgba(255,255,255,.16);
-  border-radius: 12px;
-  box-shadow: 0 10px 24px rgba(0,10,17,.28), inset 0 1px 0 rgba(255,255,255,.2);
-}
-.sidebar .brand-lockup strong { font-size: 14px; letter-spacing: -.02em; }
-.sidebar .brand-lockup span { margin-top: 3px; color: #8faebe; font-size: 12px; }
-.nav-list { gap: 3px; padding: 2px 0; }
-.nav-item {
-  min-height: 39px;
-  margin-inline: 0;
-  padding: 0 12px;
-  border: 1px solid transparent;
-  border-radius: 11px;
-  color: #a9bdc9;
-  font-size: 13px;
-  transition: transform var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease),
-              background var(--dur-base) var(--ease), border-color var(--dur-base) var(--ease);
-}
-.nav-item svg { width: 17px; height: 17px; opacity: .78; }
-.nav-item:hover {
-  transform: translateX(3px);
-  border-color: rgba(255,255,255,.06);
-  background: rgba(255,255,255,.07);
-  color: #fff;
-}
-.nav-item-active {
-  border-color: rgba(155,214,236,.17);
-  background: linear-gradient(100deg, rgba(21,152,207,.28), rgba(255,255,255,.075));
-  color: #fff;
-  box-shadow: 0 8px 18px rgba(0,13,22,.14), inset 0 1px 0 rgba(255,255,255,.07);
-}
-.nav-item-active::before {
-  left: -1px;
-  width: 3px;
-  height: 21px;
-  background: #79d3f4;
-  box-shadow: 0 0 12px rgba(121,211,244,.65);
-}
+
 .nav-badge, .folder-count { background: #1598cf; color: #fff; box-shadow: 0 4px 10px rgba(2,92,133,.25); }
-.sidebar-footer {
-  gap: 9px;
-  padding: 12px;
-  border: 1px solid rgba(255,255,255,.085);
-  border-radius: 14px;
-  background: rgba(255,255,255,.045);
-}
-.security-panel { gap: 9px; }
-.security-panel strong { color: #dceaf1; font-size: 12px; }
-.security-panel span { color: #7897a8; }
-.connection-pill { margin-left: 24px; }
 
 .workspace-main {
   height: calc(100dvh - 24px);
@@ -508,14 +432,14 @@ body {
 
 @media (max-width: 1100px) {
   :root { --nav-width: 232px; }
-  .workspace-shell { gap: 9px; padding: 9px; }
-  .sidebar, .workspace-main { height: calc(100dvh - 18px); border-radius: 18px; }
+  
+  .workspace-main { height: calc(100dvh - 18px); border-radius: 18px; }
   .chat-layout { grid-template-columns: 238px minmax(0,1fr); }
 }
 @media (max-width: 860px) {
-  .workspace-shell { display: block; height: auto; min-height: 100dvh; padding: 0; overflow: visible; }
+  
   .workspace-main { height: auto; min-height: 100dvh; border: 0; border-radius: 0; }
-  .sidebar { position: fixed; height: 100dvh; border-radius: 0 20px 20px 0; }
+  
   .workspace-content { overflow: visible; }
   .auth-page, .share-page { place-items: center; }
   .auth-page::before, .auth-page::after, .share-page::before, .share-page::after { display: none; }
@@ -539,7 +463,12 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .workspace-content, .message-stream li, .auth-card, .share-card, .notification-panel { animation: none; }
-  .nav-item:hover, .primary-button:hover:not(:disabled), .ghost-button:hover:not(:disabled),
-  .metric-card:hover, .task-card:hover, .portal-figure-link:hover, .portal-jump-card:hover,
-  .portal-quote:hover, .portal-file:hover { transform: none; }
+  .primary-button:hover:not(:disabled),
+.ghost-button:hover:not(:disabled),
+.metric-card:hover,
+.task-card:hover,
+.portal-figure-link:hover,
+.portal-jump-card:hover,
+.portal-quote:hover,
+.portal-file:hover { transform: none; }
 }

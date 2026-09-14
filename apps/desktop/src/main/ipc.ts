@@ -1,7 +1,8 @@
 import { BrowserWindow, dialog, ipcMain, Notification, shell, app } from 'electron';
 import { writeFile } from 'node:fs/promises';
 import { statSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
+import { execFile } from 'node:child_process';
 import { CHANNELS, type StoredSession, type UpdateStatus } from '../shared/contract';
 import { appConfig } from './config';
 import { clearSession, readSession, writeSession } from './vault';
@@ -46,6 +47,37 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     } catch {
       return false;
     }
+  });
+
+  /**
+   * Opening Infinity Mail.
+   *
+   * Mail is a separate application holding each person's mailbox credentials, so the
+   * workspace launches it rather than embedding or talking to it. The renderer supplies
+   * nothing: the target is fixed here, by bundle identifier on macOS and by the installer's
+   * known locations on Windows, so this cannot be used to launch anything else.
+   */
+  ipcMain.handle(CHANNELS.openMail, async (): Promise<'opened' | 'not_installed'> => {
+    if (process.platform === 'darwin') {
+      return new Promise((resolve) => {
+        execFile('open', ['-b', 'com.iinfinityai.mail'], (error) =>
+          resolve(error ? 'not_installed' : 'opened'));
+      });
+    }
+    if (process.platform === 'win32') {
+      const candidates = [
+        process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'Programs', 'infinity-mail', 'Infinity Mail.exe'),
+        process.env.ProgramFiles && join(process.env.ProgramFiles, 'Infinity Mail', 'Infinity Mail.exe'),
+      ].filter((path): path is string => Boolean(path));
+      for (const path of candidates) {
+        try {
+          if (statSync(path).isFile() && (await shell.openPath(path)) === '') return 'opened';
+        } catch {
+          /* not at this location */
+        }
+      }
+    }
+    return 'not_installed';
   });
 
   /** Saving a downloaded file where the person chooses, through the OS dialog. */

@@ -232,7 +232,7 @@ export async function closeStaleSessions(): Promise<{ closed: number }> {
   for (const session of stale) {
     await pool.query(
       `UPDATE attendance_sessions
-          SET clocked_out_at = last_seen_at,
+          SET clocked_out_at = GREATEST(clocked_in_at, last_seen_at),
               worked_minutes = GREATEST(0, TIMESTAMPDIFF(MINUTE, clocked_in_at, last_seen_at)),
               close_reason = 'auto',
               flagged = 1,

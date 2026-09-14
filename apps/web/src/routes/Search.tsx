@@ -12,6 +12,9 @@ import { useQuery } from '../lib/query';
 import { AsyncSection, Empty } from '../components/States';
 import { titleCase } from '../lib/format';
 
+// Types whose name is not simply the title-cased doc type.
+const typeLabel = (type: string) => (type === 'api' ? 'API' : titleCase(type));
+
 type Hit = {
   docType: string;
   resourceId: string;
@@ -70,7 +73,7 @@ export default function Search() {
                     className={`tab ${type === facet ? 'tab-active' : ''}`}
                     onClick={() => setParams({ q: query, types: facet })}
                   >
-                    {titleCase(facet)} ({count})
+                    {typeLabel(facet)} ({count})
                   </button>
                 ))}
               </div>
@@ -85,7 +88,7 @@ export default function Search() {
                   {data.hits.map((hit) => (
                     <li key={`${hit.docType}-${hit.resourceId}`}>
                       <Link to={hit.link ?? '#'}>
-                        <span className="search-type">{titleCase(hit.docType)}</span>
+                        <span className="search-type">{typeLabel(hit.docType)}</span>
                         <strong>{hit.title}</strong>
                         {/* The server escaped this text and applied <mark> itself. */}
                         <span

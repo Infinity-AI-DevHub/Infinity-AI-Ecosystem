@@ -61,7 +61,10 @@ export function RecordEditor({
         body[field.name] =
           raw === ''
             ? field.required ? '' : null
-            : field.type === 'number' ? Number(raw) : raw;
+            : field.type === 'number' ? Number(raw)
+            // A yes/no select is a boolean on the wire, not the strings in its <option> values.
+            : field.type === 'select' && (raw === 'true' || raw === 'false') ? raw === 'true'
+            : raw;
       }
       await api.patch(path, body);
       notify({ severity: 'success', title: savedMessage ?? 'Saved' });

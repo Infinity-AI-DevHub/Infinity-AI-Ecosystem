@@ -332,3 +332,14 @@ export async function getQuotation(actor: Actor, quotationId: string) {
   );
   return { ...quotation, lines, history, signatures: await verify(actor, 'quotation', quotationId) };
 }
+
+/** A draft quotation that was never signed or sent can be deleted; anything further is revised or declined. */
+export async function deleteQuotation(actor: Actor, quotationId: string) {
+  await authorize({ actor, capability: 'quotation.manage', resourceless: true });
+  const q = await one<{ status: string; number: string | null }>('SELECT status, number FROM quotations WHERE id = $1 AND company_id = $2', [quotationId, actor.companyId]);
+  if (!q) throw notFound('Quotation not found');
+  if (q.status !== 'draft') throw conflict('Only a draft quotation can be deleted');
+  if (await one("SELECT 1 FROM document_signatures WHERE document_type = 'quotation' AND document_id = $1 LIMIT 1", [quotationId])) throw conflict('This draft has been signed. Revise it instead.');
+  await pool.query('DELETE FROM quotations WHERE id = $1', [quotationId]);
+  await auditFromActor(actor, 'quotation.delete', { resourceType: 'quotation', resourceId: quotationId, metadata: { number: q.number } });
+}

@@ -9,29 +9,17 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell,
-  BellRing,
-  CalendarDays,
-  Clock,
-  CheckSquare,
-  Files as FilesIcon,
-  Inbox,
-  Megaphone,
-  LayoutDashboard,
+  ChevronRight,
+  Mail,
+  ExternalLink,
+  Clock3,
+  Command as CommandIcon,
   LogOut,
   Menu,
-  MessageSquareText,
-  Search as SearchIcon,
-  Settings as SettingsIcon,
-  ShieldCheck,
-  Users,
-  Handshake,
-  Palmtree,
   PanelLeftClose,
   PanelLeftOpen,
-  BookText,
-  Wallet,
-  Target,
-  BarChart3,
+  Search as SearchIcon,
+  Star,
   X,
 } from 'lucide-react';
 import { useSession } from '../lib/session';
@@ -44,37 +32,11 @@ import { initials, relativeTime } from '../lib/format';
 import { Logo } from './Logo';
 import { inQuietHours, useNotify } from '../lib/notify';
 import { keysForEvent } from '../lib/realtime-map';
+import { allowed, findModule, locate, visibleAreas, type NavArea } from '../lib/navigation';
+import { useNavPreferences } from '../lib/nav-preferences';
+import { CommandPalette } from './CommandPalette';
 
-type NavItem = {
-  to: string;
-  label: string;
-  icon: typeof Inbox;
-  /** Hides the entry when the role cannot use it; the API still enforces access. */
-  capability?: string;
-  /** Which activity count, if any, badges this entry. */
-  badge?: 'chat' | 'tasks' | 'approvals' | 'invoices' | 'announcements' | 'leave';
-};
-
-const NAV_ITEMS: NavItem[] = [
-  { to: '/command', label: 'Command', icon: LayoutDashboard },
-  { to: '/meetings', label: 'Meetings', icon: CalendarDays, capability: 'calendar.read' },
-  { to: '/chat', label: 'Chat', icon: MessageSquareText, capability: 'room.join', badge: 'chat' },
-  { to: '/tasks', label: 'Tasks', icon: CheckSquare, capability: 'task.update', badge: 'tasks' },
-  { to: '/files', label: 'Files', icon: FilesIcon, capability: 'file.read' },
-  { to: '/docs', label: 'Documents', icon: BookText, capability: 'doc.read' },
-  { to: '/announcements', label: 'Announcements', icon: Megaphone, badge: 'announcements' },
-  { to: '/messages', label: 'Messages', icon: Megaphone, capability: 'message.broadcast' },
-  { to: '/approvals', label: 'Approvals', icon: ShieldCheck, capability: 'request.create', badge: 'approvals' },
-  { to: '/reminders', label: 'Reminders', icon: BellRing, capability: 'reminder.manage' },
-  { to: '/attendance', label: 'Attendance', icon: Clock, capability: 'attendance.record' },
-  { to: '/leave', label: 'Leave', icon: Palmtree, capability: 'leave.request', badge: 'leave' },
-  { to: '/finance', label: 'Finance', icon: Wallet, capability: 'expense.submit', badge: 'invoices' },
-  { to: '/growth', label: 'Growth', icon: Target, capability: 'goal.manage' },
-  { to: '/people', label: 'People', icon: Users, capability: 'user.read' },
-  { to: '/clients', label: 'Clients', icon: Handshake, capability: 'external_org.read' },
-  { to: '/reports', label: 'Reports', icon: BarChart3, capability: 'report.read' },
-  { to: '/admin', label: 'Admin', icon: SettingsIcon, capability: 'settings.read' },
-];
+const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 
 export function Shell({ children }: { children: ReactNode }) {
   const { session, can, signOut } = useSession();
@@ -92,14 +54,23 @@ export function Shell({ children }: { children: ReactNode }) {
   useEffect(() => { notifyRef.current = notify; }, [notify]);
   useEffect(() => { prefsRef.current = preferences; }, [preferences]);
   const [navOpen, setNavOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
-    isDesktop && window.localStorage.getItem('infinity:sidebar-collapsed') === 'true',
-  );
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionState>('closed');
   const searchRef = useRef<HTMLInputElement>(null);
 
   const user = session?.user;
+  const prefs = useNavPreferences(user?.id);
+  const { collapsed: sidebarCollapsed, setCollapsed: setSidebarCollapsed, recordVisit } = prefs;
+  const areas = visibleAreas(can);
+  const located = locate(location.pathname);
+  /**
+   * The rail can preview another area without navigating; the sidebar then shows that
+   * area until the route changes, at which point it follows the page again.
+   */
+  const [previewArea, setPreviewArea] = useState<string | null>(null);
+  const activeAreaId = previewArea ?? located?.area.id ?? areas[0]?.id;
+  const activeArea: NavArea | undefined = areas.find((a) => a.id === activeAreaId) ?? areas[0];
 
   // One realtime connection for the whole session, torn down on sign-out.
   useEffect(() => {
@@ -169,27 +140,53 @@ export function Shell({ children }: { children: ReactNode }) {
   useEffect(() => {
     setNavOpen(false);
     setNotificationsOpen(false);
+    setPreviewArea(null);
   }, [location.pathname]);
 
+  // Recents record the module page, with the deep link kept so a record reopens directly.
+  const locatedLabel = located?.module.label;
   useEffect(() => {
-    if (isDesktop) {
-      window.localStorage.setItem('infinity:sidebar-collapsed', String(sidebarCollapsed));
-    }
-  }, [sidebarCollapsed]);
+    if (locatedLabel) recordVisit(location.pathname + location.search, locatedLabel);
+  }, [location.pathname, location.search, locatedLabel, recordVisit]);
 
-  // "/" focuses search, the convention people already expect.
+  /** Infinity Mail is its own application; the desktop client can only launch it. */
+  const openMail = useCallback(async () => {
+    const result = await desktop?.openMail().catch(() => 'not_installed' as const);
+    if (result !== 'opened') {
+      notify({
+        severity: 'warning',
+        title: 'Infinity Mail is not installed',
+        body: 'Install Infinity Mail on this computer to open your mailbox from here.',
+      });
+    }
+  }, [notify]);
+
+  const toggleSidebar = useCallback(() => setSidebarCollapsed((c) => !c), [setSidebarCollapsed]);
+  const closePalette = useCallback(() => setPaletteOpen(false), []);
+
+  /**
+   * "/" focuses search, Cmd/Ctrl+K opens the palette, Cmd/Ctrl+\ collapses the sidebar.
+   * The modifier shortcuts work while typing; "/" deliberately does not.
+   */
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      const typing = target && ['INPUT', 'TEXTAREA'].includes(target.tagName);
-      if (event.key === '/' && !typing) {
+      const typing = target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable);
+      const mod = isMac ? event.metaKey : event.ctrlKey;
+      if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      } else if (mod && event.key === '\\') {
+        event.preventDefault();
+        toggleSidebar();
+      } else if (event.key === '/' && !typing) {
         event.preventDefault();
         searchRef.current?.focus();
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, []);
+  }, [toggleSidebar]);
 
   /**
    * Sidebar badge counts. Refreshed by the realtime map rather than polled: the
@@ -240,84 +237,183 @@ export function Shell({ children }: { children: ReactNode }) {
     }
   };
 
-  const currentModule =
-    NAV_ITEMS.find((item) => location.pathname.startsWith(item.to))?.label ?? 'Workspace';
+  const currentModule = located?.module.label ?? 'Workspace';
+  const count = (key?: string) => (key ? activity.data?.[key] ?? 0 : 0);
+  const areaCount = (area: NavArea) => area.modules.reduce((sum, m) => sum + count(m.badge), 0);
+  const badgeText = (n: number) => (n > 99 ? '99+' : String(n));
+  const favouriteModules = prefs.favourites
+    .map((to) => findModule(to))
+    .filter((m): m is NonNullable<typeof m> => !!m && allowed(m, can));
+  const shortcut = isMac ? '⌘K' : 'Ctrl K';
 
   return (
-    <div className={`workspace-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <div className={`ws-shell ${sidebarCollapsed ? 'ws-collapsed' : ''} ${navOpen ? 'ws-nav-open' : ''}`}>
       <a className="skip-link" href="#main-content">
         Skip to main content
       </a>
 
-      <nav
-        className={`sidebar ${navOpen ? 'sidebar-open' : ''}`}
-        aria-label="Modules"
-        id="module-navigation"
-      >
-        <div className="brand-lockup">
-          <Logo size={34} tone="inverse" />
-          <div>
-            <strong>Infinity Workspace</strong>
-            <span>{session?.company?.name ?? 'Workspace'}</span>
+      <div className="ws-nav" id="module-navigation">
+        <nav className="ws-rail" aria-label="Product areas">
+          <div className="ws-rail-brand">
+            <Logo size={30} tone="inverse" />
           </div>
-          {isDesktop ? (
+          <ul className="ws-rail-list">
+            {areas.map((area) => {
+              const selected = area.id === activeArea?.id;
+              const current = area.id === located?.area.id;
+              const n = areaCount(area);
+              return (
+                <li key={area.id}>
+                  <button
+                    type="button"
+                    className={`ws-rail-item ${selected ? 'is-selected' : ''} ${current ? 'is-current' : ''}`}
+                    aria-pressed={selected}
+                    aria-label={n > 0 ? `${area.label}, ${n} new` : area.label}
+                    title={area.label}
+                    onClick={() => {
+                      /* Collapsed, the rail is the whole navigation: an area opens its
+                         first module. Expanded, it previews that area's modules. */
+                      if (sidebarCollapsed) navigate(area.modules[0].to);
+                      else setPreviewArea(area.id === located?.area.id ? null : area.id);
+                    }}
+                  >
+                    <area.icon size={19} aria-hidden="true" />
+                    <span className="ws-rail-label" aria-hidden="true">{area.short}</span>
+                    {n > 0 ? <span className="ws-rail-dot" aria-hidden="true" /> : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="ws-rail-foot">
+            <button type="button" className="ws-rail-item" onClick={() => setPaletteOpen(true)}
+              aria-label={`Command palette (${shortcut})`} title={`Command palette (${shortcut})`}>
+              <CommandIcon size={18} aria-hidden="true" />
+            </button>
             <button
               type="button"
-              className="desktop-collapse-toggle"
+              className="ws-rail-item ws-collapse-toggle"
+              aria-expanded={!sidebarCollapsed}
+              aria-controls="area-navigation"
               aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+              title={`${sidebarCollapsed ? 'Expand' : 'Collapse'} sidebar (${isMac ? '⌘' : 'Ctrl+'}\\)`}
+              onClick={toggleSidebar}
             >
-              {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+              {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
             </button>
-          ) : null}
-        </div>
-
-        <ul className="nav-list">
-          {NAV_ITEMS.filter((item) => !item.capability || can(item.capability)).map((item) => (
-            <li key={item.to}>
-              <NavLink
-                to={item.to}
-                title={sidebarCollapsed ? item.label : undefined}
-                className={({ isActive }) => `nav-item ${isActive ? 'nav-item-active' : ''}`}
-              >
-                <item.icon size={17} aria-hidden="true" />
-                <span>{item.label}</span>
-                {item.badge && (activity.data?.[item.badge] ?? 0) > 0 ? (
-                  <span
-                    className="nav-badge"
-                    /* The number alone reads as decoration to a screen reader; the
-                       label says what it counts. */
-                    aria-label={`${activity.data![item.badge]} new in ${item.label}`}
-                  >
-                    {activity.data![item.badge] > 99 ? '99+' : activity.data![item.badge]}
-                  </span>
-                ) : null}
-              </NavLink>
-            </li>
-          ))}
-        </ul>
-
-        <div className="sidebar-footer">
-          <div className="security-panel">
-            <ShieldCheck size={16} aria-hidden="true" />
-            <div>
-              <strong>{session?.company?.name ?? 'Workspace'}</strong>
-              <span>{session?.user?.email ?? ''}</span>
-            </div>
+            <span className={`ws-live connection-${connection}`} role="status"
+              title={connection === 'open' ? 'Live' : connection === 'reconnecting' ? 'Reconnecting…'
+                : connection === 'connecting' ? 'Connecting…' : 'Offline'}>
+              <span className="connection-dot" aria-hidden="true" />
+              <span className="visually-hidden">
+                {connection === 'open' ? 'Live' : connection === 'reconnecting' ? 'Reconnecting'
+                  : connection === 'connecting' ? 'Connecting' : 'Offline'}
+              </span>
+            </span>
           </div>
-          <p className={`connection-pill connection-${connection}`}>
-            <span aria-hidden="true" className="connection-dot" />
-            {connection === 'open'
-              ? 'Live'
-              : connection === 'reconnecting'
-                ? 'Reconnecting…'
-                : connection === 'connecting'
-                  ? 'Connecting…'
-                  : 'Offline'}
-          </p>
-        </div>
-      </nav>
+        </nav>
+
+        {activeArea ? (
+          <nav className="ws-subnav" id="area-navigation" aria-label={`${activeArea.label} modules`}
+            hidden={sidebarCollapsed && !navOpen}>
+            <div className="ws-subnav-head">
+              <span className="ws-subnav-company">{session?.company?.name ?? 'Infinity Workspace'}</span>
+              <h2>{activeArea.label}</h2>
+            </div>
+
+            <div className="ws-subnav-scroll">
+              <ul className="ws-subnav-list">
+                {activeArea.modules.map((m) => {
+                  const fav = prefs.favourites.includes(m.to);
+                  const n = count(m.badge);
+                  return (
+                    <li key={m.to} className="ws-subnav-row">
+                      <NavLink
+                        to={m.to}
+                        end={false}
+                        className={() => `ws-subnav-item ${located?.module.to === m.to ? 'is-active' : ''}`}
+                        aria-current={located?.module.to === m.to ? 'page' : undefined}
+                      >
+                        <m.icon size={16} aria-hidden="true" />
+                        <span className="ws-subnav-label">{m.label}</span>
+                        {n > 0 ? (
+                          /* The number alone reads as decoration to a screen reader; the
+                             label says what it counts. */
+                          <span className="nav-badge" aria-label={`${n} new in ${m.label}`}>{badgeText(n)}</span>
+                        ) : null}
+                      </NavLink>
+                      <button
+                        type="button"
+                        className={`ws-fav ${fav ? 'is-on' : ''}`}
+                        aria-pressed={fav}
+                        aria-label={fav ? `Remove ${m.label} from favourites` : `Add ${m.label} to favourites`}
+                        title={fav ? 'Remove from favourites' : 'Add to favourites'}
+                        onClick={() => prefs.toggleFavourite(m.to)}
+                      >
+                        <Star size={13} aria-hidden="true" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              {isDesktop && activeArea.id === 'communication' ? (
+                <button type="button" className="ws-subnav-item ws-subnav-external" onClick={() => void openMail()}>
+                  <Mail size={16} aria-hidden="true" />
+                  <span className="ws-subnav-label">Infinity Mail</span>
+                  <ExternalLink size={13} aria-hidden="true" />
+                </button>
+              ) : null}
+
+              {favouriteModules.length > 0 ? (
+                <section className="ws-subnav-section" aria-label="Favourites">
+                  <h3>Favourites</h3>
+                  <ul className="ws-subnav-list">
+                    {favouriteModules.map((m) => (
+                      <li key={m.to}>
+                        <NavLink to={m.to} className="ws-subnav-item ws-subnav-compact">
+                          <m.icon size={15} aria-hidden="true" />
+                          <span className="ws-subnav-label">{m.label}</span>
+                        </NavLink>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+
+              {prefs.recents.filter((r) => r.path !== location.pathname + location.search).length > 0 ? (
+                <section className="ws-subnav-section" aria-label="Recently visited">
+                  <h3>Recent</h3>
+                  <ul className="ws-subnav-list">
+                    {prefs.recents
+                      .filter((r) => r.path !== location.pathname + location.search)
+                      .slice(0, 5)
+                      .map((r) => (
+                        <li key={r.path}>
+                          <Link to={r.path} className="ws-subnav-item ws-subnav-compact" title={r.path}>
+                            <Clock3 size={14} aria-hidden="true" />
+                            <span className="ws-subnav-label">{r.label}</span>
+                            <span className="ws-subnav-meta">{relativeTime(new Date(r.visitedAt).toISOString())}</span>
+                          </Link>
+                        </li>
+                      ))}
+                  </ul>
+                </section>
+              ) : null}
+            </div>
+
+            <div className="ws-subnav-foot">
+              <span className="avatar" style={{ background: user?.avatarColor ?? '#f2c14e' }} aria-hidden="true">
+                {initials(user?.displayName ?? '?')}
+              </span>
+              <div>
+                <strong>{user?.displayName}</strong>
+                <span>{user?.email ?? ''}</span>
+              </div>
+            </div>
+          </nav>
+        ) : null}
+      </div>
 
       {navOpen ? (
         <button
@@ -341,7 +437,29 @@ export function Shell({ children }: { children: ReactNode }) {
             {navOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
 
-          <h1 className="page-title">{currentModule}</h1>
+          <div className="ws-crumbs">
+            {located ? (
+              <nav aria-label="Breadcrumb">
+                <ol>
+                  <li>{located.area.label}</li>
+                  <li aria-hidden="true"><ChevronRight size={13} /></li>
+                  <li>
+                    {location.pathname === located.module.to
+                      ? <span aria-current="page">{located.module.label}</span>
+                      : <Link to={located.module.to}>{located.module.label}</Link>}
+                  </li>
+                </ol>
+              </nav>
+            ) : null}
+            <h1 className="page-title">{currentModule}</h1>
+          </div>
+
+          <button type="button" className="ws-palette-trigger" onClick={() => setPaletteOpen(true)}
+            aria-label={`Open command palette (${shortcut})`}>
+            <CommandIcon size={14} aria-hidden="true" />
+            <span>Go to…</span>
+            <kbd>{shortcut}</kbd>
+          </button>
 
           <form className="global-search" role="search" onSubmit={onSearch}>
             <label className="visually-hidden" htmlFor="global-search-input">
@@ -390,6 +508,17 @@ export function Shell({ children }: { children: ReactNode }) {
           />
         ) : null}
 
+        <CommandPalette
+          open={paletteOpen}
+          onClose={closePalette}
+          areas={areas}
+          recents={prefs.recents}
+          favourites={prefs.favourites}
+          canSearch={can('search.query')}
+          onToggleSidebar={toggleSidebar}
+          onOpenMail={isDesktop ? () => void openMail() : undefined}
+        />
+
         <main id="main-content" className="workspace-content" tabIndex={-1}>
           <UpdateBanner />
           {children}
@@ -431,6 +560,7 @@ function NotificationPanel({
       <header>
         <h2>Notifications</h2>
         <div>
+          <Link to="/notifications" className="ghost-button" onClick={onClose}>View all</Link>
           {notifications.length > 0 ? (
             <>
               <button type="button" className="ghost-button" onClick={markAllRead}>

@@ -24,7 +24,11 @@ export type DefinitionRow = {
 };
 
 export type ApproverSpec = {
-  type: 'manager' | 'user' | 'access_level';
+  /**
+   * `request_user` names the approver in the request's own data: `value` is the field that
+   * holds a user id (an access request routes to the owner of the system asked for).
+   */
+  type: 'manager' | 'user' | 'access_level' | 'request_user';
   value?: string;
   /**
    * Used when the primary spec resolves to nobody.
@@ -86,8 +90,18 @@ async function resolveSpec(
   companyId: string,
   requester: { id: string; manager_id: string | null; department_id: string | null },
   spec: { type: string; value?: string },
+  data: Record<string, unknown> = {},
 ): Promise<string[]> {
   switch (spec.type) {
+    case 'request_user': {
+      const userId = spec.value ? data[spec.value] : undefined;
+      if (typeof userId !== 'string') return [];
+      const row = await one<{ id: string }>(
+        `SELECT id FROM users WHERE id = $1 AND company_id = $2 AND status = 'active'`,
+        [userId, companyId],
+      );
+      return row ? [row.id] : [];
+    }
     case 'manager': {
       if (!requester.manager_id) return [];
       // A manager who has since been suspended cannot hold up the queue.
@@ -167,11 +181,12 @@ async function resolveApprovers(
   companyId: string,
   requester: { id: string; manager_id: string | null; department_id: string | null },
   rule: RoutingRule,
+  data: Record<string, unknown> = {},
 ): Promise<string[]> {
-  const primary = await resolveSpec(companyId, requester, rule.approver);
+  const primary = await resolveSpec(companyId, requester, rule.approver, data);
   if (primary.length > 0) return applyDelegations(companyId, primary);
   if (!rule.approver.fallback) return [];
-  const fallback = await resolveSpec(companyId, requester, rule.approver.fallback);
+  const fallback = await resolveSpec(companyId, requester, rule.approver.fallback, data);
   return applyDelegations(companyId, fallback);
 }
 
@@ -224,7 +239,7 @@ export async function createRequest(
   const resolved: { rule: RoutingRule; approvers: string[] }[] = [];
   const skipped: RoutingRule[] = [];
   for (const rule of rules.sort((a, b) => a.step - b.step)) {
-    const approvers = (await resolveApprovers(actor.companyId, requester, rule)).filter(
+    const approvers = (await resolveApprovers(actor.companyId, requester, rule, input.data ?? {})).filter(
       (id) => id !== actor.userId,
     );
     if (approvers.length > 0) {
@@ -425,7 +440,18 @@ export async function decide(
   input: { decision: 'approved' | 'rejected' | 'returned'; comment?: string },
   correlationId: string,
 ): Promise<RequestRow> {
-  await authorize({ actor, capability: 'decision.make', resourceless: true });
+  /*
+   * decision.make is a manager's capability. An access request is the exception: it routes
+   * to the owner of the system asked for, who is often an engineer without it. They may
+   * decide that request only, and only because the step below names them as its approver.
+   */
+  if (!actor.capabilities.has('decision.make')) {
+    const kind = await one<{ key: string }>(
+      'SELECT d.`key` FROM approval_requests r JOIN approval_definitions d ON d.id = r.definition_id WHERE r.id = $1 AND r.company_id = $2',
+      [requestId, actor.companyId],
+    );
+    if (kind?.key !== 'access') await authorize({ actor, capability: 'decision.make', resourceless: true });
+  }
 
   return transaction(async (tx) => {
     const requestRes = await tx.query<RequestRow>(

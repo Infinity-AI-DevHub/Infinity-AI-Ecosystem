@@ -17,6 +17,17 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
     return { items: await documents.listSpaces(actor) };
   });
 
+  app.patch('/docs/spaces/:id', async (request) => {
+    const input = parse(z.object({ name: z.string().trim().min(1).max(160).optional(), description: z.string().max(1000).nullable().optional() }), request.body);
+    await documents.updateSpace(requireActor(request), parse(idParam, request.params).id, input);
+    return { ok: true };
+  });
+
+  app.delete('/docs/spaces/:id', async (request, reply) => {
+    await documents.archiveSpace(requireActor(request), parse(idParam, request.params).id);
+    return reply.code(204).send();
+  });
+
   app.post('/docs/spaces', async (request, reply) => {
     const actor = requireActor(request);
     const input = parse(

@@ -9,7 +9,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useDebounced } from '../lib/useDebounced';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Hash, MessageSquarePlus, Plus, Send, UserPlus } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { invalidate, useMutation, useQuery } from '../lib/query';
 import { AsyncSection, Empty, ErrorState, Loading, FormError } from '../components/States';
 import { realtime } from '../lib/realtime';
@@ -37,7 +37,10 @@ type Message = {
   deleted: boolean;
   editedAt: string | null;
   createdAt: string;
+  reactions?: { emoji: string; count: number; mine: boolean }[];
 };
+
+const REACTIONS = ['👍', '✅', '🎉', '👀'];
 
 function roomLabel(room: Room): string {
   if (room.type === 'direct') return room.counterpart_name ?? 'Direct message';
@@ -52,6 +55,10 @@ export default function Chat() {
   const [live, setLive] = useState<Message[]>([]);
   const [creating, setCreating] = useState(false);
   const [startingDirect, setStartingDirect] = useState(false);
+  const [addingPeople, setAddingPeople] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+  const [messageError, setMessageError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const rooms = useQuery<{ items: Room[] }>('/chat/rooms', (signal) => api.get('/chat/rooms', signal));
@@ -145,6 +152,14 @@ export default function Chat() {
     if (!result) setDraft(body);
   };
 
+  /** Edits, deletions and reactions come back through the history, so the live copy is dropped. */
+  const changeMessage = async (message: Message, action: () => Promise<unknown>) => {
+    setMessageError(null);
+    try { await action(); } catch (err) { setMessageError(err instanceof ApiError ? err.message : 'That did not go through.'); }
+    setLive((current) => current.filter((m) => m.id !== message.id));
+    history.reload();
+  };
+
   return (
     <div className="module-page chat-module">
       <header className="module-header">
@@ -212,6 +227,25 @@ export default function Chat() {
                 <strong>{activeRoom ? roomLabel(activeRoom) : 'Conversation'}</strong>
                 <span>{activeRoom?.topic || (activeRoom?.type === 'direct' ? 'Direct conversation' : 'Team conversation')}</span>
               </div>
+              {activeRoom && activeRoom.type !== 'direct' ? (
+                <span className="chat-channel-actions">
+                  <button type="button" className="ghost-button" onClick={() => setAddingPeople(true)}>
+                    <UserPlus size={14} aria-hidden="true" /> Add people
+                  </button>
+                  <button type="button" className="link-button" onClick={async () => {
+                    const name = window.prompt('Rename channel', activeRoom.name ?? '')?.trim();
+                    if (!name || name === activeRoom.name) return;
+                    setMessageError(null);
+                    try { await api.patch(`/chat/rooms/${activeRoom.id}`, { name }); } catch (err) { setMessageError(err instanceof ApiError ? err.message : 'The channel was not renamed.'); }
+                    invalidate('/chat/rooms');
+                  }}>Rename</button>
+                  <button type="button" className="link-button" onClick={async () => {
+                    if (!window.confirm(`Archive #${activeRoom.name}? Nobody can post in it any more.`)) return;
+                    setMessageError(null);
+                    try { await api.delete(`/chat/rooms/${activeRoom.id}`); invalidate('/chat/rooms'); navigate('/chat'); } catch (err) { setMessageError(err instanceof ApiError ? err.message : 'The channel was not archived.'); }
+                  }}>Archive</button>
+                </span>
+              ) : null}
             </header>
           ) : null}
           {!roomId ? (
@@ -247,13 +281,43 @@ export default function Chat() {
                                 <MessageReceipt seq={message.seq} delivery={delivery.data ?? null} />
                               ) : null}
                             </p>
-                            <p className="message-text">
-                              {message.deleted ? (
-                                <em>This message was removed.</em>
-                              ) : (
-                                message.body
-                              )}
-                            </p>
+                            {editingId === message.id ? (
+                              <form className="chat-edit" onSubmit={(e) => {
+                                e.preventDefault();
+                                const body = editText.trim();
+                                if (!body) return;
+                                setEditingId(null);
+                                void changeMessage(message, () => api.patch(`/chat/rooms/${roomId}/messages/${message.id}`, { body }));
+                              }}>
+                                <label className="visually-hidden" htmlFor={`edit-${message.id}`}>Edit message</label>
+                                <textarea id={`edit-${message.id}`} autoFocus rows={2} value={editText} onChange={(e) => setEditText(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Escape') setEditingId(null); }} />
+                                <span className="sd-inline"><button type="submit" className="ghost-button">Save</button><button type="button" className="sd-link-button" onClick={() => setEditingId(null)}>Cancel</button></span>
+                              </form>
+                            ) : (
+                              <p className="message-text">
+                                {message.deleted ? <em>This message was removed.</em> : message.body}
+                              </p>
+                            )}
+                            {!message.deleted ? (
+                              <div className="message-actions">
+                                {(message.reactions ?? []).map((r) => (
+                                  <button key={r.emoji} type="button" className={`reaction ${r.mine ? 'reaction-mine' : ''}`} aria-pressed={r.mine}
+                                    aria-label={`${r.emoji} ${r.count}, ${r.mine ? 'remove your reaction' : 'react'}`}
+                                    onClick={() => void changeMessage(message, () => api.post(`/chat/rooms/${roomId}/messages/${message.id}/reactions`, { emoji: r.emoji }))}>
+                                    {r.emoji} {r.count}
+                                  </button>
+                                ))}
+                                <span className="message-tools">
+                                  {REACTIONS.filter((e) => !(message.reactions ?? []).some((r) => r.emoji === e)).map((emoji) => (
+                                    <button key={emoji} type="button" className="reaction reaction-add" aria-label={`React with ${emoji}`}
+                                      onClick={() => void changeMessage(message, () => api.post(`/chat/rooms/${roomId}/messages/${message.id}/reactions`, { emoji }))}>{emoji}</button>
+                                  ))}
+                                  {mine ? <button type="button" className="sd-link-button" onClick={() => { setEditingId(message.id); setEditText(message.body); }}>Edit</button> : null}
+                                  {mine ? <button type="button" className="sd-link-button" onClick={() => { if (window.confirm('Delete this message?')) void changeMessage(message, () => api.delete(`/chat/rooms/${roomId}/messages/${message.id}`)); }}>Delete</button> : null}
+                                </span>
+                              </div>
+                            ) : null}
                           </div>
                         </li>
                       );
@@ -289,6 +353,7 @@ export default function Chat() {
                   <span className="visually-hidden">Send message</span>
                 </button>
               </form>
+              {messageError ? <p className="field-error" role="alert">{messageError}</p> : null}
               {send.error ? (
                 <p className="field-error" role="alert">{send.error.message}</p>
               ) : null}
@@ -297,6 +362,7 @@ export default function Chat() {
         </section>
       </div>
 
+      {addingPeople && roomId ? <AddPeopleDialog roomId={roomId} onClose={() => { setAddingPeople(false); invalidate('/chat/rooms'); }} /> : null}
       {startingDirect ? (
         <DirectMessageDialog
           onClose={() => setStartingDirect(false)}
@@ -530,6 +596,38 @@ function DirectMessageDialog({
           <button type="button" className="ghost-button" onClick={onClose}>Close</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function AddPeopleDialog({ roomId, onClose }: { roomId: string; onClose: () => void }) {
+  const people = useQuery<{ items: { id: string; displayName: string }[] }>('/users?limit=100', (signal) => api.get('/users?limit=100', signal));
+  const members = useQuery<{ items: { userId?: string; user_id?: string; id?: string }[] }>(`/chat/rooms/${roomId}/members`, (signal) => api.get(`/chat/rooms/${roomId}/members`, signal));
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const memberIds = new Set((members.data?.items ?? []).map((m) => m.userId ?? m.user_id ?? m.id));
+  const candidates = (people.data?.items ?? []).filter((p) => !memberIds.has(p.id));
+  return (
+    <div className="dialog-scrim" role="presentation" onClick={onClose}>
+      <form className="dialog" role="dialog" aria-modal="true" aria-labelledby="add-people-title" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+        onSubmit={async (e) => {
+          e.preventDefault(); setError(null);
+          try { await api.post(`/chat/rooms/${roomId}/members`, { userIds: chosen }); onClose(); }
+          catch (err) { setError(err instanceof ApiError ? err.message : 'Nobody was added.'); }
+        }}>
+        <h3 id="add-people-title">Add people to this channel</h3>
+        {!people.data || !members.data ? <Loading label="Loading people" /> : candidates.length === 0 ? <p className="field-hint">Everyone is already in this channel.</p> : (
+          <div className="field">
+            <label htmlFor="add-people-list">People</label>
+            <select id="add-people-list" autoFocus multiple size={Math.min(8, candidates.length)} value={chosen} onChange={(e) => setChosen([...e.target.selectedOptions].map((o) => o.value))}>
+              {candidates.map((p) => <option key={p.id} value={p.id}>{p.displayName}</option>)}
+            </select>
+            <p className="field-hint">Hold Command or Ctrl to choose more than one.</p>
+          </div>
+        )}
+        {error ? <p className="field-error" role="alert">{error}</p> : null}
+        <div className="dialog-actions"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button" disabled={chosen.length === 0}>Add</button></div>
+      </form>
     </div>
   );
 }

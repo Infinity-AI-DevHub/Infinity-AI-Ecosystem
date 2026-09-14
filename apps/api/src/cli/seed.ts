@@ -10,6 +10,7 @@
  * Real employee data is never seeded. The blueprint requires piloting with synthetic
  * data before real people are loaded.
  */
+import { CHANGE_APPROVAL_DEFINITION } from '../domains/changes.js';
 import { randomUUID } from 'node:crypto';
 import { closePool, newId, pool, transaction } from '../core/db.js';
 import { logger } from '../core/logger.js';
@@ -33,6 +34,7 @@ const ROOMS = [
 
 /** Approval routes: manager first, then finance above a threshold. */
 const APPROVAL_DEFINITIONS = [
+  CHANGE_APPROVAL_DEFINITION,
   {
     key: 'expense',
     name: 'Expense claim',
